@@ -59,12 +59,12 @@ def sample_config() -> Config:
 
 class TestSubjectForEvent:
     """Tests for subject_for_event helper."""
-    
+
     def test_county_subject(self, sample_event: Event) -> None:
         """County codes produce county subject."""
         subject = subject_for_event(sample_event)
         assert subject == "central.wx.alert.us.id.county.ada"
-    
+
     def test_zone_subject(self, sample_geo: Geo) -> None:
         """Zone codes produce zone subject."""
         geo = Geo(
@@ -83,7 +83,7 @@ class TestSubjectForEvent:
         )
         subject = subject_for_event(event)
         assert subject == "central.wx.alert.us.id.zone.z033"
-    
+
     def test_unknown_subject(self, sample_event: Event) -> None:
         """Missing primary_region produces unknown subject."""
         geo = Geo(regions=[], primary_region=None)
@@ -97,7 +97,7 @@ class TestSubjectForEvent:
         )
         subject = subject_for_event(event)
         assert subject == "central.wx.alert.us.unknown"
-    
+
     def test_custom_prefix(self, sample_event: Event) -> None:
         """Custom prefix is used in subject."""
         subject = subject_for_event(sample_event, prefix="myapp.events")
@@ -106,13 +106,13 @@ class TestSubjectForEvent:
 
 class TestCloudEventsWire:
     """Tests for CloudEvents wire format."""
-    
+
     def test_required_fields_present(
         self, sample_event: Event, sample_config: Config
     ) -> None:
         """Required CloudEvents fields are present."""
         envelope, msg_id = wrap_event(sample_event, sample_config)
-        
+
         assert msg_id == sample_event.id
         assert envelope["id"] == sample_event.id
         assert envelope["source"] == sample_config.cloudevents.source
@@ -121,27 +121,27 @@ class TestCloudEventsWire:
         assert "time" in envelope
         assert envelope["datacontenttype"] == "application/json"
         assert "data" in envelope
-    
+
     def test_extension_attributes_lowercase(
         self, sample_event: Event, sample_config: Config
     ) -> None:
         """Extension attributes are lowercase with no underscores."""
         envelope, _ = wrap_event(sample_event, sample_config)
-        
+
         # Check that extension attributes exist and are lowercase
-        assert envelope["hubschemaversion"] == "1.0"
-        assert envelope["hubcategory"] == "wx.alert.severe_thunderstorm_warning"
-        assert envelope["hubseverity"] == 3
-        
+        assert envelope["centralschemaversion"] == "1.0"
+        assert envelope["centralcategory"] == "wx.alert.severe_thunderstorm_warning"
+        assert envelope["centralseverity"] == 3
+
         # Verify no uppercase or underscores in extension names
-        for key in ["hubschemaversion", "hubcategory", "hubseverity"]:
+        for key in ["centralschemaversion", "centralcategory", "centralseverity"]:
             assert key.islower()
             assert "_" not in key
-    
-    def test_severity_none_omits_hubseverity(
+
+    def test_severity_none_omits_centralseverity(
         self, sample_geo: Geo, sample_config: Config
     ) -> None:
-        """When severity is None, hubseverity is omitted entirely."""
+        """When severity is None, centralseverity is omitted entirely."""
         event = Event(
             id="test-no-severity",
             source="test",
@@ -151,11 +151,11 @@ class TestCloudEventsWire:
             geo=sample_geo,
             data={},
         )
-        
+
         envelope, _ = wrap_event(event, sample_config)
-        
-        # hubseverity should not be present at all
-        assert "hubseverity" not in envelope
+
+        # centralseverity should not be present at all
+        assert "centralseverity" not in envelope
         # Other extensions should still be present
-        assert "hubschemaversion" in envelope
-        assert "hubcategory" in envelope
+        assert "centralschemaversion" in envelope
+        assert "centralcategory" in envelope
