@@ -1,0 +1,26 @@
+[Unit]
+Description=Central archive consumer (JetStream -> TimescaleDB)
+After=network-online.target nats-server.service postgresql@16-main.service
+Wants=network-online.target
+Requires=nats-server.service postgresql@16-main.service
+
+[Service]
+Type=simple
+User=central
+Group=central
+WorkingDirectory=/opt/central
+Environment=HOME=/opt/central
+ExecStart=/opt/central/.venv/bin/central-archive
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/central
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

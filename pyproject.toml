@@ -20,6 +20,10 @@ dependencies = [
     "tenacity>=9.1.4",
 ]
 
+[project.scripts]
+central-supervisor = "central.supervisor:main"
+central-archive = "central.archive:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/central"]
 
