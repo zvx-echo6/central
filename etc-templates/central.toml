@@ -1,0 +1,31 @@
+# Central Configuration Template
+# ==============================
+# This is a TEMPLATE. Copy to /etc/central/central.toml on the deployment host.
+# Replace all CHANGE_ME values with real configuration.
+# NEVER commit the real /etc/central/central.toml to version control.
+
+# === NWS adapter ===
+# Fetches weather alerts and observations from the National Weather Service API.
+# contact_email is required by NWS User-Agent policy.
+[adapters.nws]
+enabled = true
+cadence_s = 60
+states = ["ID", "OR", "WA", "MT", "WY", "UT", "NV"]
+contact_email = "CHANGE_ME@example.invalid"
+
+# === CloudEvents wire format ===
+# All events published to NATS follow the CloudEvents 1.0 specification.
+[cloudevents]
+type_prefix = "central"
+source = "central/adapters/nws"
+schema_version = "1.0.0"
+
+# === NATS ===
+# Connection URL for the NATS server with JetStream enabled.
+[nats]
+url = "nats://localhost:4222"
+
+# === Postgres / TimescaleDB ===
+# DSN for the archive database. Must have TimescaleDB and PostGIS extensions.
+[postgres]
+dsn = "postgresql://central:CHANGE_ME@localhost/central"

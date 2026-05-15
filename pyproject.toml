@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "central"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+description = "Data hub spine — adapters, bus, archive."
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Matt Johnson"}]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/central"]

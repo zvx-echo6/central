@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+etc/
+var/
+*.creds
+*.key
+*.pem
+db.env
+.envrc
+.idea/
+.vscode/
+*.swp
+.DS_Store
