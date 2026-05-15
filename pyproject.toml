@@ -15,14 +15,18 @@ dependencies = [
     "aiolimiter>=1.2.1",
     "asyncpg>=0.31.0",
     "cloudevents>=2.0.0",
+    "cryptography>=44.0.0",
     "nats-py>=2.14.0",
     "pydantic>=2,<3",
+    "pydantic-settings>=2.7.0",
     "tenacity>=9.1.4",
 ]
 
 [project.scripts]
 central-supervisor = "central.supervisor:main"
 central-archive = "central.archive:main"
+central-migrate = "central.migrate:main"
+central-cli = "central.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/central"]
