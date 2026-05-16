@@ -24,6 +24,12 @@ from central.bootstrap_config import get_settings
 from central.models import subject_for_event
 from central.stream_manager import StreamManager
 
+# Adapter registry - add new adapters here
+_ADAPTER_REGISTRY: dict[str, type[SourceAdapter]] = {
+    "nws": NWSAdapter,
+    "firms": FIRMSAdapter,
+}
+
 CURSOR_DB_PATH = Path("/var/lib/central/cursors.db")
 
 # Stream subject mappings
@@ -152,16 +158,14 @@ class Supervisor:
 
     def _create_adapter(self, config: AdapterConfig) -> SourceAdapter:
         """Create an adapter instance based on config name."""
-        if config.name == "nws":
-            return NWSAdapter(config=config, cursor_db_path=CURSOR_DB_PATH)
-        elif config.name == "firms":
-            return FIRMSAdapter(
-                config=config,
-                config_store=self._config_store,
-                cursor_db_path=CURSOR_DB_PATH,
-            )
-        else:
+        cls = _ADAPTER_REGISTRY.get(config.name)
+        if cls is None:
             raise ValueError(f"Unknown adapter type: {config.name}")
+        return cls(
+            config=config,
+            config_store=self._config_store,
+            cursor_db_path=CURSOR_DB_PATH,
+        )
 
     async def _run_adapter_loop(self, state: AdapterState) -> None:
         """Run an adapter poll loop with rate-limit aware scheduling."""

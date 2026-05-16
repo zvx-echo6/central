@@ -20,6 +20,7 @@ from tenacity import (
 from central import __version__
 from central.adapter import SourceAdapter
 from central.config_models import AdapterConfig, RegionConfig
+from central.config_store import ConfigStore
 from central.models import Event, Geo
 from shapely.geometry import box as shapely_box, shape as shapely_shape
 
@@ -196,6 +197,7 @@ class NWSAdapter(SourceAdapter):
     def __init__(
         self,
         config: AdapterConfig,
+        config_store: ConfigStore,
         cursor_db_path: Path,
     ) -> None:
         self.cursor_db_path = cursor_db_path
