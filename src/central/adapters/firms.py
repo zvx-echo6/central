@@ -149,7 +149,7 @@ class FIRMSAdapter(SourceAdapter):
         self._db.commit()
 
         # Sweep old entries on startup (48h for FIRMS)
-        self._sweep_old_ids()
+        self.sweep_old_ids()
 
         logger.info(
             "FIRMS adapter started",
@@ -200,7 +200,7 @@ class FIRMSAdapter(SourceAdapter):
         )
         self._db.commit()
 
-    def _sweep_old_ids(self) -> int:
+    def sweep_old_ids(self) -> int:
         """Remove published_ids older than 48 hours. Returns count deleted."""
         if not self._db:
             return 0
@@ -357,7 +357,7 @@ class FIRMSAdapter(SourceAdapter):
             return
 
         # Sweep old dedup entries periodically
-        self._sweep_old_ids()
+        self.sweep_old_ids()
 
         total_features = 0
         total_new = 0
