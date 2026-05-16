@@ -5,7 +5,6 @@ either TOML files or the database-backed config store.
 """
 
 import logging
-from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
