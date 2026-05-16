@@ -175,7 +175,7 @@ class FIRMSAdapter(SourceAdapter):
             self._db = None
         logger.info("FIRMS adapter shut down")
 
-    def _is_published(self, stable_id: str) -> bool:
+    def is_published(self, stable_id: str) -> bool:
         """Check if an event has already been published."""
         if not self._db:
             return False
@@ -185,7 +185,7 @@ class FIRMSAdapter(SourceAdapter):
         )
         return cur.fetchone() is not None
 
-    def _mark_published(self, stable_id: str) -> None:
+    def mark_published(self, stable_id: str) -> None:
         """Mark an event as published."""
         if not self._db:
             return
@@ -383,12 +383,12 @@ class FIRMSAdapter(SourceAdapter):
                         row["longitude"],
                     )
 
-                    if self._is_published(stable_id):
+                    if self.is_published(stable_id):
                         continue
 
                     event = self._row_to_event(row, satellite)
                     yield event
-                    self._mark_published(stable_id)
+                    self.mark_published(stable_id)
                     new_count += 1
 
                 total_new += new_count

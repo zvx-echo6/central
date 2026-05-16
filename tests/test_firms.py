@@ -246,13 +246,13 @@ class TestDeduplication:
         stable_id = "VIIRS_SNPP_NRT:2026-05-16:1430:45.123:-116.456"
 
         # Not published initially
-        assert not adapter._is_published(stable_id)
+        assert not adapter.is_published(stable_id)
 
         # Mark as published
-        adapter._mark_published(stable_id)
+        adapter.mark_published(stable_id)
 
         # Now should be published
-        assert adapter._is_published(stable_id)
+        assert adapter.is_published(stable_id)
 
         await adapter.shutdown()
 
