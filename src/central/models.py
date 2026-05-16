@@ -38,7 +38,6 @@ def subject_for_event(ev: Event) -> str:
 
     Dispatch by category prefix:
     - fire.*: returns central.<category> directly
-    - quake.*: returns central.<category> directly
     - wx.*: uses weather alert subject logic
 
     Weather alert subjects:
@@ -49,16 +48,9 @@ def subject_for_event(ev: Event) -> str:
 
     Fire hotspot subjects:
       central.fire.hotspot.<satellite>.<confidence>
-
-    Quake event subjects:
-      central.quake.event.<magnitude_tier>
     """
     # Fire events: subject is just central.<category>
     if ev.category.startswith("fire."):
-        return f"central.{ev.category}"
-
-    # Quake events: subject is just central.<category>
-    if ev.category.startswith("quake."):
         return f"central.{ev.category}"
 
     # Weather events: use geo-based subject logic
