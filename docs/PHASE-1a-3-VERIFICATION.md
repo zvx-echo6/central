@@ -256,3 +256,98 @@ correctly for decreases.
 expected cadence. If not, restart supervisor.
 
 **Result:** Cadence confirmed at 60s after restart. ✅
+
+
+---
+
+## Phase 1a-3 Close-out
+
+**Timestamp:** 2026-05-16T04:03:17Z
+
+### PR #3 Merge
+- **Merge commit:** 0b23cc4
+- **Strategy:** Merge commit (fast-forward)
+- **Branch deleted:** feature/1a-3-phase-c-toml-retirement
+
+### LXC Cleanup
+
+**Remove obsolete env var:**
+```bash
+sed -i '/CENTRAL_CONFIG_SOURCE/d' /etc/central/central.env
+```
+
+**Resulting central.env:**
+```
+CENTRAL_DB_DSN=postgresql://central:***@localhost/central
+CENTRAL_NATS_URL=nats://localhost:4222
+CENTRAL_MASTER_KEY_PATH=/etc/central/master.key
+CENTRAL_LOG_LEVEL=INFO
+```
+
+**Retire TOML file:**
+```bash
+mv /etc/central/central.toml /etc/central/central.toml.retired
+```
+
+**Directory listing:**
+```
+-rw-r----- central central  193 central.env
+-rw-r----- central central 1074 central.toml.retired
+-rw------- central central   45 master.key
+```
+
+### Post-Restart Verification
+
+**Supervisor startup:**
+```json
+{"ts": "2026-05-16T04:01:18.430800+00:00", "msg": "Config source: db", "config_source": "db"}
+{"ts": "2026-05-16T04:01:18.459241+00:00", "msg": "Adapter started", "adapter": "nws", "cadence_s": 60}
+{"ts": "2026-05-16T04:01:18.459641+00:00", "msg": "Config listener connected to database"}
+{"ts": "2026-05-16T04:01:18.595928+00:00", "msg": "NWS poll completed", "status": 200}
+```
+
+**Archive startup:**
+```json
+{"ts": "2026-05-16T04:01:48.442842+00:00", "msg": "Archive starting", "nats_url": "nats://localhost:4222"}
+{"ts": "2026-05-16T04:01:48.468110+00:00", "msg": "Archive consumer ready"}
+```
+
+### CloudEvents Envelope Verification (seq 32)
+```json
+{
+  "type": "central.wx.alert.winter_weather_advisory.v1",
+  "source": "central.echo6.co",
+  "specversion": "1.0",
+  "centralschemaversion": "1.0",
+  "centralcategory": "wx.alert.winter_weather_advisory",
+  "centralseverity": 2
+}
+```
+- Extension attributes use `central*` prefix ✅
+
+### T3 Data Integrity Check
+
+| Metric | T0 | T3 |
+|--------|----|----|
+| Upstream alerts | 16 | 17 |
+| DB events | 30 | 32 |
+| Missing | 0 | 0 |
+
+**Result:** Zero alerts missed across T0 → T3. ✅
+
+---
+
+## Phase 1a-3 Final Summary
+
+| Gate | Status |
+|------|--------|
+| Part 1: Cadence reverted to 60s | ✅ (required restart) |
+| Part 2: PR #3 review - no blockers | ✅ |
+| Part 3: PR #3 merged | ✅ (0b23cc4) |
+| CENTRAL_CONFIG_SOURCE removed | ✅ |
+| central.toml retired | ✅ |
+| Services healthy | ✅ |
+| CloudEvents central* prefix | ✅ |
+| Data integrity T0→T3 | ✅ |
+
+**Phase 1a-3 Complete.**
