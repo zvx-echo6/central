@@ -10,6 +10,7 @@ User=central
 Group=central
 WorkingDirectory=/opt/central
 Environment=HOME=/opt/central
+EnvironmentFile=/etc/central/central.env
 ExecStart=/opt/central/.venv/bin/central-archive
 Restart=on-failure
 RestartSec=5
