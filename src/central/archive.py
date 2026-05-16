@@ -13,9 +13,8 @@ import nats
 from nats.js import JetStreamContext
 from nats.js.api import ConsumerConfig, DeliverPolicy, AckPolicy
 
-from central.config import load_config, Config
+from central.bootstrap_config import get_settings
 
-CONFIG_PATH = "/etc/central/central.toml"
 CONSUMER_NAME = "archive"
 STREAM_NAME = "CENTRAL_WX"
 SUBJECT_FILTER = "central.wx.>"
@@ -93,8 +92,9 @@ def _build_geom_sql(geo_data: dict[str, Any] | None) -> str | None:
 class ArchiveConsumer:
     """Archive consumer process."""
 
-    def __init__(self, config: Config) -> None:
-        self.config = config
+    def __init__(self, nats_url: str, postgres_dsn: str) -> None:
+        self._nats_url = nats_url
+        self._postgres_dsn = postgres_dsn
         self._nc: nats.NATS | None = None
         self._js: JetStreamContext | None = None
         self._pool: asyncpg.Pool | None = None
@@ -102,12 +102,12 @@ class ArchiveConsumer:
 
     async def connect(self) -> None:
         """Connect to NATS and PostgreSQL."""
-        self._nc = await nats.connect(self.config.nats.url)
+        self._nc = await nats.connect(self._nats_url)
         self._js = self._nc.jetstream()
-        logger.info("Connected to NATS", extra={"url": self.config.nats.url})
+        logger.info("Connected to NATS", extra={"url": self._nats_url})
 
         self._pool = await asyncpg.create_pool(
-            self.config.postgres.dsn,
+            self._postgres_dsn,
             min_size=1,
             max_size=5,
         )
@@ -303,8 +303,19 @@ async def async_main() -> None:
     """Async entry point."""
     setup_logging()
 
-    config = load_config(CONFIG_PATH)
-    consumer = ArchiveConsumer(config)
+    settings = get_settings()
+    logger.info(
+        "Archive starting",
+        extra={
+            "nats_url": settings.nats_url,
+            "config_source": settings.config_source,
+        },
+    )
+
+    consumer = ArchiveConsumer(
+        nats_url=settings.nats_url,
+        postgres_dsn=settings.db_dsn,
+    )
 
     loop = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()
