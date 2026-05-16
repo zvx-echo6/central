@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +33,21 @@ class Settings(BaseSettings):
         default="INFO",
         description="Logging level",
     )
+    config_source: Literal["toml", "db"] = Field(
+        default="toml",
+        description="Configuration source: 'toml' for TOML file, 'db' for database",
+    )
+    config_toml_path: Path = Field(
+        default=Path("/etc/central/central.toml"),
+        description="Path to TOML config file (when config_source=toml)",
+    )
+
+    @field_validator("config_source")
+    @classmethod
+    def validate_config_source(cls, v: str) -> str:
+        if v not in ("toml", "db"):
+            raise ValueError(f"config_source must be 'toml' or 'db', got {v!r}")
+        return v
 
 
 @lru_cache
