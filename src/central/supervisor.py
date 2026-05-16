@@ -423,9 +423,6 @@ class Supervisor:
         # Update config
         state.config = new_config
 
-        # Update adapter's cadence
-        state.adapter.cadence_s = new_cadence
-
         # Update adapter settings if needed (e.g., states list)
         if name == "nws":
             nws_config = self._adapter_config_to_nws_config(new_config)

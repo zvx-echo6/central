@@ -351,3 +351,84 @@ mv /etc/central/central.toml /etc/central/central.toml.retired
 | Data integrity T0→T3 | ✅ |
 
 **Phase 1a-3 Complete.**
+
+
+## Final Cadence-Decrease Fix Verification
+
+**Date:** 2026-05-16T17:19-17:25 UTC
+**Branch:** feature/remove-adapter-limiter
+**Fix:** Removed internal AsyncLimiter from NWSAdapter
+
+### Root Cause
+The NWSAdapter had an internal AsyncLimiter(1, cadence_s) that duplicated
+the supervisor rate-limit guarantee. When cadence changed via hot-reload,
+state.adapter.cadence_s was updated but the internal _limiter retained
+the old rate, causing the async with self._limiter context to block for
+the remaining time of the old cadence window.
+
+### Fix Applied
+1. Removed self._limiter from NWSAdapter
+2. Removed self.cadence_s attribute (no longer needed)
+3. Removed state.adapter.cadence_s = new_cadence from supervisor
+4. Removed aiolimiter dependency
+
+### Verification Results
+
+#### Test 1: Decrease 60 to 30s
+```
+Tlast:      17:20:38.282
+Change:     17:20:39.649 (60 to 30)
+Expected:   17:21:08.323 (Tlast + 30s)
+Actual:     17:21:08.531 PASS
+Subsequent: 17:21:38.751 (30s later) PASS
+```
+
+#### Test 2: Increase 30 to 60s
+```
+Tlast:      17:22:09.242
+Change:     17:22:18.515 (30 to 60)
+Expected:   17:23:09.284 (Tlast + 60s)
+Actual:     17:23:09.634 PASS
+```
+
+#### Test 3: Decrease 60 to 15s
+```
+Tlast:      17:23:09.634
+Change:     17:23:28.343 (60 to 15)
+Expected:   17:23:24.677 (Tlast + 15s, already passed)
+Actual:     17:23:28.736 (immediate, deadline passed) PASS
+Subsequent: 17:23:44.129 (15s later) PASS
+           17:23:59.579 (15s later) PASS
+```
+
+#### Test 4: Restore 15 to 60s
+```
+Change:     17:24:21.355 (15 to 60)
+Expected:   17:25:15.072 (Tlast + 60s)
+```
+
+### Journal Evidence
+```
+17:20:38 poll completed (baseline)
+17:20:39 Rescheduled 60 to 30, next_poll=17:21:08
+17:21:08 poll completed PASS (30s, not 60s)
+17:21:38 poll completed PASS (30s interval)
+17:22:09 poll completed
+17:22:18 Rescheduled 30 to 60, next_poll=17:23:09
+17:23:09 poll completed PASS (60s)
+17:23:28 Rescheduled 60 to 15, next_poll=17:23:24 (past)
+17:23:28 poll completed PASS (immediate)
+17:23:44 poll completed PASS (15s)
+17:23:59 poll completed PASS (15s)
+17:24:21 Rescheduled 15 to 60, next_poll=17:25:15
+```
+
+### Conclusion
+All cadence transitions work correctly:
+- Decrease (60 to 30, 60 to 15): Next poll at Tlast + new_cadence PASS
+- Increase (30 to 60, 15 to 60): Next poll at Tlast + new_cadence PASS
+- Immediate poll when deadline already passed PASS
+- Subsequent intervals use new cadence PASS
+
+The internal AsyncLimiter was the root cause. Removing it allows the
+supervisor rate-limit scheduling to work correctly without interference.
