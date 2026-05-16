@@ -19,7 +19,7 @@ from tenacity import (
 
 from central import __version__
 from central.adapter import SourceAdapter
-from central.config import NWSAdapterConfig
+from central.config_models import AdapterConfig, RegionConfig
 from central.models import Event, Geo
 
 logger = logging.getLogger(__name__)
@@ -194,18 +194,59 @@ class NWSAdapter(SourceAdapter):
 
     def __init__(
         self,
-        config: NWSAdapterConfig,
+        config: AdapterConfig,
         cursor_db_path: Path,
     ) -> None:
-        self.config = config
-        self.states = set(s.upper() for s in config.states)
         self.cursor_db_path = cursor_db_path
         self._session: aiohttp.ClientSession | None = None
         self._db: sqlite3.Connection | None = None
 
+        # Extract settings from unified config
+        self.contact_email: str = config.settings.get("contact_email", "")
+
+        # Parse region from settings
+        region_dict = config.settings.get("region")
+        if region_dict:
+            self.region: RegionConfig | None = RegionConfig(**region_dict)
+        else:
+            self.region = None
+
+    async def apply_config(self, new_config: AdapterConfig) -> None:
+        """Apply new configuration from hot-reload."""
+        # Update contact email
+        self.contact_email = new_config.settings.get("contact_email", "")
+
+        # Update region
+        region_dict = new_config.settings.get("region")
+        if region_dict:
+            self.region = RegionConfig(**region_dict)
+        else:
+            self.region = None
+
+        logger.info(
+            "NWS config applied",
+            extra={
+                "region": region_dict,
+                "contact_email": self.contact_email,
+            },
+        )
+
+    def _point_in_region(self, centroid: tuple[float, float] | None) -> bool:
+        """Check if centroid is within configured region bbox."""
+        if self.region is None:
+            # No region configured = accept all
+            return True
+        if centroid is None:
+            return False
+        lon, lat = centroid
+        return (
+            self.region.west <= lon <= self.region.east
+            and self.region.south <= lat <= self.region.north
+        )
+
     async def startup(self) -> None:
         """Initialize HTTP session and cursor database."""
-        user_agent = f"Central/{__version__} ({self.config.contact_email})"
+        user_agent = f"Central/{__version__} ({self.contact_email})"
         self._session = aiohttp.ClientSession(
             headers={"User-Agent": user_agent},
             timeout=aiohttp.ClientTimeout(total=30),
@@ -234,7 +275,17 @@ class NWSAdapter(SourceAdapter):
         """)
         self._db.commit()
 
-        logger.info("NWS adapter started", extra={"states": list(self.states)})
+        logger.info(
+            "NWS adapter started",
+            extra={
+                "region": {
+                    "north": self.region.north,
+                    "south": self.region.south,
+                    "east": self.region.east,
+                    "west": self.region.west,
+                } if self.region else None,
+            },
+        )
 
     async def shutdown(self) -> None:
         """Close HTTP session and database."""
@@ -366,8 +417,13 @@ class NWSAdapter(SourceAdapter):
         same_codes = geocode.get("SAME", [])
         ugc_codes = geocode.get("UGC", [])
 
-        feature_states = _extract_states_from_codes(same_codes, ugc_codes)
-        if not feature_states.intersection(self.states):
+        # Compute geometry data first
+        geometry = feature.get("geometry")
+        centroid = _compute_centroid(geometry)
+        bbox = _compute_bbox(geometry)
+
+        # Filter by region bbox (client-side filtering)
+        if not self._point_in_region(centroid):
             return None
 
         event_id = feature.get("id")
@@ -388,9 +444,6 @@ class NWSAdapter(SourceAdapter):
         severity_str = props.get("severity", "Unknown")
         severity = SEVERITY_MAP.get(severity_str)
 
-        geometry = feature.get("geometry")
-        centroid = _compute_centroid(geometry)
-        bbox = _compute_bbox(geometry)
         regions = _build_regions(same_codes, ugc_codes)
         primary_region = regions[0] if regions else None
 
