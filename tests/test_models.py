@@ -49,7 +49,7 @@ def sample_config() -> Config:
         },
         cloudevents=CloudEventsConfig(
             type_prefix="central",
-            source="central.echo6.mesh",
+            source="central.local",
             schema_version="1.0",
         ),
         nats=NATSConfig(url="nats://localhost:4222"),
