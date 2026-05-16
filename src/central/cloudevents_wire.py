@@ -5,7 +5,7 @@ from typing import Any, Union
 from cloudevents.v1.http import CloudEvent
 
 from central.config import Config, CloudEventsConfig
-from central.cloudevents_constants import DEFAULT_CLOUDEVENTS_CONFIG
+from central.cloudevents_constants import CLOUDEVENTS_CONFIG
 from central.models import Event
 
 
@@ -27,7 +27,7 @@ def wrap_event(
     """
     # Resolve CloudEventsConfig from various input types
     if config is None:
-        ce_config = DEFAULT_CLOUDEVENTS_CONFIG
+        ce_config = CLOUDEVENTS_CONFIG
     elif isinstance(config, CloudEventsConfig):
         ce_config = config
     else:
