@@ -193,3 +193,66 @@ All upstream alerts found in DB ✓
 | 6 | Data integrity | ✅ All alerts in DB |
 
 **Phase B Complete.** System running stable on DB-backed config.
+
+
+---
+
+## Cadence Revert (Close-out)
+
+**Timestamp:** 2026-05-16T03:54:14Z
+
+### Issue Discovered
+
+During close-out verification, polls were observed at 90s intervals despite
+DB showing `cadence_s = 60`. Investigation revealed the live reschedule
+from 90→60 (done at 03:23:08 during Phase B) didn't properly update the
+in-flight scheduling.
+
+### Resolution
+
+Supervisor restart was required to clear stale state:
+
+```bash
+systemctl restart central-supervisor
+```
+
+### Post-Restart Verification
+
+**DB State:**
+```sql
+SELECT name, cadence_s, updated_at FROM config.adapters WHERE name='nws';
+```
+```
+ name | cadence_s |          updated_at
+------+-----------+-------------------------------
+ nws  |        60 | 2026-05-16 03:50:53.210963+00
+```
+
+**Poll Intervals After Restart:**
+```
+03:54:14.621376 - NWS poll completed (first poll after restart)
+03:55:15.028963 - NWS poll completed (61s later) ✅
+03:56:15.429013 - NWS poll completed (60s later) ✅
+```
+
+**Startup Log:**
+```json
+{"ts": "2026-05-16T03:54:14.318479+00:00", "msg": "Adapter started", "adapter": "nws", "cadence_s": 60}
+```
+
+### Bug Note
+
+The cadence DECREASE (90→60) rate-limit test from Phase B showed correct
+log output ("Rescheduled adapter" with new_cadence_s=60) but the actual
+scheduling didn't update properly. The increase test (60→90) worked
+correctly.
+
+**Root cause:** Unknown - requires investigation. The `_reschedule_adapter`
+method updates `state.config` and `state.adapter.cadence_s`, and signals
+via `cancel_event`, but the scheduling loop may not be re-evaluating
+correctly for decreases.
+
+**Mitigation:** After any cadence change, verify actual poll intervals match
+expected cadence. If not, restart supervisor.
+
+**Result:** Cadence confirmed at 60s after restart. ✅
