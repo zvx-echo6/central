@@ -308,7 +308,7 @@ async def async_main() -> None:
         "Archive starting",
         extra={
             "nats_url": settings.nats_url,
-            "config_source": settings.config_source,
+            
         },
     )
 

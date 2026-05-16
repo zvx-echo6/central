@@ -15,9 +15,9 @@ from nats.js import JetStreamContext
 
 from central.adapters.nws import NWSAdapter
 from central.cloudevents_wire import wrap_event
-from central.config import load_config, Config, NWSAdapterConfig
+from central.config import NWSAdapterConfig
 from central.config_models import AdapterConfig
-from central.config_source import ConfigSource, create_config_source
+from central.config_source import ConfigSource, DbConfigSource
 from central.bootstrap_config import get_settings
 from central.models import subject_for_event
 
@@ -528,7 +528,7 @@ class Supervisor:
         for config in enabled_adapters:
             await self._start_adapter(config)
 
-        # Start config watcher (for DB source, this runs forever; for TOML, returns immediately)
+        # Start config watcher (runs forever, calling callback on changes)
         self._config_watch_task = asyncio.create_task(
             self._config_source.watch_for_changes(self._on_config_change)
         )
@@ -579,37 +579,22 @@ async def async_main() -> None:
 
     settings = get_settings()
     logger.info(
-        "Config source: %s",
-        settings.config_source,
-        extra={"config_source": settings.config_source},
+        "Config source: db",
+        extra={"config_source": "db"},
     )
 
-    # Create config source based on setting
-    config_source = await create_config_source(
-        source_type=settings.config_source,
-        dsn=settings.db_dsn,
-        toml_path=settings.config_toml_path,
-    )
-
-    # CloudEvents config: try TOML first, fall back to code defaults
-    # (CloudEvents envelope format is protocol-level, not operator-configurable)
-    cloudevents_config = None
-    if settings.config_source == "toml":
-        try:
-            toml_config = load_config(str(settings.config_toml_path))
-            cloudevents_config = toml_config
-        except Exception:
-            pass  # Will use defaults from cloudevents_constants
+    # Create database config source
+    config_source = await DbConfigSource.create(settings.db_dsn)
 
     supervisor = Supervisor(
         config_source=config_source,
         nats_url=settings.nats_url,
-        cloudevents_config=cloudevents_config,
+        # CloudEvents uses protocol-level defaults from cloudevents_constants
+        cloudevents_config=None,
     )
     logger.info(
-        "CloudEvents config: %s",
-        "TOML" if cloudevents_config else "defaults",
-        extra={"cloudevents_source": "toml" if cloudevents_config else "defaults"},
+        "CloudEvents config: defaults",
+        extra={"cloudevents_source": "defaults"},
     )
 
     loop = asyncio.get_running_loop()
