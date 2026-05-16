@@ -2,6 +2,10 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from central.config_models import AdapterConfig
 
 from central.models import Event
 
@@ -15,7 +19,6 @@ class SourceAdapter(ABC):
     """
     
     name: str  # short identifier, e.g. "nws"
-    cadence_s: int  # seconds between poll() calls
     
     @abstractmethod
     async def poll(self) -> AsyncIterator[Event]:
@@ -23,6 +26,17 @@ class SourceAdapter(ABC):
         Poll the source for new events.
         
         Yields Event objects for each new/updated event found.
+        """
+        ...
+    
+    @abstractmethod
+    async def apply_config(self, new_config: "AdapterConfig") -> None:
+        """
+        Apply new configuration to the adapter.
+        
+        Called by supervisor when config changes via hot-reload.
+        The adapter should extract relevant settings from
+        new_config.settings and update its internal state.
         """
         ...
     

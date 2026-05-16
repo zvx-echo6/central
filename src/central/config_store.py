@@ -12,7 +12,7 @@ from typing import Any
 
 import asyncpg
 
-from central.config_models import AdapterConfig
+from central.config_models import AdapterConfig, StreamConfig
 from central.crypto import decrypt, encrypt
 
 logger = logging.getLogger(__name__)
@@ -127,6 +127,69 @@ class ConfigStore:
                 WHERE name = $1
                 """,
                 name,
+            )
+
+    # -------------------------------------------------------------------------
+    # Stream configuration
+    # -------------------------------------------------------------------------
+
+    async def get_stream(self, name: str) -> StreamConfig | None:
+        """Get configuration for a specific stream."""
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT name, max_age_s, max_bytes, managed_max_bytes, updated_at
+                FROM config.streams
+                WHERE name = $1
+                """,
+                name,
+            )
+        if row is None:
+            return None
+        return StreamConfig(**dict(row))
+
+    async def list_streams(self) -> list[StreamConfig]:
+        """List all configured streams."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT name, max_age_s, max_bytes, managed_max_bytes, updated_at
+                FROM config.streams
+                ORDER BY name
+                """
+            )
+        return [StreamConfig(**dict(row)) for row in rows]
+
+    async def upsert_stream(self, name: str, max_age_s: int) -> None:
+        """Insert or update a stream's max_age_s (operator-facing)."""
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO config.streams (name, max_age_s, updated_at)
+                VALUES ($1, $2, now())
+                ON CONFLICT (name) DO UPDATE SET
+                    max_age_s = EXCLUDED.max_age_s,
+                    updated_at = now()
+                """,
+                name,
+                max_age_s,
+            )
+
+    async def update_stream_max_bytes(self, name: str, max_bytes: int) -> None:
+        """Update a stream's max_bytes (supervisor-internal).
+
+        This update only touches max_bytes, which does NOT trigger
+        the column-filtered NOTIFY (only max_age_s changes fire NOTIFY).
+        """
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE config.streams
+                SET max_bytes = $2, updated_at = now()
+                WHERE name = $1
+                """,
+                name,
+                max_bytes,
             )
 
     # -------------------------------------------------------------------------
