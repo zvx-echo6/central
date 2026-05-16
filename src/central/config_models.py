@@ -22,6 +22,8 @@ class RegionConfig(BaseModel):
             )
         if self.east == self.west:
             raise ValueError("east and west cannot be equal (zero-width bbox)")
+        if self.east < self.west:
+            raise ValueError("antimeridian-crossing bboxes not supported")
         return self
 
 

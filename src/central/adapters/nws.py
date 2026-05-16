@@ -21,6 +21,7 @@ from central import __version__
 from central.adapter import SourceAdapter
 from central.config_models import AdapterConfig, RegionConfig
 from central.models import Event, Geo
+from shapely.geometry import box as shapely_box, shape as shapely_shape
 
 logger = logging.getLogger(__name__)
 
@@ -231,18 +232,34 @@ class NWSAdapter(SourceAdapter):
             },
         )
 
-    def _point_in_region(self, centroid: tuple[float, float] | None) -> bool:
-        """Check if centroid is within configured region bbox."""
+    def _geometry_intersects_region(self, geometry: dict[str, Any] | None) -> bool:
+        """Check if feature geometry intersects configured region bbox.
+        
+        Uses Shapely for proper polygon intersection rather than centroid-only
+        filtering, avoiding false negatives on large alert polygons.
+        """
         if self.region is None:
             # No region configured = accept all
             return True
-        if centroid is None:
+        if geometry is None:
             return False
-        lon, lat = centroid
-        return (
-            self.region.west <= lon <= self.region.east
-            and self.region.south <= lat <= self.region.north
-        )
+        
+        try:
+            # Build region box (west, south, east, north)
+            region_box = shapely_box(
+                self.region.west,
+                self.region.south,
+                self.region.east,
+                self.region.north,
+            )
+            
+            # Parse GeoJSON geometry to shapely shape
+            feature_shape = shapely_shape(geometry)
+            
+            return region_box.intersects(feature_shape)
+        except Exception:
+            # If geometry parsing fails, fall back to rejecting
+            return False
 
     async def startup(self) -> None:
         """Initialize HTTP session and cursor database."""
@@ -423,7 +440,7 @@ class NWSAdapter(SourceAdapter):
         bbox = _compute_bbox(geometry)
 
         # Filter by region bbox (client-side filtering)
-        if not self._point_in_region(centroid):
+        if not self._geometry_intersects_region(geometry):
             return None
 
         event_id = feature.get("id")
