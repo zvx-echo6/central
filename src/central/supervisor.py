@@ -15,6 +15,7 @@ from nats.js import JetStreamContext
 
 from central.adapter import SourceAdapter
 from central.adapters.nws import NWSAdapter
+from central.adapters.firms import FIRMSAdapter
 from central.cloudevents_wire import wrap_event
 from central.config_models import AdapterConfig
 from central.config_source import ConfigSource, DbConfigSource
@@ -23,12 +24,19 @@ from central.bootstrap_config import get_settings
 from central.models import subject_for_event
 from central.stream_manager import StreamManager
 
+# Adapter registry - add new adapters here
+_ADAPTER_REGISTRY: dict[str, type[SourceAdapter]] = {
+    "nws": NWSAdapter,
+    "firms": FIRMSAdapter,
+}
+
 CURSOR_DB_PATH = Path("/var/lib/central/cursors.db")
 
 # Stream subject mappings
 STREAM_SUBJECTS = {
     "CENTRAL_WX": ["central.wx.>"],
     "CENTRAL_META": ["central.meta.>"],
+    "CENTRAL_FIRE": ["central.fire.>"],
 }
 
 # Recompute interval for stream max_bytes (1 hour)
@@ -150,10 +158,14 @@ class Supervisor:
 
     def _create_adapter(self, config: AdapterConfig) -> SourceAdapter:
         """Create an adapter instance based on config name."""
-        if config.name == "nws":
-            return NWSAdapter(config=config, cursor_db_path=CURSOR_DB_PATH)
-        else:
+        cls = _ADAPTER_REGISTRY.get(config.name)
+        if cls is None:
             raise ValueError(f"Unknown adapter type: {config.name}")
+        return cls(
+            config=config,
+            config_store=self._config_store,
+            cursor_db_path=CURSOR_DB_PATH,
+        )
 
     async def _run_adapter_loop(self, state: AdapterState) -> None:
         """Run an adapter poll loop with rate-limit aware scheduling."""
