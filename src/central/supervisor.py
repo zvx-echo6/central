@@ -16,6 +16,7 @@ from nats.js import JetStreamContext
 from central.adapter import SourceAdapter
 from central.adapters.nws import NWSAdapter
 from central.adapters.firms import FIRMSAdapter
+from central.adapters.usgs_quake import USGSQuakeAdapter
 from central.cloudevents_wire import wrap_event
 from central.config_models import AdapterConfig
 from central.config_source import ConfigSource, DbConfigSource
@@ -28,6 +29,7 @@ from central.stream_manager import StreamManager
 _ADAPTER_REGISTRY: dict[str, type[SourceAdapter]] = {
     "nws": NWSAdapter,
     "firms": FIRMSAdapter,
+    "usgs_quake": USGSQuakeAdapter,
 }
 
 CURSOR_DB_PATH = Path("/var/lib/central/cursors.db")
@@ -37,6 +39,7 @@ STREAM_SUBJECTS = {
     "CENTRAL_WX": ["central.wx.>"],
     "CENTRAL_META": ["central.meta.>"],
     "CENTRAL_FIRE": ["central.fire.>"],
+    "CENTRAL_QUAKE": ["central.quake.>"],
 }
 
 # Recompute interval for stream max_bytes (1 hour)

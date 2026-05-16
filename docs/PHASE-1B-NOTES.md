@@ -91,3 +91,22 @@ Per stream, display:
 - GUI should display warning banner when SNPP is enabled and date approaches
 - Recommend adding NOAA-21 to satellites list before SNPP EOL
 - After EOL, adapter will fail to fetch SNPP data (404); GUI should surface this
+
+## USGS Quake Adapter Configuration
+
+### Feed Selection
+- Default: all_hour (updated every minute, low latency)
+- Options: all_hour, all_day, all_week, all_month
+- Operators can switch to all_day for less frequent polling with broader window
+- Stored in config.adapters.settings.feed
+
+### Magnitude Tier Color Coding
+For GUI display of earthquake events:
+- **minor** (M < 3.0): Gray
+- **light** (3.0-3.9): Yellow
+- **moderate** (4.0-4.9): Orange
+- **strong** (5.0-5.9): Red
+- **major** (6.0-6.9): Dark Red
+- **great** (M >= 7.0): Purple
+
+Colors follow USGS conventions for earthquake hazard communication.
