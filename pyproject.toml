@@ -12,7 +12,6 @@ license = {text = "MIT"}
 authors = [{name = "Matt Johnson"}]
 dependencies = [
     "aiohttp>=3.13.5",
-    "aiolimiter>=1.2.1",
     "asyncpg>=0.31.0",
     "cloudevents>=2.0.0",
     "cryptography>=44.0.0",
