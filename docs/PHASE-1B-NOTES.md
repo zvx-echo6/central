@@ -53,3 +53,41 @@ Per stream, display:
 - Supervisor receives NOTIFY and hot-reloads
 - No service restarts required for config changes
 - Stream retention changes apply within 5 seconds
+
+## FIRMS Adapter Configuration
+
+### MAP_KEY Management
+- Display key alias () and  timestamp
+- Allow operator to rotate key value (re-encrypt new key)
+- Show warning if key not present (polling disabled)
+- No key value display (security)
+
+### Satellite Selection
+- Toggle individual satellites: VIIRS_SNPP, VIIRS_NOAA20, VIIRS_NOAA21
+- Stored in  array
+- Changes hot-reload to adapter without restart
+
+### SNPP End-of-Life Notice
+- NASA timeline: SNPP mission ends ~October 2026
+- GUI should display warning banner when SNPP is enabled and date approaches
+- Recommend adding NOAA-21 to satellites list before SNPP EOL
+- After EOL, adapter will fail to fetch SNPP data (404); GUI should surface this
+
+## FIRMS Adapter Configuration
+
+### MAP_KEY Management
+- Display key alias (firms) and last_used_at timestamp
+- Allow operator to rotate key value (re-encrypt new key)
+- Show warning if key not present (polling disabled)
+- No key value display (security)
+
+### Satellite Selection
+- Toggle individual satellites: VIIRS_SNPP, VIIRS_NOAA20, VIIRS_NOAA21
+- Stored in config.adapters.settings.satellites array
+- Changes hot-reload to adapter without restart
+
+### SNPP End-of-Life Notice
+- NASA timeline: SNPP mission ends ~October 2026
+- GUI should display warning banner when SNPP is enabled and date approaches
+- Recommend adding NOAA-21 to satellites list before SNPP EOL
+- After EOL, adapter will fail to fetch SNPP data (404); GUI should surface this
