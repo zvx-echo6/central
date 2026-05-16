@@ -1,7 +1,7 @@
 """Tests for database-backed configuration store.
 
 These tests require a real Postgres database. Set CENTRAL_TEST_DB_DSN
-environment variable or the tests will use the default test database.
+environment variable to override the default test database connection.
 """
 
 import asyncio
@@ -16,10 +16,11 @@ import pytest_asyncio
 from central.config_store import ConfigStore
 from central.crypto import KEY_SIZE, clear_key_cache
 
-# Test database DSN - uses central_test database
+# Test database DSN - uses central_test database with well-known test password.
+# Override via CENTRAL_TEST_DB_DSN env var if your test DB differs.
 TEST_DB_DSN = os.environ.get(
     "CENTRAL_TEST_DB_DSN",
-    "postgresql://central:3LNVFQJHsK3e7dOcAdvK3oS6d70f@localhost/central_test",
+    "postgresql://central_test:testpass@localhost/central_test",
 )
 
 
@@ -308,3 +309,31 @@ class TestNotifications:
                 await listen_task
             except asyncio.CancelledError:
                 pass
+
+
+class TestListenerReconnect:
+    """Tests for listener reconnection on connection loss."""
+
+    @pytest.mark.asyncio
+    async def test_listener_cancellation_propagates(
+        self, config_store: ConfigStore
+    ) -> None:
+        """Cancellation cleanly stops the listener without reconnect loop."""
+        async def callback(table: str, key: str) -> None:
+            pass
+
+        listen_task = asyncio.create_task(config_store.listen_for_changes(callback))
+
+        # Give listener time to start
+        await asyncio.sleep(0.1)
+
+        # Cancel and verify it stops
+        listen_task.cancel()
+        try:
+            await asyncio.wait_for(listen_task, timeout=2.0)
+        except asyncio.CancelledError:
+            pass  # Expected
+        except asyncio.TimeoutError:
+            pytest.fail("Listener did not stop after cancellation")
+
+        assert listen_task.cancelled() or listen_task.done()

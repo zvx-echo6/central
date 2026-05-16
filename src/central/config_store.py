@@ -6,6 +6,7 @@ Postgres LISTEN/NOTIFY for real-time config change notifications.
 
 import asyncio
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -13,6 +14,8 @@ import asyncpg
 
 from central.config_models import AdapterConfig
 from central.crypto import decrypt, encrypt
+
+logger = logging.getLogger(__name__)
 
 
 async def _setup_json_codec(conn: asyncpg.Connection) -> None:
@@ -188,36 +191,79 @@ class ConfigStore:
         Runs forever, calling callback(table, key) each time a change is
         detected. The callback can be sync or async.
 
+        On connection loss, automatically reconnects with exponential backoff.
+        Cancellation (via task.cancel()) propagates cleanly.
+
         Args:
             callback: Function called with (table_name, row_key) on each change.
         """
-        conn = await self._pool.acquire()
-        try:
+        backoff = 1.0
+        max_backoff = 30.0
 
-            def notification_handler(
-                conn: asyncpg.Connection,
-                pid: int,
-                channel: str,
-                payload: str,
-            ) -> None:
-                # payload format: "table_name:key"
-                if ":" in payload:
-                    table, key = payload.split(":", 1)
-                else:
-                    table, key = payload, ""
+        while True:
+            conn = None
+            try:
+                conn = await self._pool.acquire()
+                logger.info("Config listener connected to database")
+                backoff = 1.0  # Reset backoff on successful connect
 
-                result = callback(table, key)
-                if asyncio.iscoroutine(result):
-                    asyncio.create_task(result)
+                def notification_handler(
+                    conn: asyncpg.Connection,
+                    pid: int,
+                    channel: str,
+                    payload: str,
+                ) -> None:
+                    # payload format: "table_name:key"
+                    if ":" in payload:
+                        table, key = payload.split(":", 1)
+                    else:
+                        table, key = payload, ""
 
-            await conn.add_listener("config_changed", notification_handler)
+                    result = callback(table, key)
+                    if asyncio.iscoroutine(result):
+                        asyncio.create_task(result)
 
-            # Keep connection alive
-            while True:
-                await asyncio.sleep(60)
-                # Periodic keepalive query
-                await conn.execute("SELECT 1")
+                await conn.add_listener("config_changed", notification_handler)
 
-        finally:
-            await conn.remove_listener("config_changed", notification_handler)
-            await self._pool.release(conn)
+                try:
+                    # Keep connection alive with periodic keepalive
+                    while True:
+                        await asyncio.sleep(60)
+                        await conn.execute("SELECT 1")
+                finally:
+                    await conn.remove_listener("config_changed", notification_handler)
+
+            except asyncio.CancelledError:
+                # Cancellation must propagate cleanly
+                logger.info("Config listener cancelled")
+                raise
+
+            except (
+                asyncpg.PostgresConnectionError,
+                asyncpg.InterfaceError,
+                ConnectionResetError,
+                OSError,
+            ) as e:
+                logger.warning(
+                    "Config listener connection lost, reconnecting in %.1fs: %s",
+                    backoff,
+                    e,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
+
+            except Exception as e:
+                # Unexpected error - log and retry with backoff
+                logger.exception(
+                    "Config listener unexpected error, reconnecting in %.1fs",
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
+
+            finally:
+                if conn is not None:
+                    try:
+                        await self._pool.release(conn)
+                    except Exception:
+                        pass  # Connection may already be invalid
