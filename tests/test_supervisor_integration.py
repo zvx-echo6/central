@@ -94,10 +94,11 @@ class MockConfigSource:
 class MockNWSAdapter:
     """Mock NWSAdapter that tracks poll calls and allows control."""
 
-    def __init__(self, config, cursor_db_path) -> None:
+    def __init__(self, config, config_store, cursor_db_path) -> None:
         self.config = config
+        self._config_store = config_store
         self.cadence_s = config.cadence_s
-        self.states = set(s.upper() for s in config.states)
+        self.states = set(s.upper() for s in config.settings.get("states", []))
         self.poll_count = 0
         self.poll_times: list[datetime] = []
         self._shutdown = False
@@ -107,6 +108,12 @@ class MockNWSAdapter:
 
     async def shutdown(self) -> None:
         self._shutdown = True
+
+    async def apply_config(self, config: AdapterConfig) -> None:
+        """Apply new configuration."""
+        self.config = config
+        self.cadence_s = config.cadence_s
+        self.states = set(s.upper() for s in config.settings.get("states", []))
 
     async def poll(self):
         """Yield nothing - we just track that poll was called."""
@@ -139,6 +146,15 @@ def mock_nats():
     return mock_nc
 
 
+@pytest.fixture
+def mock_config_store():
+    """Mock ConfigStore for testing Supervisor."""
+    store = MagicMock()
+    store.list_streams = AsyncMock(return_value=[])
+    store.get_stream = AsyncMock(return_value=None)
+    return store
+
+
 class TestEnableDisableEnableIntegration:
     """Integration tests for enable→disable→enable flow through Supervisor.
 
@@ -148,7 +164,7 @@ class TestEnableDisableEnableIntegration:
 
     @pytest.mark.asyncio
     async def test_enable_disable_enable_gap_longer_than_cadence(
-        self, mock_nats, tmp_path: Path
+        self, mock_nats, mock_config_store, tmp_path: Path
     ) -> None:
         """Test A: Re-enable after gap longer than cadence polls immediately.
 
@@ -174,6 +190,7 @@ class TestEnableDisableEnableIntegration:
 
         supervisor = Supervisor(
             config_source=config_source,
+            config_store=mock_config_store,
             nats_url="nats://localhost:4222",
             cloudevents_config=None,
         )
@@ -256,7 +273,7 @@ class TestEnableDisableEnableIntegration:
 
     @pytest.mark.asyncio
     async def test_enable_disable_enable_gap_shorter_than_cadence(
-        self, mock_nats, tmp_path: Path
+        self, mock_nats, mock_config_store, tmp_path: Path
     ) -> None:
         """Test B: Re-enable after gap shorter than cadence respects rate limit.
 
@@ -283,6 +300,7 @@ class TestEnableDisableEnableIntegration:
 
         supervisor = Supervisor(
             config_source=config_source,
+            config_store=mock_config_store,
             nats_url="nats://localhost:4222",
             cloudevents_config=None,
         )
@@ -362,7 +380,7 @@ class TestEnableDisableEnableIntegration:
 
     @pytest.mark.asyncio
     async def test_enable_disable_delete_readd_fresh_state(
-        self, mock_nats, tmp_path: Path
+        self, mock_nats, mock_config_store, tmp_path: Path
     ) -> None:
         """Test C: Delete then re-add clears preserved state.
 
@@ -388,6 +406,7 @@ class TestEnableDisableEnableIntegration:
 
         supervisor = Supervisor(
             config_source=config_source,
+            config_store=mock_config_store,
             nats_url="nats://localhost:4222",
             cloudevents_config=None,
         )
@@ -452,7 +471,7 @@ class TestEnableDisableEnableIntegration:
 
     @pytest.mark.asyncio
     async def test_stop_preserves_state_start_reuses_it(
-        self, mock_nats, tmp_path: Path
+        self, mock_nats, mock_config_store, tmp_path: Path
     ) -> None:
         """Verify _stop_adapter preserves state and _start_adapter reuses it."""
         from central.supervisor import Supervisor
@@ -470,6 +489,7 @@ class TestEnableDisableEnableIntegration:
 
         supervisor = Supervisor(
             config_source=config_source,
+            config_store=mock_config_store,
             nats_url="nats://localhost:4222",
             cloudevents_config=None,
         )
@@ -508,7 +528,7 @@ class TestEnableDisableEnableIntegration:
 
     @pytest.mark.asyncio
     async def test_remove_adapter_clears_state(
-        self, mock_nats, tmp_path: Path
+        self, mock_nats, mock_config_store, tmp_path: Path
     ) -> None:
         """Verify _remove_adapter fully clears state."""
         from central.supervisor import Supervisor
@@ -526,6 +546,7 @@ class TestEnableDisableEnableIntegration:
 
         supervisor = Supervisor(
             config_source=config_source,
+            config_store=mock_config_store,
             nats_url="nats://localhost:4222",
             cloudevents_config=None,
         )
