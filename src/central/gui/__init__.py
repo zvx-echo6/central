@@ -37,6 +37,8 @@ def _configure_csrf() -> None:
 
     class CsrfSettings(BaseModel):
         secret_key: str
+        token_location: str = "body"
+        token_key: str = "csrf_token"
 
     @CsrfProtect.load_config
     def get_csrf_config():
