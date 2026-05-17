@@ -23,11 +23,23 @@ from central.gui.db import get_pool
 
 router = APIRouter()
 
+# Streams to display on dashboard
+DASHBOARD_STREAMS = ["CENTRAL_WX", "CENTRAL_FIRE", "CENTRAL_QUAKE", "CENTRAL_META"]
+
 
 def _get_templates():
     """Get templates instance (deferred import to avoid circular)."""
     from central.gui import templates
     return templates
+
+
+def _format_bytes(size: int) -> str:
+    """Format bytes as human-readable string."""
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024:
+            return f"{size:.1f} {unit}" if unit != "B" else f"{size} {unit}"
+        size /= 1024
+    return f"{size:.1f} PB"
 
 
 def _set_session_cookie(
@@ -74,6 +86,155 @@ async def index(request: Request, csrf_protect: CsrfProtect = Depends()) -> HTML
     )
     csrf_protect.set_csrf_cookie(signed_token, response)
     return response
+
+
+@router.get("/dashboard/events", response_class=HTMLResponse)
+async def dashboard_events(request: Request) -> HTMLResponse:
+    """Get events by adapter for the last 24 hours."""
+    templates = _get_templates()
+    pool = get_pool()
+
+    events = []
+    error = None
+
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT adapter, COUNT(*) as count
+                FROM events
+                WHERE received > NOW() - INTERVAL '24 hours'
+                GROUP BY adapter
+                ORDER BY count DESC
+                """
+            )
+            events = [{"adapter": row["adapter"], "count": row["count"]} for row in rows]
+    except Exception as e:
+        error = f"Database error: {str(e)}"
+
+    return templates.TemplateResponse(
+        request=request,
+        name="_dashboard_events.html",
+        context={"events": events, "error": error},
+    )
+
+
+@router.get("/dashboard/streams", response_class=HTMLResponse)
+async def dashboard_streams(request: Request) -> HTMLResponse:
+    """Get stream sizes from NATS JetStream."""
+    from central.gui.nats import get_js
+
+    templates = _get_templates()
+    js = get_js()
+
+    streams = None
+    error = None
+
+    if js is None:
+        error = "NATS unavailable"
+    else:
+        streams = []
+        for stream_name in DASHBOARD_STREAMS:
+            try:
+                info = await js.stream_info(stream_name)
+                streams.append({
+                    "name": stream_name,
+                    "messages": info.state.messages,
+                    "size": _format_bytes(info.state.bytes),
+                    "error": None,
+                })
+            except Exception:
+                streams.append({
+                    "name": stream_name,
+                    "messages": 0,
+                    "size": "0 B",
+                    "error": "unavailable",
+                })
+
+    return templates.TemplateResponse(
+        request=request,
+        name="_dashboard_streams.html",
+        context={"streams": streams, "error": error},
+    )
+
+
+@router.get("/dashboard/polls", response_class=HTMLResponse)
+async def dashboard_polls(request: Request) -> HTMLResponse:
+    """Get last poll times for each adapter."""
+    from central.gui.nats import get_js
+
+    templates = _get_templates()
+    pool = get_pool()
+    js = get_js()
+
+    adapters = []
+    error = None
+
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT name FROM config.adapters ORDER BY name"
+            )
+            adapter_names = [row["name"] for row in rows]
+    except Exception as e:
+        error = f"Database error: {str(e)}"
+        return templates.TemplateResponse(
+            request=request,
+            name="_dashboard_polls.html",
+            context={"adapters": [], "error": error},
+        )
+
+    if js is None:
+        error = "NATS unavailable"
+        adapters = [{"name": name, "last_poll": None, "status": None, "error": "NATS unavailable"} for name in adapter_names]
+    else:
+        for name in adapter_names:
+            try:
+                # Get last message from CENTRAL_META for this adapter
+                sub = await js.pull_subscribe(
+                    f"central.meta.{name}.status",
+                    durable=f"dashboard-poll-{name}",
+                    stream="CENTRAL_META",
+                )
+                try:
+                    msgs = await sub.fetch(1, timeout=1.0)
+                    if msgs:
+                        import json
+                        data = json.loads(msgs[0].data.decode())
+                        last_poll = data.get("data", {}).get("time", "—")
+                        adapters.append({
+                            "name": name,
+                            "last_poll": last_poll,
+                            "status": "✓",
+                            "error": None,
+                        })
+                    else:
+                        adapters.append({
+                            "name": name,
+                            "last_poll": None,
+                            "status": None,
+                            "error": None,
+                        })
+                except Exception:
+                    adapters.append({
+                        "name": name,
+                        "last_poll": None,
+                        "status": None,
+                        "error": None,
+                    })
+            except Exception:
+                adapters.append({
+                    "name": name,
+                    "last_poll": None,
+                    "status": None,
+                    "error": "unavailable",
+                })
+
+    return templates.TemplateResponse(
+        request=request,
+        name="_dashboard_polls.html",
+        context={"adapters": adapters, "error": error},
+    )
 
 
 @router.get("/setup", response_class=HTMLResponse)

@@ -1,12 +1,27 @@
 {% extends "base.html" %}
 
-{% block title %}Central — Coming Soon{% endblock %}
+{% block title %}Central — Dashboard{% endblock %}
 
 {% block content %}
-<article>
-    <header>
-        <h1>Central</h1>
-    </header>
-    <p>Data hub GUI — coming soon.</p>
-</article>
+<h1>Dashboard</h1>
+<div class="grid">
+    <article>
+        <header>Events (24h)</header>
+        <div hx-get="/dashboard/events" hx-trigger="load, every 10s" hx-swap="innerHTML">
+            Loading...
+        </div>
+    </article>
+    <article>
+        <header>Stream Sizes</header>
+        <div hx-get="/dashboard/streams" hx-trigger="load, every 10s" hx-swap="innerHTML">
+            Loading...
+        </div>
+    </article>
+    <article>
+        <header>Last Poll Times</header>
+        <div hx-get="/dashboard/polls" hx-trigger="load, every 10s" hx-swap="innerHTML">
+            Loading...
+        </div>
+    </article>
+</div>
 {% endblock %}

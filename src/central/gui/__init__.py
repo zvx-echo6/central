@@ -80,11 +80,15 @@ async def lifespan(app: FastAPI):
 
     from central.bootstrap_config import get_settings
     from central.gui.db import close_pool, init_pool
+    from central.gui.nats import close_nats, init_nats
 
     settings = get_settings()
 
     # Initialize database pool
     await init_pool(settings.db_dsn)
+
+    # Initialize NATS connection
+    await init_nats(settings.nats_url)
 
     # Start session cleanup task
     _shutdown_event = asyncio.Event()
@@ -103,6 +107,7 @@ async def lifespan(app: FastAPI):
         except asyncio.TimeoutError:
             _cleanup_task.cancel()
 
+    await close_nats()
     await close_pool()
     logger.info("Central GUI stopped")
 
