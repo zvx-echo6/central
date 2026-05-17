@@ -136,6 +136,50 @@ def _create_app() -> FastAPI:
     # Include routes
     app.include_router(router)
 
+    # CSRF exception handler - return friendly error instead of 500
+    from fastapi_csrf_protect.exceptions import CsrfProtectError
+    from fastapi.responses import RedirectResponse
+
+    @app.exception_handler(CsrfProtectError)
+    async def csrf_exception_handler(request, exc: CsrfProtectError):
+        from fastapi_csrf_protect import CsrfProtect
+        
+        csrf_protect = CsrfProtect()
+        csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+        
+        if request.url.path == "/login":
+            response = templates.TemplateResponse(
+                request=request,
+                name="login.html",
+                context={"csrf_token": csrf_token, "error": "Your session expired. Please try again."},
+            )
+            csrf_protect.set_csrf_cookie(signed_token, response)
+            return response
+        elif request.url.path == "/setup":
+            response = templates.TemplateResponse(
+                request=request,
+                name="setup.html",
+                context={"csrf_token": csrf_token, "error": "Your session expired. Please try again."},
+            )
+            csrf_protect.set_csrf_cookie(signed_token, response)
+            return response
+        elif request.url.path == "/logout":
+            return RedirectResponse("/login", status_code=302)
+        elif request.url.path == "/change-password":
+            response = templates.TemplateResponse(
+                request=request,
+                name="change_password.html",
+                context={"csrf_token": csrf_token, "error": "Your session expired. Please try again."},
+            )
+            csrf_protect.set_csrf_cookie(signed_token, response)
+            return response
+        elif request.url.path.startswith("/adapters/"):
+            # Redirect back to adapters list
+            return RedirectResponse("/adapters", status_code=302)
+        else:
+            # Fallback: redirect to login
+            return RedirectResponse("/login", status_code=302)
+
     return app
 
 

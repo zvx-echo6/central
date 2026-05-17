@@ -182,6 +182,7 @@ async def dashboard_streams(request: Request) -> HTMLResponse:
 async def dashboard_polls(request: Request) -> HTMLResponse:
     """Get last poll times for each adapter."""
     from central.gui.nats import get_js
+    from nats.js.errors import NotFoundError
 
     templates = _get_templates()
     pool = get_pool()
@@ -210,43 +211,31 @@ async def dashboard_polls(request: Request) -> HTMLResponse:
     else:
         for name in adapter_names:
             try:
-                # Get last message from CENTRAL_META for this adapter
-                sub = await js.pull_subscribe(
-                    f"central.meta.{name}.status",
-                    durable=f"dashboard-poll-{name}",
-                    stream="CENTRAL_META",
+                msg = await js.get_last_msg(
+                    "CENTRAL_META",
+                    f"central.meta.adapter.{name}.status",
                 )
-                try:
-                    msgs = await sub.fetch(1, timeout=1.0)
-                    if msgs:
-                        data = json.loads(msgs[0].data.decode())
-                        last_poll = data.get("data", {}).get("time", "—")
-                        adapters.append({
-                            "name": name,
-                            "last_poll": last_poll,
-                            "status": "✓",
-                            "error": None,
-                        })
-                    else:
-                        adapters.append({
-                            "name": name,
-                            "last_poll": None,
-                            "status": None,
-                            "error": None,
-                        })
-                except Exception:
-                    adapters.append({
-                        "name": name,
-                        "last_poll": None,
-                        "status": None,
-                        "error": None,
-                    })
-            except Exception:
+                data = json.loads(msg.data.decode())
+                adapters.append({
+                    "name": name,
+                    "last_poll": data.get("ts"),
+                    "status": "✓" if data.get("ok") else "✗",
+                    "error": data.get("error") if not data.get("ok") else None,
+                })
+            except NotFoundError:
+                # No status message for this adapter yet
                 adapters.append({
                     "name": name,
                     "last_poll": None,
                     "status": None,
-                    "error": "unavailable",
+                    "error": None,
+                })
+            except Exception as e:
+                adapters.append({
+                    "name": name,
+                    "last_poll": None,
+                    "status": "?",
+                    "error": str(e),
                 })
 
     return templates.TemplateResponse(
