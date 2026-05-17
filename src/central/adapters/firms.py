@@ -330,7 +330,7 @@ class FIRMSAdapter(SourceAdapter):
 
         return Event(
             id=stable_id,
-            source="central/adapters/firms",
+            adapter="firms",
             category=f"fire.hotspot.{satellite_short}.{confidence}",
             time=time,
             expires=None,

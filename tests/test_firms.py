@@ -288,7 +288,7 @@ class TestSubjectGeneration:
     def test_subject_format(self):
         event = Event(
             id="test",
-            source="central/adapters/firms",
+            adapter="firms",
             category="fire.hotspot.viirs_snpp.high",
             time=datetime.now(timezone.utc),
             severity=3,
@@ -302,7 +302,7 @@ class TestSubjectGeneration:
     def test_subject_nominal_confidence(self):
         event = Event(
             id="test",
-            source="central/adapters/firms",
+            adapter="firms",
             category="fire.hotspot.viirs_noaa20.nominal",
             time=datetime.now(timezone.utc),
             severity=2,

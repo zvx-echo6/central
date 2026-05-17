@@ -23,7 +23,7 @@ class Event(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str  # unique, stable across republish
-    source: str  # adapter identity, e.g. "central/adapters/nws"
+    adapter: str  # adapter identity, e.g. "nws"
     category: str  # e.g. "wx.alert.severe_thunderstorm_warning" or "fire.hotspot.viirs_snpp.high"
     time: datetime  # event-time UTC, not processing-time
     expires: datetime | None = None

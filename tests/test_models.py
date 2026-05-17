@@ -25,7 +25,7 @@ def sample_event(sample_geo: Geo) -> Event:
     """Sample Event object for testing."""
     return Event(
         id="urn:central:nws:alert:KBOI-202401151200-SVR",
-        source="central/adapters/nws",
+        adapter="nws",
         category="wx.alert.severe_thunderstorm_warning",
         time=datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
         expires=datetime(2024, 1, 15, 13, 0, 0, tzinfo=timezone.utc),
@@ -75,7 +75,7 @@ class TestSubjectForEvent:
         )
         event = Event(
             id="test-zone",
-            source="test",
+            adapter="nws",
             category="wx.alert.winter_storm_warning",
             time=datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
             geo=geo,
@@ -89,7 +89,7 @@ class TestSubjectForEvent:
         geo = Geo(regions=[], primary_region=None)
         event = Event(
             id="test-unknown",
-            source="test",
+            adapter="nws",
             category="wx.alert.test",
             time=datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
             geo=geo,
@@ -144,7 +144,7 @@ class TestCloudEventsWire:
         """When severity is None, centralseverity is omitted entirely."""
         event = Event(
             id="test-no-severity",
-            source="test",
+            adapter="nws",
             category="wx.alert.test",
             time=datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
             severity=None,  # Explicitly None

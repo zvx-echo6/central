@@ -1,5 +1,11 @@
 # Migration policy
 
+## Migrations are the sole source of truth
+
+The `sql/migrations/` directory contains all schema definitions. There is
+no separate schema.sql file; use `pg_dump -s central` to generate a
+human-readable snapshot of the current schema when needed.
+
 ## Migrations must be idempotent
 
 New migration files (007+) must use guards so they can be safely
