@@ -1,0 +1,28 @@
+{% if error %}
+<p class="error">{{ error }}</p>
+{% elif streams %}
+<table>
+    <thead>
+        <tr>
+            <th>Stream</th>
+            <th>Messages</th>
+            <th>Size</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for stream in streams %}
+        <tr>
+            <td>{{ stream.name }}</td>
+            {% if stream.error %}
+            <td colspan="2" class="error">{{ stream.error }}</td>
+            {% else %}
+            <td>{{ stream.messages }}</td>
+            <td>{{ stream.size }}</td>
+            {% endif %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No stream data available.</p>
+{% endif %}

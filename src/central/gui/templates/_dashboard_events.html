@@ -1,0 +1,22 @@
+{% if error %}
+<p class="error">{{ error }}</p>
+{% elif events %}
+<table>
+    <thead>
+        <tr>
+            <th>Adapter</th>
+            <th>Count</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for event in events %}
+        <tr>
+            <td>{{ event.adapter }}</td>
+            <td>{{ event.count }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No events in the last 24 hours.</p>
+{% endif %}

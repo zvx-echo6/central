@@ -1,0 +1,31 @@
+{% if error %}
+<p class="error">{{ error }}</p>
+{% elif adapters %}
+<table>
+    <thead>
+        <tr>
+            <th>Adapter</th>
+            <th>Last Poll</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for adapter in adapters %}
+        <tr>
+            <td>{{ adapter.name }}</td>
+            {% if adapter.error %}
+            <td colspan="2" class="error">{{ adapter.error }}</td>
+            {% elif adapter.last_poll %}
+            <td>{{ adapter.last_poll }}</td>
+            <td>{{ adapter.status }}</td>
+            {% else %}
+            <td>—</td>
+            <td>—</td>
+            {% endif %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No adapter data available.</p>
+{% endif %}
