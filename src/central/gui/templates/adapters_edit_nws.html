@@ -1,0 +1,5 @@
+<label for="contact_email">Contact Email</label>
+<input type="email" id="contact_email" name="contact_email" value="{{ form_data.contact_email if form_data else adapter.settings.contact_email }}" required>
+{% if errors and errors.contact_email %}
+<small style="color: var(--pico-color-red-500);">{{ errors.contact_email }}</small>
+{% endif %}
