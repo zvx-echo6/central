@@ -169,7 +169,7 @@ def main() -> None:
     uvicorn.run(
         "central.gui:app",
         host="0.0.0.0",
-        port=8088,
+        port=8000,
         reload=False,
     )
 

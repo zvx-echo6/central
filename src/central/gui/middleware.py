@@ -57,7 +57,7 @@ class SetupGateMiddleware(BaseHTTPMiddleware):
         if not setup_complete:
             # Setup not complete - only allow exempt paths
             if not _is_exempt(path, SETUP_EXEMPT_PATHS, SETUP_EXEMPT_PREFIXES):
-                return RedirectResponse(url="/setup", status_code=307)
+                return RedirectResponse(url="/setup", status_code=302)
         else:
             # Setup complete - redirect /setup to /
             if path == "/setup":
