@@ -2,6 +2,13 @@
 
 {% block title %}Central — Edit {{ adapter.name }}{% endblock %}
 
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" integrity="sha512-gc3xjCmIy673V6MyOAZhIW93xhM9ei1I+gLbmFjUHIjocENRsLX/QUE1htk5q1XV2D/iie/VQ8DXI6Uj8GB1Og==" crossorigin="anonymous">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js" integrity="sha512-ozq8xQKq6urvuU6jNgkfqAmT7jKN2XumbrX1JiB3TnF7tI48DPI4Ber9dLJ0ikXiRg9G9Vl2jXwqjZ5LDGQ3g==" crossorigin="anonymous"></script>
+{% endblock %}
+
 {% block content %}
 <h1>Edit Adapter: {{ adapter.name }}</h1>
 
@@ -29,18 +36,8 @@
     </fieldset>
 
     <fieldset>
-        <legend>Region (read-only)</legend>
-        {% if adapter.settings.region %}
-        <p>
-            <strong>North:</strong> {{ adapter.settings.region.north }}<br>
-            <strong>South:</strong> {{ adapter.settings.region.south }}<br>
-            <strong>East:</strong> {{ adapter.settings.region.east }}<br>
-            <strong>West:</strong> {{ adapter.settings.region.west }}
-        </p>
-        {% else %}
-        <p>No region configured.</p>
-        {% endif %}
-        <small>Region editing comes in 1b-5.</small>
+        <legend>Region</legend>
+        {% include "_region_picker.html" %}
     </fieldset>
 
     <button type="submit">Save Changes</button>

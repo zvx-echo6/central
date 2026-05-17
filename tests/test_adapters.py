@@ -84,14 +84,17 @@ class TestAdaptersEditForm:
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
         mock_conn = AsyncMock()
-        mock_conn.fetchrow.return_value = {
-            "name": "nws",
-            "enabled": True,
-            "cadence_s": 60,
-            "settings": {"contact_email": "test@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},
-            "paused_at": None,
-            "updated_at": None,
-        }
+        mock_conn.fetchrow.side_effect = [
+            {
+                "name": "nws",
+                "enabled": True,
+                "cadence_s": 60,
+                "settings": {"contact_email": "test@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},
+                "paused_at": None,
+                "updated_at": None,
+            },
+            {"map_tile_url": "https://tile.example.com/{z}/{x}/{y}.png", "map_attribution": "Test"},
+        ]
         mock_conn.fetch.return_value = []  # No API keys
 
         mock_pool = MagicMock()
@@ -156,6 +159,10 @@ class TestAdaptersEditSubmit:
         mock_form.get.side_effect = lambda k, d="": {
             "cadence_s": "120",
             "contact_email": "new@example.com",
+            "region_north": "49.0",
+            "region_south": "24.0",
+            "region_east": "-66.0",
+            "region_west": "-125.0",
         }.get(k, d)
         mock_form.getlist.return_value = []
         mock_form.__contains__ = lambda self, k: k == "enabled"
@@ -166,7 +173,7 @@ class TestAdaptersEditSubmit:
             "name": "nws",
             "enabled": True,
             "cadence_s": 60,
-            "settings": {"contact_email": "old@example.com"},
+            "settings": {"contact_email": "old@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},
             "paused_at": None,
             "updated_at": None,
         }
@@ -200,20 +207,27 @@ class TestAdaptersEditSubmit:
         mock_form.get.side_effect = lambda k, d="": {
             "cadence_s": "30",
             "contact_email": "test@example.com",
+            "region_north": "49.0",
+            "region_south": "24.0",
+            "region_east": "-66.0",
+            "region_west": "-125.0",
         }.get(k, d)
         mock_form.getlist.return_value = []
         mock_form.__contains__ = lambda self, k: k == "enabled"
         mock_request.form = AsyncMock(return_value=mock_form)
 
         mock_conn = AsyncMock()
-        mock_conn.fetchrow.return_value = {
-            "name": "nws",
-            "enabled": True,
-            "cadence_s": 60,
-            "settings": {"contact_email": "test@example.com"},
-            "paused_at": None,
-            "updated_at": None,
-        }
+        mock_conn.fetchrow.side_effect = [
+            {
+                "name": "nws",
+                "enabled": True,
+                "cadence_s": 60,
+                "settings": {"contact_email": "test@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},
+                "paused_at": None,
+                "updated_at": None,
+            },
+            {"map_tile_url": None, "map_attribution": None},  # system settings for re-render
+        ]
         mock_conn.fetch.return_value = []
 
         mock_pool = MagicMock()
@@ -252,6 +266,10 @@ class TestAdaptersEditSubmit:
         mock_form.get.side_effect = lambda k, d="": {
             "cadence_s": "300",
             "api_key_alias": "nonexistent_key",
+            "region_north": "49.5",
+            "region_south": "31.0",
+            "region_east": "-102.0",
+            "region_west": "-124.5",
         }.get(k, d)
         mock_form.getlist.return_value = ["VIIRS_SNPP_NRT"]
         mock_form.__contains__ = lambda self, k: k == "enabled"
@@ -263,11 +281,12 @@ class TestAdaptersEditSubmit:
                 "name": "firms",
                 "enabled": True,
                 "cadence_s": 300,
-                "settings": {"api_key_alias": "firms", "satellites": ["VIIRS_SNPP_NRT"]},
+                "settings": {"api_key_alias": "firms", "satellites": ["VIIRS_SNPP_NRT"], "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}},
                 "paused_at": None,
                 "updated_at": None,
             },
             None,  # Second call: check api_key exists - returns None
+            {"map_tile_url": None, "map_attribution": None},  # system settings for re-render
         ]
         mock_conn.fetch.return_value = []
 
@@ -306,20 +325,27 @@ class TestAdaptersEditSubmit:
         mock_form.get.side_effect = lambda k, d="": {
             "cadence_s": "120",
             "feed": "invalid_feed",
+            "region_north": "49.0",
+            "region_south": "24.0",
+            "region_east": "-66.0",
+            "region_west": "-125.0",
         }.get(k, d)
         mock_form.getlist.return_value = []
         mock_form.__contains__ = lambda self, k: k == "enabled"
         mock_request.form = AsyncMock(return_value=mock_form)
 
         mock_conn = AsyncMock()
-        mock_conn.fetchrow.return_value = {
-            "name": "usgs_quake",
-            "enabled": True,
-            "cadence_s": 120,
-            "settings": {"feed": "all_hour"},
-            "paused_at": None,
-            "updated_at": None,
-        }
+        mock_conn.fetchrow.side_effect = [
+            {
+                "name": "usgs_quake",
+                "enabled": True,
+                "cadence_s": 120,
+                "settings": {"feed": "all_hour", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},
+                "paused_at": None,
+                "updated_at": None,
+            },
+            {"map_tile_url": None, "map_attribution": None},  # system settings for re-render
+        ]
         mock_conn.fetch.return_value = []
 
         mock_pool = MagicMock()
@@ -360,6 +386,10 @@ class TestAdaptersAudit:
         mock_form.get.side_effect = lambda k, d="": {
             "cadence_s": "120",
             "contact_email": "new@example.com",
+            "region_north": "49.0",
+            "region_south": "24.0",
+            "region_east": "-66.0",
+            "region_west": "-125.0",
         }.get(k, d)
         mock_form.getlist.return_value = []
         mock_form.__contains__ = lambda self, k: k == "enabled"
@@ -370,7 +400,7 @@ class TestAdaptersAudit:
             "name": "nws",
             "enabled": True,
             "cadence_s": 60,
-            "settings": {"contact_email": "old@example.com"},
+            "settings": {"contact_email": "old@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},
             "paused_at": None,
             "updated_at": None,
         }
@@ -422,6 +452,10 @@ class TestAdaptersJsonbRegression:
         mock_form.get.side_effect = lambda k, d="": {
             "cadence_s": "120",
             "contact_email": "test@example.com",
+            "region_north": "49.0",
+            "region_south": "24.0",
+            "region_east": "-66.0",
+            "region_west": "-125.0",
         }.get(k, d)
         mock_form.getlist.return_value = []
         mock_form.__contains__ = lambda self, k: k == "enabled"
@@ -432,7 +466,7 @@ class TestAdaptersJsonbRegression:
             "name": "nws",
             "enabled": True,
             "cadence_s": 60,
-            "settings": {"contact_email": "old@example.com"},  # dict, as asyncpg returns
+            "settings": {"contact_email": "old@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},  # dict, as asyncpg returns
             "paused_at": None,
             "updated_at": None,
         }
@@ -471,6 +505,10 @@ class TestAdaptersJsonbRegression:
         mock_form.get.side_effect = lambda k, d="": {
             "cadence_s": "120",
             "contact_email": "new@example.com",
+            "region_north": "49.0",
+            "region_south": "24.0",
+            "region_east": "-66.0",
+            "region_west": "-125.0",
         }.get(k, d)
         mock_form.getlist.return_value = []
         mock_form.__contains__ = lambda self, k: k == "enabled"
@@ -481,7 +519,7 @@ class TestAdaptersJsonbRegression:
             "name": "nws",
             "enabled": True,
             "cadence_s": 60,
-            "settings": {"contact_email": "old@example.com"},  # dict
+            "settings": {"contact_email": "old@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},  # dict
             "paused_at": None,
             "updated_at": None,
         }
