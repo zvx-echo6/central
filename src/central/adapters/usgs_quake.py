@@ -348,7 +348,7 @@ class USGSQuakeAdapter(SourceAdapter):
 
         return Event(
             id=event_id,
-            source="central/adapters/usgs_quake",
+            adapter="usgs_quake",
             category=f"quake.event.{tier}",
             time=event_time,
             expires=None,

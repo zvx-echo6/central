@@ -475,7 +475,7 @@ class NWSAdapter(SourceAdapter):
 
         return Event(
             id=event_id,
-            source="central/adapters/nws",
+            adapter="nws",
             category=category,
             time=time,
             expires=expires,

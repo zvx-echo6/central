@@ -1,9 +1,12 @@
 -- Central Data Hub schema
 -- PostgreSQL 16 + TimescaleDB + PostGIS
+-- NOTE: Migrations in sql/migrations/ are the source of truth.
+-- This file is for reference and initial setup only.
 
 CREATE TABLE IF NOT EXISTS events (
     id              TEXT NOT NULL,                     -- CloudEvent id
-    source          TEXT NOT NULL,                     -- adapter identity
+    adapter         TEXT NOT NULL                      -- adapter identity (FK to config.adapters.name)
+                    REFERENCES config.adapters(name) ON DELETE RESTRICT,
     category        TEXT NOT NULL,                     -- "wx.alert.<type>"
     time            TIMESTAMPTZ NOT NULL,              -- event-time UTC
     expires         TIMESTAMPTZ,
@@ -20,6 +23,9 @@ SELECT create_hypertable('events', 'time', if_not_exists => TRUE);
 
 CREATE INDEX IF NOT EXISTS events_category_time_idx
     ON events (category, time DESC);
+
+CREATE INDEX IF NOT EXISTS events_adapter_received_idx
+    ON events (adapter, received DESC);
 
 CREATE INDEX IF NOT EXISTS events_geom_gist
     ON events USING GIST (geom);

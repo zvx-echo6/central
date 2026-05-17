@@ -157,7 +157,7 @@ class ArchiveConsumer:
         geo_data = event_data.get("geo")
 
         event_id = envelope.get("id")
-        source = event_data.get("source", "")
+        adapter = event_data.get("adapter", "")
         category = event_data.get("category", "")
         time_str = event_data.get("time")
         expires_str = event_data.get("expires")
@@ -194,12 +194,12 @@ class ArchiveConsumer:
             if geom_json:
                 await conn.execute(
                     """
-                    INSERT INTO events (id, source, category, time, expires, severity,
+                    INSERT INTO events (id, adapter, category, time, expires, severity,
                                        geom, regions, primary_region, payload)
                     VALUES ($1, $2, $3, $4, $5, $6,
                             ST_GeomFromGeoJSON($7), $8, $9, $10)
                     ON CONFLICT (id, time) DO UPDATE SET
-                        source = EXCLUDED.source,
+                        adapter = EXCLUDED.adapter,
                         category = EXCLUDED.category,
                         expires = EXCLUDED.expires,
                         severity = EXCLUDED.severity,
@@ -208,17 +208,17 @@ class ArchiveConsumer:
                         primary_region = EXCLUDED.primary_region,
                         payload = EXCLUDED.payload
                     """,
-                    event_id, source, category, event_time, expires_time, severity,
+                    event_id, adapter, category, event_time, expires_time, severity,
                     geom_json, regions, primary_region, json.dumps(envelope)
                 )
             else:
                 await conn.execute(
                     """
-                    INSERT INTO events (id, source, category, time, expires, severity,
+                    INSERT INTO events (id, adapter, category, time, expires, severity,
                                        geom, regions, primary_region, payload)
                     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8, $9)
                     ON CONFLICT (id, time) DO UPDATE SET
-                        source = EXCLUDED.source,
+                        adapter = EXCLUDED.adapter,
                         category = EXCLUDED.category,
                         expires = EXCLUDED.expires,
                         severity = EXCLUDED.severity,
@@ -227,7 +227,7 @@ class ArchiveConsumer:
                         primary_region = EXCLUDED.primary_region,
                         payload = EXCLUDED.payload
                     """,
-                    event_id, source, category, event_time, expires_time, severity,
+                    event_id, adapter, category, event_time, expires_time, severity,
                     regions, primary_region, json.dumps(envelope)
                 )
 
