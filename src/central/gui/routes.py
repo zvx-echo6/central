@@ -1,8 +1,11 @@
 """Route handlers for Central GUI."""
 
 import json
+import logging
 import re
 from typing import Any
+
+logger = logging.getLogger("central.gui.routes")
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -911,8 +914,12 @@ async def streams_list(
             "managed_max_bytes": row["managed_max_bytes"],
             "live_bytes": None,
             "live_messages": None,
+            "live_first_seq": None,
+            "live_last_seq": None,
             "live_first_ts": None,
             "live_last_ts": None,
+            "first_ts_error": None,
+            "last_ts_error": None,
             "error": None,
         }
 
@@ -922,10 +929,41 @@ async def streams_list(
                 info = await js.stream_info(row["name"])
                 stream_data["live_bytes"] = info.state.bytes
                 stream_data["live_messages"] = info.state.messages
-                stream_data["live_first_ts"] = info.state.first_ts
-                stream_data["live_last_ts"] = info.state.last_ts
-            except Exception:
-                stream_data["error"] = "unavailable"
+                stream_data["live_first_seq"] = info.state.first_seq
+                stream_data["live_last_seq"] = info.state.last_seq
+
+                # Fetch first / last message timestamps via get_msg
+                # RawStreamMsg has .time attribute (not .metadata.timestamp)
+                if info.state.first_seq > 0:
+                    try:
+                        first_msg = await js.get_msg(row["name"], seq=info.state.first_seq)
+                        stream_data["live_first_ts"] = first_msg.time
+                    except Exception as e:
+                        logger.warning(
+                            "get_msg first failed",
+                            extra={"stream": row["name"], "err": type(e).__name__},
+                        )
+                        stream_data["live_first_ts"] = None
+                        stream_data["first_ts_error"] = type(e).__name__
+
+                if info.state.last_seq > 0 and info.state.last_seq != info.state.first_seq:
+                    try:
+                        last_msg = await js.get_msg(row["name"], seq=info.state.last_seq)
+                        stream_data["live_last_ts"] = last_msg.time
+                    except Exception as e:
+                        logger.warning(
+                            "get_msg last failed",
+                            extra={"stream": row["name"], "err": type(e).__name__},
+                        )
+                        stream_data["live_last_ts"] = None
+                        stream_data["last_ts_error"] = type(e).__name__
+                elif info.state.last_seq == info.state.first_seq and info.state.first_seq > 0:
+                    # Single message in stream
+                    stream_data["live_last_ts"] = stream_data.get("live_first_ts")
+
+            except Exception as e:
+                logger.exception("Stream info failed", extra={"stream": row["name"]})
+                stream_data["error"] = f"unavailable: {type(e).__name__}"
         else:
             stream_data["error"] = "NATS unavailable"
 

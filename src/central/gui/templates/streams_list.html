@@ -8,10 +8,10 @@
 <div class="grid">
 {% for stream in streams %}
 <article>
-    <header>
+    <header style="display: flex; justify-content: space-between; align-items: center;">
         <strong>{{ stream.name }}</strong>
         {% if stream.managed_max_bytes %}
-        <span style="float: right; font-size: 0.8em; background: var(--pico-secondary-background); padding: 0.2em 0.5em; border-radius: 4px;">Managed by supervisor</span>
+        <span style="font-size: 0.8em; background: var(--pico-secondary-background); padding: 0.2em 0.5em; border-radius: 4px;">Managed by supervisor</span>
         {% endif %}
     </header>
 
@@ -21,10 +21,31 @@
         <span style="color: var(--pico-color-red-500);">({{ stream.error }})</span>
         {% else %}
         <ul style="margin: 0.5rem 0;">
-            <li>Size: {{ stream.live_bytes|default(0)|filesizeformat if stream.live_bytes is not none else '(unavailable)' }}</li>
-            <li>Messages: {{ stream.live_messages if stream.live_messages is not none else '(unavailable)' }}</li>
-            <li>First message: {{ stream.live_first_ts.isoformat() if stream.live_first_ts else '(none)' }}</li>
-            <li>Last message: {{ stream.live_last_ts.isoformat() if stream.live_last_ts else '(none)' }}</li>
+            <li>Messages: {{ stream.live_messages }}</li>
+            <li>Size: {{ stream.live_bytes|filesizeformat }}</li>
+            {% if stream.live_messages == 0 %}
+            <li>First message: (empty)</li>
+            <li>Last message: (empty)</li>
+            {% else %}
+            <li>First message:
+                {% if stream.live_first_ts %}
+                {{ stream.live_first_ts.isoformat() }}
+                {% elif stream.first_ts_error %}
+                (lookup failed: {{ stream.first_ts_error }})
+                {% else %}
+                (unknown)
+                {% endif %}
+            </li>
+            <li>Last message:
+                {% if stream.live_last_ts %}
+                {{ stream.live_last_ts.isoformat() }}
+                {% elif stream.last_ts_error %}
+                (lookup failed: {{ stream.last_ts_error }})
+                {% else %}
+                (unknown)
+                {% endif %}
+            </li>
+            {% endif %}
         </ul>
         {% endif %}
     </div>
@@ -33,7 +54,7 @@
         <strong>Configuration:</strong>
         <ul style="margin: 0.5rem 0;">
             <li>Max age: {{ (stream.max_age_s / 86400)|round(1) }} days ({{ stream.max_age_s }}s)</li>
-            <li>Max bytes (config): {{ stream.max_bytes_cfg|filesizeformat }}</li>
+            <li>Max bytes (current): {{ stream.max_bytes_cfg|filesizeformat }}</li>
         </ul>
     </div>
 
