@@ -42,9 +42,9 @@ class TestAdaptersListAuthenticated:
 
         mock_conn = AsyncMock()
         mock_conn.fetch.return_value = [
-            {"name": "firms", "enabled": True, "cadence_s": 300, "settings": '{"api_key_alias": "firms"}', "paused_at": None, "updated_at": None},
-            {"name": "nws", "enabled": True, "cadence_s": 60, "settings": '{"contact_email": "test@test.com"}', "paused_at": None, "updated_at": None},
-            {"name": "usgs_quake", "enabled": True, "cadence_s": 120, "settings": '{"feed": "all_hour"}', "paused_at": None, "updated_at": None},
+            {"name": "firms", "enabled": True, "cadence_s": 300, "settings": {"api_key_alias": "firms"}, "paused_at": None, "updated_at": None},
+            {"name": "nws", "enabled": True, "cadence_s": 60, "settings": {"contact_email": "test@test.com"}, "paused_at": None, "updated_at": None},
+            {"name": "usgs_quake", "enabled": True, "cadence_s": 120, "settings": {"feed": "all_hour"}, "paused_at": None, "updated_at": None},
         ]
 
         mock_pool = MagicMock()
@@ -88,7 +88,7 @@ class TestAdaptersEditForm:
             "name": "nws",
             "enabled": True,
             "cadence_s": 60,
-            "settings": '{"contact_email": "test@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}}',
+            "settings": {"contact_email": "test@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},
             "paused_at": None,
             "updated_at": None,
         }
@@ -166,7 +166,7 @@ class TestAdaptersEditSubmit:
             "name": "nws",
             "enabled": True,
             "cadence_s": 60,
-            "settings": '{"contact_email": "old@example.com"}',
+            "settings": {"contact_email": "old@example.com"},
             "paused_at": None,
             "updated_at": None,
         }
@@ -210,7 +210,7 @@ class TestAdaptersEditSubmit:
             "name": "nws",
             "enabled": True,
             "cadence_s": 60,
-            "settings": '{"contact_email": "test@example.com"}',
+            "settings": {"contact_email": "test@example.com"},
             "paused_at": None,
             "updated_at": None,
         }
@@ -263,7 +263,7 @@ class TestAdaptersEditSubmit:
                 "name": "firms",
                 "enabled": True,
                 "cadence_s": 300,
-                "settings": '{"api_key_alias": "firms", "satellites": ["VIIRS_SNPP_NRT"]}',
+                "settings": {"api_key_alias": "firms", "satellites": ["VIIRS_SNPP_NRT"]},
                 "paused_at": None,
                 "updated_at": None,
             },
@@ -316,7 +316,7 @@ class TestAdaptersEditSubmit:
             "name": "usgs_quake",
             "enabled": True,
             "cadence_s": 120,
-            "settings": '{"feed": "all_hour"}',
+            "settings": {"feed": "all_hour"},
             "paused_at": None,
             "updated_at": None,
         }
@@ -370,7 +370,7 @@ class TestAdaptersAudit:
             "name": "nws",
             "enabled": True,
             "cadence_s": 60,
-            "settings": '{"contact_email": "old@example.com"}',
+            "settings": {"contact_email": "old@example.com"},
             "paused_at": None,
             "updated_at": None,
         }
