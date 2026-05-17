@@ -8,6 +8,10 @@
         <h1>Login</h1>
     </header>
     
+    {% if error %}
+    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    {% endif %}
+    
     <form action="/login" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         
