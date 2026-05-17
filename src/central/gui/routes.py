@@ -22,6 +22,7 @@ from central.gui.audit import (
     AUTH_LOGOUT,
     AUTH_PASSWORD_CHANGE,
     OPERATOR_CREATE,
+    STREAM_UPDATE,
     write_audit,
 )
 from central.gui.db import get_pool
@@ -872,3 +873,196 @@ async def adapters_edit_submit(
         )
 
     return RedirectResponse(url="/adapters", status_code=302)
+
+
+# =============================================================================
+# Streams routes
+# =============================================================================
+
+
+@router.get("/streams", response_class=HTMLResponse)
+async def streams_list(
+    request: Request,
+    csrf_protect: CsrfProtect = Depends(),
+) -> HTMLResponse:
+    """List all streams with live data."""
+    from central.gui.nats import get_js
+
+    templates = _get_templates()
+    pool = get_pool()
+    operator = request.state.operator
+    js = get_js()
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT name, max_age_s, max_bytes, managed_max_bytes, updated_at
+            FROM config.streams
+            ORDER BY name
+            """
+        )
+
+    streams = []
+    for row in rows:
+        stream_data = {
+            "name": row["name"],
+            "max_age_s": row["max_age_s"],
+            "max_bytes_cfg": row["max_bytes"],
+            "managed_max_bytes": row["managed_max_bytes"],
+            "live_bytes": None,
+            "live_messages": None,
+            "live_first_ts": None,
+            "live_last_ts": None,
+            "error": None,
+        }
+
+        # Fetch live data from JetStream
+        if js is not None:
+            try:
+                info = await js.stream_info(row["name"])
+                stream_data["live_bytes"] = info.state.bytes
+                stream_data["live_messages"] = info.state.messages
+                stream_data["live_first_ts"] = info.state.first_ts
+                stream_data["live_last_ts"] = info.state.last_ts
+            except Exception:
+                stream_data["error"] = "unavailable"
+        else:
+            stream_data["error"] = "NATS unavailable"
+
+        streams.append(stream_data)
+
+    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    response = templates.TemplateResponse(
+        request=request,
+        name="streams_list.html",
+        context={
+            "operator": operator,
+            "csrf_token": csrf_token,
+            "streams": streams,
+        },
+    )
+    csrf_protect.set_csrf_cookie(signed_token, response)
+    return response
+
+
+@router.post("/streams/{name}", response_class=HTMLResponse)
+async def streams_update(
+    request: Request,
+    name: str,
+    csrf_protect: CsrfProtect = Depends(),
+) -> Response:
+    """Update stream max_age_s."""
+    from central.gui.nats import get_js
+
+    templates = _get_templates()
+    pool = get_pool()
+    operator = request.state.operator
+
+    # Validate CSRF
+    await csrf_protect.validate_csrf(request)
+
+    form = await request.form()
+    max_age_s_str = form.get("max_age_s", "").strip()
+
+    errors: dict[str, str] = {}
+
+    # Parse max_age_s
+    try:
+        max_age_s = int(max_age_s_str)
+    except (ValueError, TypeError):
+        max_age_s = 0
+        errors[name] = "max_age_s must be a valid integer"
+
+    # Validate range: 1 hour to 5 years
+    MIN_AGE = 3600  # 1 hour
+    MAX_AGE = 5 * 365 * 24 * 3600  # 5 years (157680000)
+    if not errors and (max_age_s < MIN_AGE or max_age_s > MAX_AGE):
+        errors[name] = f"max_age_s must be between {MIN_AGE} (1 hour) and {MAX_AGE} (5 years)"
+
+    async with pool.acquire() as conn:
+        # Check stream exists
+        row = await conn.fetchrow(
+            "SELECT name, max_age_s FROM config.streams WHERE name = $1",
+            name,
+        )
+
+        if row is None:
+            return Response(status_code=404, content="Stream not found")
+
+        if errors:
+            # Re-render with errors
+            js = get_js()
+            rows = await conn.fetch(
+                """
+                SELECT name, max_age_s, max_bytes, managed_max_bytes, updated_at
+                FROM config.streams
+                ORDER BY name
+                """
+            )
+
+            streams = []
+            for r in rows:
+                stream_data = {
+                    "name": r["name"],
+                    "max_age_s": r["max_age_s"],
+                    "max_bytes_cfg": r["max_bytes"],
+                    "managed_max_bytes": r["managed_max_bytes"],
+                    "live_bytes": None,
+                    "live_messages": None,
+                    "live_first_ts": None,
+                    "live_last_ts": None,
+                    "error": None,
+                }
+
+                if js is not None:
+                    try:
+                        info = await js.stream_info(r["name"])
+                        stream_data["live_bytes"] = info.state.bytes
+                        stream_data["live_messages"] = info.state.messages
+                        stream_data["live_first_ts"] = info.state.first_ts
+                        stream_data["live_last_ts"] = info.state.last_ts
+                    except Exception:
+                        stream_data["error"] = "unavailable"
+                else:
+                    stream_data["error"] = "NATS unavailable"
+
+                streams.append(stream_data)
+
+            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            response = templates.TemplateResponse(
+                request=request,
+                name="streams_list.html",
+                context={
+                    "operator": operator,
+                    "csrf_token": csrf_token,
+                    "streams": streams,
+                    "errors": errors,
+                },
+            )
+            csrf_protect.set_csrf_cookie(signed_token, response)
+            return response
+
+        old_max_age_s = row["max_age_s"]
+
+        # Update stream
+        await conn.execute(
+            """
+            UPDATE config.streams
+            SET max_age_s = $1, updated_at = now()
+            WHERE name = $2
+            """,
+            max_age_s,
+            name,
+        )
+
+        # Write audit log
+        await write_audit(
+            conn,
+            STREAM_UPDATE,
+            operator_id=operator.id,
+            target=name,
+            before={"max_age_s": old_max_age_s},
+            after={"max_age_s": max_age_s},
+        )
+
+    return RedirectResponse(url="/streams", status_code=302)
