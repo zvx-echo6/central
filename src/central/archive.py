@@ -1,4 +1,8 @@
-"""Central archive consumer - JetStream to TimescaleDB."""
+"""Central archive consumer - JetStream to TimescaleDB.
+
+Consumes events from multiple NATS JetStream streams and archives them
+to TimescaleDB. One durable consumer per stream for independent ack tracking.
+"""
 
 import asyncio
 import json
@@ -12,15 +16,25 @@ import asyncpg
 import nats
 from nats.js import JetStreamContext
 from nats.js.api import ConsumerConfig, DeliverPolicy, AckPolicy
+from nats.js.errors import NotFoundError
 
 from central.bootstrap_config import get_settings
 
-CONSUMER_NAME = "archive"
-STREAM_NAME = "CENTRAL_WX"
-SUBJECT_FILTER = "central.wx.>"
+# Event-bearing streams to consume (skip CENTRAL_META - status messages only)
+STREAMS = [
+    ("CENTRAL_WX", "central.wx.>"),
+    ("CENTRAL_FIRE", "central.fire.>"),
+    ("CENTRAL_QUAKE", "central.quake.>"),
+]
+
 BATCH_SIZE = 100
 FETCH_TIMEOUT = 5.0
 ACK_WAIT = 30
+
+
+def consumer_name_for(stream: str) -> str:
+    """Generate consumer name for a stream."""
+    return f"archive-{stream.lower()}"
 
 
 class JsonFormatter(logging.Formatter):
@@ -125,24 +139,49 @@ class ArchiveConsumer:
             self._js = None
         logger.info("Disconnected")
 
-    async def _ensure_consumer(self) -> None:
-        """Ensure the durable consumer exists."""
+    async def _cleanup_orphaned_consumer(self) -> None:
+        """Remove orphaned 'archive' consumer from CENTRAL_WX if it exists.
+
+        The old single-stream code used a consumer named 'archive' on CENTRAL_WX.
+        Now we use 'archive-central_wx' instead. Clean up the old one.
+        """
         if not self._js:
             return
 
         try:
-            await self._js.consumer_info(STREAM_NAME, CONSUMER_NAME)
-            logger.info("Consumer exists", extra={"consumer": CONSUMER_NAME})
-        except nats.js.errors.NotFoundError:
+            await self._js.consumer_info("CENTRAL_WX", "archive")
+            await self._js.delete_consumer("CENTRAL_WX", "archive")
+            logger.info("Removed orphaned 'archive' consumer from CENTRAL_WX")
+        except NotFoundError:
+            pass  # Already gone or never existed
+
+    async def _ensure_consumer(
+        self, stream_name: str, subject_filter: str, consumer_name: str
+    ) -> None:
+        """Ensure the durable consumer exists for a stream."""
+        if not self._js:
+            return
+
+        try:
+            await self._js.consumer_info(stream_name, consumer_name)
+            logger.info(
+                "Consumer exists",
+                extra={"stream": stream_name, "consumer": consumer_name}
+            )
+        except NotFoundError:
             consumer_config = ConsumerConfig(
-                durable_name=CONSUMER_NAME,
+                durable_name=consumer_name,
                 deliver_policy=DeliverPolicy.ALL,
                 ack_policy=AckPolicy.EXPLICIT,
                 ack_wait=ACK_WAIT,
-                filter_subject=SUBJECT_FILTER,
+                max_deliver=5,
+                filter_subject=subject_filter,
             )
-            await self._js.add_consumer(STREAM_NAME, consumer_config)
-            logger.info("Consumer created", extra={"consumer": CONSUMER_NAME})
+            await self._js.add_consumer(stream_name, consumer_config)
+            logger.info(
+                "Consumer created",
+                extra={"stream": stream_name, "consumer": consumer_name}
+            )
 
     async def _process_message(self, msg: Any, conn: asyncpg.Connection) -> None:
         """Process a single message and insert into database."""
@@ -241,22 +280,24 @@ class ArchiveConsumer:
             )
             # Don't ack - let it be redelivered
 
-    async def _consume_loop(self) -> None:
-        """Main consume loop."""
+    async def _consume_stream(
+        self, stream_name: str, subject_filter: str, consumer_name: str
+    ) -> None:
+        """Consume loop for a single stream."""
         if not self._js or not self._pool:
             return
 
-        await self._ensure_consumer()
+        await self._ensure_consumer(stream_name, subject_filter, consumer_name)
 
         sub = await self._js.pull_subscribe(
-            SUBJECT_FILTER,
-            durable=CONSUMER_NAME,
-            stream=STREAM_NAME,
+            subject_filter,
+            durable=consumer_name,
+            stream=stream_name,
         )
 
         logger.info(
             "Subscribed to stream",
-            extra={"stream": STREAM_NAME, "filter": SUBJECT_FILTER}
+            extra={"stream": stream_name, "filter": subject_filter}
         )
 
         while not self._shutdown_event.is_set():
@@ -277,19 +318,62 @@ class ArchiveConsumer:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.exception("Error in consume loop", extra={"error": str(e)})
+                logger.exception(
+                    "Error in consume loop",
+                    extra={"stream": stream_name, "error": str(e)}
+                )
                 await asyncio.sleep(1)
 
-        logger.info("Consume loop stopped")
+        logger.info("Consume loop stopped", extra={"stream": stream_name})
 
     async def start(self) -> None:
         """Start the consumer."""
         await self.connect()
+        await self._cleanup_orphaned_consumer()
         logger.info("Archive consumer ready")
 
     async def run(self) -> None:
-        """Run the consume loop until shutdown."""
-        await self._consume_loop()
+        """Run consume loops for all streams until shutdown."""
+        tasks = []
+        for stream_name, subject_filter in STREAMS:
+            consumer_name = consumer_name_for(stream_name)
+            task = asyncio.create_task(
+                self._consume_stream(stream_name, subject_filter, consumer_name),
+                name=f"consume-{stream_name}",
+            )
+            tasks.append(task)
+
+        try:
+            # Wait for all tasks; if one fails, cancel the others
+            done, pending = await asyncio.wait(
+                tasks,
+                return_when=asyncio.FIRST_EXCEPTION,
+            )
+
+            # Check for exceptions in completed tasks
+            for task in done:
+                if task.exception():
+                    logger.error(
+                        "Stream consumer failed",
+                        extra={"task": task.get_name(), "error": str(task.exception())}
+                    )
+
+            # Cancel any remaining tasks
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        except asyncio.CancelledError:
+            # Shutdown requested, cancel all tasks
+            for task in tasks:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     async def stop(self) -> None:
         """Stop the consumer gracefully."""
@@ -308,7 +392,6 @@ async def async_main() -> None:
         "Archive starting",
         extra={
             "nats_url": settings.nats_url,
-            
         },
     )
 
