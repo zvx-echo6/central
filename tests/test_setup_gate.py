@@ -83,7 +83,7 @@ class TestSetupGateMiddleware:
             client = TestClient(app, follow_redirects=False)
 
             response = client.get("/")
-            assert response.status_code == 307
+            assert response.status_code == 302
             assert response.headers["location"] == "/setup"
 
     @pytest.mark.asyncio
