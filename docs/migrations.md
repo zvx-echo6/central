@@ -26,8 +26,24 @@ Direct `psql` execution bypasses the `schema_migrations` tracker and
 was the cause of the v0.2.0 reconcile. If a migration needs to be
 applied on the live system, run:
 
-    sudo -u central /opt/central/.venv/bin/python -m scripts.migrate
+    sudo -u central /opt/central/.venv/bin/python -m central.migrate
 
 Never apply migration SQL directly via `psql`, even as a superuser,
 even "just to test." If migrate.py has a bug that's blocking you, fix
 migrate.py.
+
+## Extensions are not in migrations
+
+PostgreSQL extensions like PostGIS require superuser privileges to
+install. The production `central` role is intentionally not a superuser.
+Therefore, extensions live outside the migration system:
+
+- **Production bootstrap:** A DBA runs `CREATE EXTENSION postgis` once
+  before the first `migrate.py` run.
+- **Test database:** The `central_test` role is a superuser, allowing
+  test fixtures to self-bootstrap extensions.
+
+This is documented in [docs/test-database.md](test-database.md).
+
+Do not add `CREATE EXTENSION` statements to migrations — they will fail
+in production where migrations run as the non-superuser `central` role.

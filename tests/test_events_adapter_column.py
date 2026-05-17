@@ -5,6 +5,8 @@ verifying backfill logic, FK constraints, NOT NULL enforcement, and
 source column removal.
 
 Requires CENTRAL_TEST_DB_DSN or uses default central_test database.
+The test database must have PostGIS installed, or the central_test role
+must be a superuser (which it is by default) to self-bootstrap PostGIS.
 """
 
 import os
@@ -75,7 +77,11 @@ async def pre_migration_events_table(db_conn: asyncpg.Connection) -> None:
     """Create events table with pre-migration schema (source column, no adapter).
 
     Also ensures config.adapters exists with test adapters.
+    Self-bootstraps PostGIS if not already installed (central_test is superuser).
     """
+    # Self-bootstrap PostGIS extension (central_test role is superuser)
+    await db_conn.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+
     # Ensure config schema and adapters table exist
     await db_conn.execute("CREATE SCHEMA IF NOT EXISTS config")
     await db_conn.execute("""
@@ -100,7 +106,7 @@ async def pre_migration_events_table(db_conn: asyncpg.Connection) -> None:
     await db_conn.execute("DROP TABLE IF EXISTS public.events CASCADE")
 
     # Create events table with PRE-MIGRATION schema (has source, no adapter)
-    # Note: geom column omitted since test DB lacks PostGIS extension
+    # Matches production schema including geom column
     await db_conn.execute("""
         CREATE TABLE public.events (
             id              TEXT NOT NULL,
@@ -109,6 +115,7 @@ async def pre_migration_events_table(db_conn: asyncpg.Connection) -> None:
             time            TIMESTAMPTZ NOT NULL,
             expires         TIMESTAMPTZ,
             severity        SMALLINT,
+            geom            GEOMETRY(Geometry, 4326),
             regions         TEXT[],
             primary_region  TEXT,
             payload         JSONB NOT NULL,
@@ -118,6 +125,7 @@ async def pre_migration_events_table(db_conn: asyncpg.Connection) -> None:
     """)
 
     # Insert test rows with different source values
+    # geom is NULL (production schema permits this)
     test_rows = [
         ("event-nws-1", "central/adapters/nws", "wx.alert.tornado_warning"),
         ("event-nws-2", "central/adapters/nws", "wx.alert.flood_warning"),

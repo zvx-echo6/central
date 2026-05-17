@@ -15,6 +15,10 @@ Phase 0 — scaffold. Not yet operational.
 - One archive consumer process persisting events to TimescaleDB
 - Both processes systemd-managed
 
+## Testing
+
+See [docs/test-database.md](docs/test-database.md) for test database setup.
+
 ## License
 
 MIT. See LICENSE.
