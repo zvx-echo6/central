@@ -13,3 +13,4 @@ db.env
 .vscode/
 *.swp
 .DS_Store
+.ssh/

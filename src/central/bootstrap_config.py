@@ -33,6 +33,9 @@ class Settings(BaseSettings):
         default="INFO",
         description="Logging level",
     )
+    csrf_secret: str = Field(
+        description="Secret key for CSRF token signing (generate with: python -c \"import secrets; print(secrets.token_urlsafe(32))\")",
+    )
 
 
 @lru_cache

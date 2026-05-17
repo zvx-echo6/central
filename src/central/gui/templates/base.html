@@ -9,7 +9,36 @@
     {% block head %}{% endblock %}
 </head>
 <body>
+    <nav class="container">
+        <ul>
+            <li><strong>Central</strong></li>
+        </ul>
+        <ul>
+            {% if operator %}
+            <li>{{ operator.username }}</li>
+            <li><a href="/change-password">Change Password</a></li>
+            <li>
+                <form action="/logout" method="post" style="margin: 0;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="outline">Logout</button>
+                </form>
+            </li>
+            {% else %}
+            <li><a href="/login">Login</a></li>
+            {% endif %}
+        </ul>
+    </nav>
     <main class="container">
+        {% if error %}
+        <article aria-label="Error">
+            <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+        </article>
+        {% endif %}
+        {% if success %}
+        <article aria-label="Success">
+            <p style="color: var(--pico-color-green-500);">{{ success }}</p>
+        </article>
+        {% endif %}
         {% block content %}{% endblock %}
     </main>
 </body>
