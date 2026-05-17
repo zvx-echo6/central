@@ -620,6 +620,13 @@ async def adapters_edit_form(
             "SELECT alias FROM config.api_keys ORDER BY alias"
         )
 
+        # Get map tile settings from config.system
+        sys_row = await conn.fetchrow(
+            "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
+        )
+        tile_url = sys_row["map_tile_url"] if sys_row else "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        tile_attribution = sys_row["map_attribution"] if sys_row else "&copy; OpenStreetMap contributors"
+
     settings = row["settings"] or {}
     adapter = {
         "name": row["name"],
@@ -643,6 +650,8 @@ async def adapters_edit_form(
             "api_keys": [{"alias": k["alias"]} for k in api_keys],
             "valid_satellites": _get_valid_satellites(),
             "valid_feeds": sorted(_get_valid_feeds()),
+            "tile_url": tile_url,
+            "tile_attribution": tile_attribution,
         },
     )
     csrf_protect.set_csrf_cookie(signed_token, response)
@@ -749,6 +758,39 @@ async def adapters_edit_submit(
             else:
                 new_settings["feed"] = feed
 
+        # Region validation (applies to all adapters)
+        region_north_str = form.get("region_north", "").strip()
+        region_south_str = form.get("region_south", "").strip()
+        region_east_str = form.get("region_east", "").strip()
+        region_west_str = form.get("region_west", "").strip()
+
+        form_data["region_north"] = region_north_str
+        form_data["region_south"] = region_south_str
+        form_data["region_east"] = region_east_str
+        form_data["region_west"] = region_west_str
+
+        try:
+            region_north = float(region_north_str)
+            region_south = float(region_south_str)
+            region_east = float(region_east_str)
+            region_west = float(region_west_str)
+
+            # Validate latitude bounds
+            if not (-90 <= region_south < region_north <= 90):
+                errors["region"] = "Invalid latitude: south must be less than north, both between -90 and 90"
+            # Validate longitude bounds
+            elif not (-180 <= region_west < region_east <= 180):
+                errors["region"] = "Invalid longitude: west must be less than east, both between -180 and 180"
+            else:
+                new_settings["region"] = {
+                    "north": region_north,
+                    "south": region_south,
+                    "east": region_east,
+                    "west": region_west,
+                }
+        except ValueError:
+            errors["region"] = "Region coordinates must be valid numbers"
+
         # If there are errors, re-render the form
         if errors:
             adapter = {
@@ -764,6 +806,13 @@ async def adapters_edit_submit(
                 "SELECT alias FROM config.api_keys ORDER BY alias"
             )
 
+            # Get map tile settings for re-render
+            sys_row = await conn.fetchrow(
+                "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
+            )
+            tile_url = sys_row["map_tile_url"] if sys_row else "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            tile_attribution = sys_row["map_attribution"] if sys_row else "&copy; OpenStreetMap contributors"
+
             csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
             response = templates.TemplateResponse(
                 request=request,
@@ -777,6 +826,8 @@ async def adapters_edit_submit(
                     "api_keys": [{"alias": k["alias"]} for k in api_keys],
                     "valid_satellites": _get_valid_satellites(),
                     "valid_feeds": sorted(_get_valid_feeds()),
+                    "tile_url": tile_url,
+                    "tile_attribution": tile_attribution,
                 },
                 status_code=200,
             )

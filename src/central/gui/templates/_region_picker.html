@@ -1,0 +1,112 @@
+<div id="region-picker-container"
+     data-north="{{ (form_data.region_north if form_data and form_data.region_north else adapter.settings.region.north) if adapter.settings.region else 49.5 }}"
+     data-south="{{ (form_data.region_south if form_data and form_data.region_south else adapter.settings.region.south) if adapter.settings.region else 31.0 }}"
+     data-east="{{ (form_data.region_east if form_data and form_data.region_east else adapter.settings.region.east) if adapter.settings.region else -102.0 }}"
+     data-west="{{ (form_data.region_west if form_data and form_data.region_west else adapter.settings.region.west) if adapter.settings.region else -124.5 }}"
+     data-tile-url="{{ tile_url }}"
+     data-tile-attr="{{ tile_attribution }}">
+
+    <div id="region-map" style="height: 400px; margin-bottom: 1rem;"></div>
+
+    <div class="grid">
+        <div>
+            <label for="region_north">North</label>
+            <input type="number" id="region_north" name="region_north" step="0.0001" min="-90" max="90" readonly
+                   value="{{ (form_data.region_north if form_data and form_data.region_north else adapter.settings.region.north) if adapter.settings.region else 49.5 }}">
+        </div>
+        <div>
+            <label for="region_south">South</label>
+            <input type="number" id="region_south" name="region_south" step="0.0001" min="-90" max="90" readonly
+                   value="{{ (form_data.region_south if form_data and form_data.region_south else adapter.settings.region.south) if adapter.settings.region else 31.0 }}">
+        </div>
+        <div>
+            <label for="region_east">East</label>
+            <input type="number" id="region_east" name="region_east" step="0.0001" min="-180" max="180" readonly
+                   value="{{ (form_data.region_east if form_data and form_data.region_east else adapter.settings.region.east) if adapter.settings.region else -102.0 }}">
+        </div>
+        <div>
+            <label for="region_west">West</label>
+            <input type="number" id="region_west" name="region_west" step="0.0001" min="-180" max="180" readonly
+                   value="{{ (form_data.region_west if form_data and form_data.region_west else adapter.settings.region.west) if adapter.settings.region else -124.5 }}">
+        </div>
+    </div>
+
+    {% if errors and errors.region %}
+    <small style="color: var(--pico-color-red-500);">{{ errors.region }}</small>
+    {% endif %}
+
+    <button type="button" id="region-reset-btn" class="outline secondary">Reset to Saved</button>
+</div>
+
+<script>
+(function() {
+    const container = document.getElementById('region-picker-container');
+    const savedNorth = parseFloat(container.dataset.north);
+    const savedSouth = parseFloat(container.dataset.south);
+    const savedEast = parseFloat(container.dataset.east);
+    const savedWest = parseFloat(container.dataset.west);
+    const tileUrl = container.dataset.tileUrl || 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    const tileAttr = container.dataset.tileAttr || '&copy; OpenStreetMap contributors';
+
+    // Initialize map centered on the bbox
+    const centerLat = (savedNorth + savedSouth) / 2;
+    const centerLng = (savedEast + savedWest) / 2;
+    const map = L.map('region-map').setView([centerLat, centerLng], 5);
+
+    // Add tile layer
+    L.tileLayer(tileUrl, {
+        attribution: tileAttr,
+        maxZoom: 18
+    }).addTo(map);
+
+    // Create initial rectangle
+    const bounds = L.latLngBounds(
+        L.latLng(savedSouth, savedWest),
+        L.latLng(savedNorth, savedEast)
+    );
+
+    // Fit map to bounds
+    map.fitBounds(bounds.pad(0.1));
+
+    // Create editable rectangle
+    const rectangle = L.rectangle(bounds, {
+        color: '#3388ff',
+        weight: 2,
+        fillOpacity: 0.2
+    }).addTo(map);
+
+    // Make rectangle editable
+    rectangle.editing.enable();
+
+    // Input elements
+    const northInput = document.getElementById('region_north');
+    const southInput = document.getElementById('region_south');
+    const eastInput = document.getElementById('region_east');
+    const westInput = document.getElementById('region_west');
+
+    // Update inputs from rectangle bounds
+    function updateInputs() {
+        const b = rectangle.getBounds();
+        northInput.value = b.getNorth().toFixed(4);
+        southInput.value = b.getSouth().toFixed(4);
+        eastInput.value = b.getEast().toFixed(4);
+        westInput.value = b.getWest().toFixed(4);
+    }
+
+    // Listen for rectangle edit events
+    rectangle.on('edit', updateInputs);
+
+    // Reset button
+    document.getElementById('region-reset-btn').addEventListener('click', function() {
+        const originalBounds = L.latLngBounds(
+            L.latLng(savedSouth, savedWest),
+            L.latLng(savedNorth, savedEast)
+        );
+        rectangle.setBounds(originalBounds);
+        updateInputs();
+    });
+
+    // Initial update
+    updateInputs();
+})();
+</script>
