@@ -68,6 +68,34 @@ journalctl -u central-archive -f
 
 ## Database
 
+## Environment Variables
+
+Environment variables are stored in `/etc/central/central.env` and loaded by
+systemd services via `EnvironmentFile=`.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `CENTRAL_CSRF_SECRET` | Yes (for GUI) | Secret key for CSRF token signing. Generate with `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
+
+### Generating CSRF Secret
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Add the generated value to `/etc/central/central.env`:
+
+```bash
+CENTRAL_CSRF_SECRET=<generated-secret>
+```
+
+Ensure the file has restricted permissions:
+
+```bash
+sudo chmod 640 /etc/central/central.env
+sudo chown central:central /etc/central/central.env
+```
+
 PostgreSQL 16 with TimescaleDB runs on CT104:
 
 ```bash

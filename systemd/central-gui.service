@@ -9,6 +9,7 @@ User=central
 Group=central
 WorkingDirectory=/opt/central
 Environment=HOME=/opt/central
+EnvironmentFile=/etc/central/central.env
 ExecStart=/opt/central/.venv/bin/central-gui
 Restart=on-failure
 RestartSec=5
@@ -18,3 +19,6 @@ ProtectHome=true
 PrivateTmp=true
 StandardOutput=journal
 StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

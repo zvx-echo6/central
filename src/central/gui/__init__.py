@@ -1,13 +1,17 @@
 """Central GUI — FastAPI + Jinja2 + HTMX."""
 
+import asyncio
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from central.gui.routes import router
+logger = logging.getLogger(__name__)
 
 # Template and static directories
 GUI_DIR = Path(__file__).parent
@@ -17,17 +21,110 @@ STATIC_DIR = GUI_DIR / "static"
 # Jinja2 templates instance (shared with routes)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+# Shutdown event and cleanup task
+_shutdown_event: asyncio.Event | None = None
+_cleanup_task: asyncio.Task | None = None
 
-def create_app() -> FastAPI:
-    """Create and configure the FastAPI application."""
+# Lazy app singleton
+_app: FastAPI | None = None
+
+
+def _configure_csrf() -> None:
+    """Configure CSRF protection. Must be called before app starts."""
+    from fastapi_csrf_protect import CsrfProtect
+    from pydantic import BaseModel
+    from central.bootstrap_config import get_settings
+
+    class CsrfSettings(BaseModel):
+        secret_key: str
+        token_location: str = "body"
+        token_key: str = "csrf_token"
+
+    @CsrfProtect.load_config
+    def get_csrf_config():
+        settings = get_settings()
+        return CsrfSettings(secret_key=settings.csrf_secret)
+
+
+async def _session_cleanup_loop() -> None:
+    """Periodically clean up expired sessions."""
+    global _shutdown_event
+
+    from central.gui.db import get_pool
+
+    if _shutdown_event is None:
+        return
+
+    while not _shutdown_event.is_set():
+        try:
+            await asyncio.wait_for(_shutdown_event.wait(), timeout=3600)
+        except asyncio.TimeoutError:
+            try:
+                pool = get_pool()
+                if pool:
+                    async with pool.acquire() as conn:
+                        result = await conn.execute(
+                            "DELETE FROM config.sessions WHERE expires_at < now()"
+                        )
+                        deleted = result.split()[-1] if result else "0"
+                        if int(deleted) > 0:
+                            logger.info("Session cleanup", extra={"deleted": deleted})
+            except Exception:
+                logger.warning("Session cleanup failed", exc_info=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan handler."""
+    global _shutdown_event, _cleanup_task
+
+    from central.bootstrap_config import get_settings
+    from central.gui.db import close_pool, init_pool
+
+    settings = get_settings()
+
+    # Initialize database pool
+    await init_pool(settings.db_dsn)
+
+    # Start session cleanup task
+    _shutdown_event = asyncio.Event()
+    _cleanup_task = asyncio.create_task(_session_cleanup_loop())
+
+    logger.info("Central GUI started")
+
+    yield
+
+    # Shutdown
+    if _shutdown_event:
+        _shutdown_event.set()
+    if _cleanup_task:
+        try:
+            await asyncio.wait_for(_cleanup_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            _cleanup_task.cancel()
+
+    await close_pool()
+    logger.info("Central GUI stopped")
+
+
+def _create_app() -> FastAPI:
+    """Create the FastAPI application."""
+    from central.gui.middleware import SessionMiddleware, SetupGateMiddleware
+    from central.gui.routes import router
+
+    # Configure CSRF before creating app
+    _configure_csrf()
+
     app = FastAPI(
-        title="Central",
-        description="Central Data Hub GUI",
-        docs_url=None,  # Disable Swagger UI for now
-        redoc_url=None,  # Disable ReDoc for now
+        title="Central GUI",
+        lifespan=lifespan,
     )
 
-    # Mount static files if directory exists and has content
+    # Add middleware (order matters - first added runs last)
+    app.add_middleware(SessionMiddleware)
+    app.add_middleware(SetupGateMiddleware)
+
+    # Mount static files
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -37,10 +134,47 @@ def create_app() -> FastAPI:
     return app
 
 
-# Application instance
-app = create_app()
+def __getattr__(name: str) -> Any:
+    """Lazy attribute access for app singleton."""
+    global _app
+    if name == "app":
+        if _app is None:
+            _app = _create_app()
+        return _app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def main() -> None:
-    """Entry point for central-gui console script."""
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    """Entry point for central-gui command."""
+    import logging.config
+
+    logging.config.dictConfig({
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {
+                "format": "%(asctime)s %(levelname)s %(name)s: %(message)s",
+            },
+        },
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "formatter": "default",
+            },
+        },
+        "root": {
+            "level": "INFO",
+            "handlers": ["console"],
+        },
+    })
+
+    uvicorn.run(
+        "central.gui:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=False,
+    )
+
+
+if __name__ == "__main__":
+    main()

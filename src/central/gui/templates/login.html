@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}Central - Login{% endblock %}
+
+{% block content %}
+<article>
+    <header>
+        <h1>Login</h1>
+    </header>
+    
+    <form action="/login" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        
+        <label for="username">
+            Username
+            <input type="text" id="username" name="username" required 
+                   autocomplete="username" autofocus>
+        </label>
+        
+        <label for="password">
+            Password
+            <input type="password" id="password" name="password" required
+                   autocomplete="current-password">
+        </label>
+        
+        <button type="submit">Login</button>
+    </form>
+</article>
+{% endblock %}
