@@ -100,6 +100,7 @@ async def pre_migration_events_table(db_conn: asyncpg.Connection) -> None:
     await db_conn.execute("DROP TABLE IF EXISTS public.events CASCADE")
 
     # Create events table with PRE-MIGRATION schema (has source, no adapter)
+    # Note: geom column omitted since test DB lacks PostGIS extension
     await db_conn.execute("""
         CREATE TABLE public.events (
             id              TEXT NOT NULL,
@@ -108,7 +109,6 @@ async def pre_migration_events_table(db_conn: asyncpg.Connection) -> None:
             time            TIMESTAMPTZ NOT NULL,
             expires         TIMESTAMPTZ,
             severity        SMALLINT,
-            geom            GEOMETRY(Geometry, 4326),
             regions         TEXT[],
             primary_region  TEXT,
             payload         JSONB NOT NULL,
