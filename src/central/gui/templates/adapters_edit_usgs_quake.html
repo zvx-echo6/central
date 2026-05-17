@@ -1,0 +1,9 @@
+<label for="feed">Feed</label>
+<select id="feed" name="feed" required>
+    {% for f in valid_feeds %}
+    <option value="{{ f }}" {% if (form_data.feed if form_data else adapter.settings.feed) == f %}selected{% endif %}>{{ f }}</option>
+    {% endfor %}
+</select>
+{% if errors and errors.feed %}
+<small style="color: var(--pico-color-red-500);">{{ errors.feed }}</small>
+{% endif %}

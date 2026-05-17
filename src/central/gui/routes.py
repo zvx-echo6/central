@@ -1,5 +1,9 @@
 """Route handlers for Central GUI."""
 
+import json
+import re
+from typing import Any
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi_csrf_protect import CsrfProtect
@@ -12,6 +16,7 @@ from central.gui.auth import (
     verify_password,
 )
 from central.gui.audit import (
+    ADAPTER_UPDATE,
     AUTH_LOGIN,
     AUTH_LOGIN_FAILED,
     AUTH_LOGOUT,
@@ -25,6 +30,21 @@ router = APIRouter()
 
 # Streams to display on dashboard
 DASHBOARD_STREAMS = ["CENTRAL_WX", "CENTRAL_FIRE", "CENTRAL_QUAKE", "CENTRAL_META"]
+
+# Email validation regex (simple but effective)
+EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+
+
+def _get_valid_satellites() -> list[str]:
+    """Get valid satellite identifiers from firms adapter."""
+    from central.adapters.firms import SATELLITE_SHORT
+    return list(SATELLITE_SHORT.keys())
+
+
+def _get_valid_feeds() -> set[str]:
+    """Get valid feed values from usgs_quake adapter."""
+    from central.adapters.usgs_quake import VALID_FEEDS
+    return VALID_FEEDS
 
 
 def _get_templates():
@@ -199,7 +219,6 @@ async def dashboard_polls(request: Request) -> HTMLResponse:
                 try:
                     msgs = await sub.fetch(1, timeout=1.0)
                     if msgs:
-                        import json
                         data = json.loads(msgs[0].data.decode())
                         last_poll = data.get("data", {}).get("time", "—")
                         adapters.append({
@@ -531,3 +550,294 @@ async def change_password_submit(
 
     # Redirect to index
     return RedirectResponse(url="/", status_code=302)
+
+
+# =============================================================================
+# Adapters routes
+# =============================================================================
+
+
+@router.get("/adapters", response_class=HTMLResponse)
+async def adapters_list(
+    request: Request,
+    csrf_protect: CsrfProtect = Depends(),
+) -> HTMLResponse:
+    """List all adapters."""
+    templates = _get_templates()
+    pool = get_pool()
+    operator = request.state.operator
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT name, enabled, cadence_s, settings, paused_at, updated_at
+            FROM config.adapters
+            ORDER BY name
+            """
+        )
+
+    adapters = []
+    for row in rows:
+        # asyncpg auto-deserializes jsonb to dict
+        settings = row["settings"] if row["settings"] else {}
+        if isinstance(settings, str):
+            settings = json.loads(settings)
+        adapters.append({
+            "name": row["name"],
+            "enabled": row["enabled"],
+            "cadence_s": row["cadence_s"],
+            "settings": settings,
+            "paused_at": row["paused_at"],
+            "updated_at": row["updated_at"],
+        })
+
+    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    response = templates.TemplateResponse(
+        request=request,
+        name="adapters_list.html",
+        context={
+            "operator": operator,
+            "csrf_token": csrf_token,
+            "adapters": adapters,
+        },
+    )
+    csrf_protect.set_csrf_cookie(signed_token, response)
+    return response
+
+
+@router.get("/adapters/{name}", response_class=HTMLResponse)
+async def adapters_edit_form(
+    request: Request,
+    name: str,
+    csrf_protect: CsrfProtect = Depends(),
+) -> Response:
+    """Render the adapter edit form."""
+    templates = _get_templates()
+    pool = get_pool()
+    operator = request.state.operator
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT name, enabled, cadence_s, settings, paused_at, updated_at
+            FROM config.adapters
+            WHERE name = $1
+            """,
+            name,
+        )
+
+        if row is None:
+            return Response(status_code=404, content="Adapter not found")
+
+        # Get API keys for firms dropdown
+        api_keys = await conn.fetch(
+            "SELECT alias FROM config.api_keys ORDER BY alias"
+        )
+
+    # asyncpg auto-deserializes jsonb to dict
+    settings = row["settings"] if row["settings"] else {}
+    if isinstance(settings, str):
+        settings = json.loads(settings)
+    adapter = {
+        "name": row["name"],
+        "enabled": row["enabled"],
+        "cadence_s": row["cadence_s"],
+        "settings": settings,
+        "paused_at": row["paused_at"],
+        "updated_at": row["updated_at"],
+    }
+
+    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    response = templates.TemplateResponse(
+        request=request,
+        name="adapters_edit.html",
+        context={
+            "operator": operator,
+            "csrf_token": csrf_token,
+            "adapter": adapter,
+            "errors": None,
+            "form_data": None,
+            "api_keys": [{"alias": k["alias"]} for k in api_keys],
+            "valid_satellites": _get_valid_satellites(),
+            "valid_feeds": sorted(_get_valid_feeds()),
+        },
+    )
+    csrf_protect.set_csrf_cookie(signed_token, response)
+    return response
+
+
+@router.post("/adapters/{name}")
+async def adapters_edit_submit(
+    request: Request,
+    name: str,
+    csrf_protect: CsrfProtect = Depends(),
+) -> Response:
+    """Process the adapter edit form."""
+    templates = _get_templates()
+    pool = get_pool()
+    operator = request.state.operator
+
+    # Validate CSRF
+    await csrf_protect.validate_csrf(request)
+
+    # Parse form data
+    form = await request.form()
+    enabled = "enabled" in form
+    cadence_s_str = form.get("cadence_s", "")
+
+    # Build form_data for re-render on error
+    form_data: dict[str, Any] = {
+        "enabled": enabled,
+        "cadence_s": cadence_s_str,
+    }
+
+    errors: dict[str, str] = {}
+
+    # Validate cadence_s
+    try:
+        cadence_s = int(cadence_s_str)
+        if cadence_s < 60 or cadence_s > 3600:
+            errors["cadence_s"] = "Cadence must be between 60 and 3600 seconds"
+    except ValueError:
+        errors["cadence_s"] = "Cadence must be a valid integer"
+        cadence_s = 0
+
+    async with pool.acquire() as conn:
+        # Get current adapter state
+        row = await conn.fetchrow(
+            """
+            SELECT name, enabled, cadence_s, settings, paused_at, updated_at
+            FROM config.adapters
+            WHERE name = $1
+            """,
+            name,
+        )
+
+        if row is None:
+            return Response(status_code=404, content="Adapter not found")
+
+        # asyncpg auto-deserializes jsonb to dict
+        current_settings = row["settings"] if row["settings"] else {}
+        if isinstance(current_settings, str):
+            current_settings = json.loads(current_settings)
+        new_settings = dict(current_settings)
+
+        # Adapter-specific validation and settings update
+        if name == "nws":
+            contact_email = form.get("contact_email", "").strip()
+            form_data["contact_email"] = contact_email
+            if not contact_email:
+                errors["contact_email"] = "Contact email is required"
+            elif not EMAIL_REGEX.match(contact_email):
+                errors["contact_email"] = "Invalid email format"
+            else:
+                new_settings["contact_email"] = contact_email
+
+        elif name == "firms":
+            api_key_alias = form.get("api_key_alias", "").strip()
+            satellites = form.getlist("satellites")
+            form_data["api_key_alias"] = api_key_alias
+            form_data["satellites"] = satellites
+
+            # Validate api_key_alias if set
+            if api_key_alias:
+                key_exists = await conn.fetchrow(
+                    "SELECT 1 FROM config.api_keys WHERE alias = $1",
+                    api_key_alias,
+                )
+                if not key_exists:
+                    errors["api_key_alias"] = f"API key alias '{api_key_alias}' does not exist"
+                else:
+                    new_settings["api_key_alias"] = api_key_alias
+            else:
+                new_settings["api_key_alias"] = None
+
+            # Validate satellites
+            valid_sats = set(_get_valid_satellites())
+            invalid_sats = [s for s in satellites if s not in valid_sats]
+            if invalid_sats:
+                errors["satellites"] = f"Invalid satellites: {', '.join(invalid_sats)}"
+            else:
+                new_settings["satellites"] = satellites
+
+        elif name == "usgs_quake":
+            feed = form.get("feed", "").strip()
+            form_data["feed"] = feed
+            valid_feeds = _get_valid_feeds()
+            if feed not in valid_feeds:
+                errors["feed"] = f"Invalid feed. Must be one of: {', '.join(sorted(valid_feeds))}"
+            else:
+                new_settings["feed"] = feed
+
+        # If there are errors, re-render the form
+        if errors:
+            adapter = {
+                "name": row["name"],
+                "enabled": row["enabled"],
+                "cadence_s": row["cadence_s"],
+                "settings": current_settings,
+                "paused_at": row["paused_at"],
+                "updated_at": row["updated_at"],
+            }
+
+            api_keys = await conn.fetch(
+                "SELECT alias FROM config.api_keys ORDER BY alias"
+            )
+
+            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            response = templates.TemplateResponse(
+                request=request,
+                name="adapters_edit.html",
+                context={
+                    "operator": operator,
+                    "csrf_token": csrf_token,
+                    "adapter": adapter,
+                    "errors": errors,
+                    "form_data": form_data,
+                    "api_keys": [{"alias": k["alias"]} for k in api_keys],
+                    "valid_satellites": _get_valid_satellites(),
+                    "valid_feeds": sorted(_get_valid_feeds()),
+                },
+                status_code=200,
+            )
+            csrf_protect.set_csrf_cookie(signed_token, response)
+            return response
+
+        # Build before state for audit
+        before = {
+            "enabled": row["enabled"],
+            "cadence_s": row["cadence_s"],
+            "settings": current_settings,
+        }
+
+        # Build after state for audit
+        after = {
+            "enabled": enabled,
+            "cadence_s": cadence_s,
+            "settings": new_settings,
+        }
+
+        # Update the adapter
+        await conn.execute(
+            """
+            UPDATE config.adapters
+            SET enabled = $1, cadence_s = $2, settings = $3, updated_at = now()
+            WHERE name = $4
+            """,
+            enabled,
+            cadence_s,
+            json.dumps(new_settings),
+            name,
+        )
+
+        # Write audit log
+        await write_audit(
+            conn,
+            ADAPTER_UPDATE,
+            operator_id=operator.id,
+            target=name,
+            before=before,
+            after=after,
+        )
+
+    return RedirectResponse(url="/adapters", status_code=302)
