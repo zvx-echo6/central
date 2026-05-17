@@ -578,10 +578,7 @@ async def adapters_list(
 
     adapters = []
     for row in rows:
-        # asyncpg auto-deserializes jsonb to dict
-        settings = row["settings"] if row["settings"] else {}
-        if isinstance(settings, str):
-            settings = json.loads(settings)
+        settings = row["settings"] or {}
         adapters.append({
             "name": row["name"],
             "enabled": row["enabled"],
@@ -634,10 +631,7 @@ async def adapters_edit_form(
             "SELECT alias FROM config.api_keys ORDER BY alias"
         )
 
-    # asyncpg auto-deserializes jsonb to dict
-    settings = row["settings"] if row["settings"] else {}
-    if isinstance(settings, str):
-        settings = json.loads(settings)
+    settings = row["settings"] or {}
     adapter = {
         "name": row["name"],
         "enabled": row["enabled"],
@@ -716,10 +710,7 @@ async def adapters_edit_submit(
         if row is None:
             return Response(status_code=404, content="Adapter not found")
 
-        # asyncpg auto-deserializes jsonb to dict
-        current_settings = row["settings"] if row["settings"] else {}
-        if isinstance(current_settings, str):
-            current_settings = json.loads(current_settings)
+        current_settings = row["settings"] or {}
         new_settings = dict(current_settings)
 
         # Adapter-specific validation and settings update
@@ -826,7 +817,7 @@ async def adapters_edit_submit(
             """,
             enabled,
             cadence_s,
-            json.dumps(new_settings),
+            new_settings,
             name,
         )
 

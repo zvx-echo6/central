@@ -401,3 +401,111 @@ class TestAdaptersAudit:
         assert captured_audit["after"]["cadence_s"] == 120
         assert captured_audit["before"]["settings"]["contact_email"] == "old@example.com"
         assert captured_audit["after"]["settings"]["contact_email"] == "new@example.com"
+
+
+class TestAdaptersJsonbRegression:
+    """Regression tests for JSONB double-encoding bug."""
+
+    @pytest.mark.asyncio
+    async def test_settings_passed_as_dict_not_string(self):
+        """Verify settings is passed to UPDATE as dict, not json.dumps string.
+
+        Regression test for double-encoding bug where json.dumps() was called
+        on settings before passing to asyncpg, which already handles dict->jsonb.
+        """
+        from central.gui.routes import adapters_edit_submit
+
+        mock_request = MagicMock()
+        mock_request.state.operator = MagicMock(id=1, username="testop")
+
+        mock_form = MagicMock()
+        mock_form.get.side_effect = lambda k, d="": {
+            "cadence_s": "120",
+            "contact_email": "test@example.com",
+        }.get(k, d)
+        mock_form.getlist.return_value = []
+        mock_form.__contains__ = lambda self, k: k == "enabled"
+        mock_request.form = AsyncMock(return_value=mock_form)
+
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow.return_value = {
+            "name": "nws",
+            "enabled": True,
+            "cadence_s": 60,
+            "settings": {"contact_email": "old@example.com"},  # dict, as asyncpg returns
+            "paused_at": None,
+            "updated_at": None,
+        }
+        mock_conn.execute = AsyncMock()
+
+        mock_pool = MagicMock()
+        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        mock_csrf = MagicMock()
+        mock_csrf.validate_csrf = AsyncMock()
+
+        with patch("central.gui.routes.get_pool", return_value=mock_pool):
+            with patch("central.gui.routes.write_audit", new_callable=AsyncMock):
+                await adapters_edit_submit(mock_request, "nws", mock_csrf)
+
+        # Get the settings argument passed to execute (3rd positional arg after query)
+        call_args = mock_conn.execute.call_args
+        # args[0] is the query, args[1:] are the parameters
+        settings_arg = call_args[0][3]  # enabled=$1, cadence=$2, settings=$3
+
+        # CRITICAL: settings must be a dict, NOT a string
+        # If json.dumps() was called, this would be a str like {contact_email: ...}
+        assert isinstance(settings_arg, dict), f"settings should be dict, got {type(settings_arg)}: {settings_arg}"
+        assert settings_arg["contact_email"] == "test@example.com"
+
+    @pytest.mark.asyncio
+    async def test_audit_before_after_passed_as_dict(self):
+        """Verify audit before/after are passed as dicts, not json.dumps strings."""
+        from central.gui.routes import adapters_edit_submit
+
+        mock_request = MagicMock()
+        mock_request.state.operator = MagicMock(id=1, username="testop")
+
+        mock_form = MagicMock()
+        mock_form.get.side_effect = lambda k, d="": {
+            "cadence_s": "120",
+            "contact_email": "new@example.com",
+        }.get(k, d)
+        mock_form.getlist.return_value = []
+        mock_form.__contains__ = lambda self, k: k == "enabled"
+        mock_request.form = AsyncMock(return_value=mock_form)
+
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow.return_value = {
+            "name": "nws",
+            "enabled": True,
+            "cadence_s": 60,
+            "settings": {"contact_email": "old@example.com"},  # dict
+            "paused_at": None,
+            "updated_at": None,
+        }
+        mock_conn.execute = AsyncMock()
+
+        mock_pool = MagicMock()
+        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        mock_csrf = MagicMock()
+        mock_csrf.validate_csrf = AsyncMock()
+
+        captured_audit = {}
+
+        async def capture_audit(conn, action, operator_id=None, target=None, before=None, after=None):
+            captured_audit["before"] = before
+            captured_audit["after"] = after
+
+        with patch("central.gui.routes.get_pool", return_value=mock_pool):
+            with patch("central.gui.routes.write_audit", side_effect=capture_audit):
+                await adapters_edit_submit(mock_request, "nws", mock_csrf)
+
+        # CRITICAL: before and after must be dicts, NOT strings
+        assert isinstance(captured_audit["before"], dict), f"before should be dict, got {type(captured_audit['before'])}"
+        assert isinstance(captured_audit["after"], dict), f"after should be dict, got {type(captured_audit['after'])}"
+        assert isinstance(captured_audit["before"]["settings"], dict), "before.settings should be dict"
+        assert isinstance(captured_audit["after"]["settings"], dict), "after.settings should be dict"
