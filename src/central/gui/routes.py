@@ -70,7 +70,7 @@ async def index(request: Request, csrf_protect: CsrfProtect = Depends()) -> HTML
     response = templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"operator": operator, "csrf_token": signed_token},
+        context={"operator": operator, "csrf_token": csrf_token},
     )
     csrf_protect.set_csrf_cookie(signed_token, response)
     return response
@@ -87,7 +87,7 @@ async def setup_form(
     response = templates.TemplateResponse(
         request=request,
         name="setup.html",
-        context={"csrf_token": signed_token, "error": None},
+        context={"csrf_token": csrf_token, "error": None},
     )
     csrf_protect.set_csrf_cookie(signed_token, response)
     return response
@@ -123,7 +123,7 @@ async def setup_submit(
         response = templates.TemplateResponse(
             request=request,
             name="setup.html",
-            context={"csrf_token": signed_token, "error": error},
+            context={"csrf_token": csrf_token, "error": error},
             status_code=200,
         )
         csrf_protect.set_csrf_cookie(signed_token, response)
@@ -182,7 +182,7 @@ async def login_form(
     response = templates.TemplateResponse(
         request=request,
         name="login.html",
-        context={"csrf_token": signed_token, "error": None},
+        context={"csrf_token": csrf_token, "error": None},
     )
     csrf_protect.set_csrf_cookie(signed_token, response)
     return response
@@ -220,7 +220,7 @@ async def login_submit(
             response = templates.TemplateResponse(
                 request=request,
                 name="login.html",
-                context={"csrf_token": signed_token, "error": "Invalid username or password"},
+                context={"csrf_token": csrf_token, "error": "Invalid username or password"},
                 status_code=200,
             )
             csrf_protect.set_csrf_cookie(signed_token, response)
@@ -233,7 +233,7 @@ async def login_submit(
             response = templates.TemplateResponse(
                 request=request,
                 name="login.html",
-                context={"csrf_token": signed_token, "error": "Invalid username or password"},
+                context={"csrf_token": csrf_token, "error": "Invalid username or password"},
                 status_code=200,
             )
             csrf_protect.set_csrf_cookie(signed_token, response)
@@ -295,7 +295,7 @@ async def change_password_form(
     response = templates.TemplateResponse(
         request=request,
         name="change_password.html",
-        context={"csrf_token": signed_token, "error": None, "success": False},
+        context={"csrf_token": csrf_token, "error": None, "success": False},
     )
     csrf_protect.set_csrf_cookie(signed_token, response)
     return response
@@ -342,7 +342,7 @@ async def change_password_submit(
             response = templates.TemplateResponse(
                 request=request,
                 name="change_password.html",
-                context={"csrf_token": signed_token, "error": error, "success": False},
+                context={"csrf_token": csrf_token, "error": error, "success": False},
                 status_code=200,
             )
             csrf_protect.set_csrf_cookie(signed_token, response)
