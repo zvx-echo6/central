@@ -59,12 +59,12 @@ def _type_to_widget(field_name: str, field_type: type) -> str:
             f"Field '{field_name}' has unsupported list type: list[{args[0].__name__ if args else '?'}]"
         )
 
-    # Check if it's a BaseModel subclass (nested model)
+    # Check if it's a BaseModel subclass (nested model other than RegionConfig)
     if isinstance(field_type, type) and issubclass(field_type, BaseModel):
-        if field_type is RegionConfig:
-            return "region"
         raise NotImplementedError(
-            f"Field '{field_name}' has unsupported nested type: {field_type.__name__}"
+            f"Field '{field_name}' has unsupported nested type: {field_type.__name__}. "
+            f"If a second nested type beyond RegionConfig is needed, "
+            f"refactor describe_fields to recurse over nested models."
         )
 
     raise NotImplementedError(

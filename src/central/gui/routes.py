@@ -48,7 +48,7 @@ from functools import cache
 
 from central.gui.db import get_pool
 from central.gui.form_descriptors import describe_fields, FieldDescriptor
-from central.supervisor import discover_adapters
+from central.adapter_discovery import discover_adapters
 from pydantic import ValidationError
 
 @cache
@@ -1384,11 +1384,13 @@ async def adapters_edit_submit(
         "cadence_s": cadence_s_str,
     }
 
-    # Validate cadence_s
+    # Validate cadence_s using AdapterConfig field constraint (ge=10)
     try:
         cadence_s = int(cadence_s_str)
-        if cadence_s < 60 or cadence_s > 3600:
-            errors["cadence_s"] = "Cadence must be between 60 and 3600 seconds"
+        from central.config_models import AdapterConfig
+        min_cadence = AdapterConfig.model_fields["cadence_s"].metadata[0].ge
+        if cadence_s < min_cadence:
+            errors["cadence_s"] = f"Input should be greater than or equal to {min_cadence}"
     except ValueError:
         errors["cadence_s"] = "Cadence must be a valid integer"
         cadence_s = 0

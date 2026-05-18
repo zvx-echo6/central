@@ -32,7 +32,7 @@ class AdapterConfig(BaseModel):
 
     name: str = Field(description="Unique adapter identifier")
     enabled: bool = Field(default=True, description="Whether adapter is active")
-    cadence_s: int = Field(description="Poll interval in seconds")
+    cadence_s: int = Field(ge=10, description="Poll interval in seconds")
     settings: dict[str, Any] = Field(
         default_factory=dict, description="Adapter-specific settings"
     )

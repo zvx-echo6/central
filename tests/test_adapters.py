@@ -189,7 +189,7 @@ class TestAdaptersEditSubmit:
 
     @pytest.mark.asyncio
     async def test_adapters_edit_invalid_cadence_shows_error(self):
-        """POST /adapters/nws with cadence_s=30 shows error, no DB update."""
+        """POST /adapters/nws with cadence_s=5 shows error, no DB update."""
         from central.gui.routes import adapters_edit_submit
 
         mock_request = MagicMock()
@@ -199,7 +199,7 @@ class TestAdaptersEditSubmit:
         mock_form = MagicMock()
         mock_form.get.side_effect = lambda k, d="": {
             "csrf_token": "test_csrf_token",
-            "cadence_s": "30",
+            "cadence_s": "5",
             "contact_email": "test@example.com",
             "region_north": "49.0",
             "region_south": "24.0",
@@ -241,7 +241,7 @@ class TestAdaptersEditSubmit:
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
         assert "cadence_s" in context["errors"]
-        assert "60" in context["errors"]["cadence_s"] or "3600" in context["errors"]["cadence_s"]
+        assert "10" in context["errors"]["cadence_s"]
 
 
 class TestAdaptersAudit:

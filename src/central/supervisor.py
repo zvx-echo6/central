@@ -13,41 +13,14 @@ from typing import Any
 import nats
 from nats.js import JetStreamContext
 
-import importlib
-import pkgutil
-
 from central.adapter import SourceAdapter
+from central.adapter_discovery import discover_adapters
 from central.cloudevents_wire import wrap_event
 from central.config_models import AdapterConfig
 from central.config_source import ConfigSource, DbConfigSource
 from central.config_store import ConfigStore
 from central.bootstrap_config import get_settings
 from central.stream_manager import StreamManager
-import central.adapters
-
-def discover_adapters() -> dict[str, type[SourceAdapter]]:
-    """Auto-discover adapter classes from central.adapters package."""
-    registry: dict[str, type[SourceAdapter]] = {}
-    for module_info in pkgutil.iter_modules(central.adapters.__path__):
-        try:
-            module = importlib.import_module(f"central.adapters.{module_info.name}")
-        except Exception as e:
-            logger.error(
-                "Failed to import adapter module",
-                extra={"module": module_info.name, "error": str(e)},
-            )
-            continue
-        for attr_name in dir(module):
-            attr = getattr(module, attr_name)
-            if (
-                isinstance(attr, type)
-                and issubclass(attr, SourceAdapter)
-                and attr is not SourceAdapter
-                and hasattr(attr, "name")
-            ):
-                registry[attr.name] = attr
-    return registry
-
 CURSOR_DB_PATH = Path("/var/lib/central/cursors.db")
 
 # Stream subject mappings

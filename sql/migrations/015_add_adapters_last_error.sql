@@ -3,4 +3,4 @@
 -- Populated by supervisor when an adapter fails to start or apply config.
 
 ALTER TABLE config.adapters
-ADD COLUMN last_error TEXT;
+ADD COLUMN IF NOT EXISTS last_error TEXT;
