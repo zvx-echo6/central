@@ -18,7 +18,7 @@
     <tbody>
         {% for event in events %}
         <tr data-row-idx="{{ loop.index0 }}"
-            {% if event.geometry %}data-geometry="{{ event.geometry | tojson | e }}"{% endif %}>
+            {% if event.geometry %}data-geometry='{{ event.geometry | tojson }}'{% endif %}>
             <td>{{ event.time }}</td>
             <td>{{ event.adapter }}</td>
             <td>{{ event.category }}</td>
