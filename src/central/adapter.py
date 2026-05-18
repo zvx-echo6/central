@@ -2,7 +2,9 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from central.config_models import AdapterConfig
@@ -19,11 +21,21 @@ class SourceAdapter(ABC):
     
     Class attributes that subclasses must define:
         name: Short identifier, e.g. "nws"
-        stream_name: Target JetStream stream, e.g. "CENTRAL_WX"
+        display_name: Human-readable name for GUI
+        description: Short description of the adapter
+        settings_schema: Pydantic model class for adapter settings
+        requires_api_key: Key alias if API key required, else None
+        wizard_order: Order in setup wizard (None = not in wizard)
+        default_cadence_s: Default polling interval in seconds
     """
     
-    name: str  # short identifier, e.g. "nws"
-    stream_name: str  # target JetStream stream, e.g. "CENTRAL_WX"
+    name: str
+    display_name: str
+    description: str
+    settings_schema: type[BaseModel]
+    requires_api_key: str | None = None
+    wizard_order: int | None = None
+    default_cadence_s: int
     
     @abstractmethod
     async def poll(self) -> AsyncIterator[Event]:
@@ -52,24 +64,6 @@ class SourceAdapter(ABC):
         
         Each adapter knows its own subject hierarchy. The supervisor
         calls this to determine where to publish each event.
-        """
-        ...
-    
-    @classmethod
-    @abstractmethod
-    def settings_schema(cls) -> dict[str, Any]:
-        """
-        Return the JSON-serializable schema for this adapter's settings.
-        
-        Used by the GUI to render adapter configuration forms.
-        Returns a dict with keys like:
-            {
-                "contact_email": {"type": "str", "default": "", "description": "..."},
-                "region": {"type": "RegionConfig", "default": None, "description": "..."},
-            }
-        
-        Note: If a second nested type beyond RegionConfig appears,
-        refactor this to use generic recursion for nested schemas.
         """
         ...
     

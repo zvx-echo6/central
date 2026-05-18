@@ -18,6 +18,8 @@ from tenacity import (
 )
 
 from central.adapter import SourceAdapter
+from pydantic import BaseModel
+
 from central.config_models import AdapterConfig, RegionConfig
 from central.config_store import ConfigStore
 from central.models import Event, Geo
@@ -49,11 +51,23 @@ SEVERITY_MAP = {
 }
 
 
+class FIRMSSettings(BaseModel):
+    """Settings schema for FIRMS adapter."""
+    api_key_alias: str = "firms"
+    satellites: list[str] = ["VIIRS_SNPP_NRT", "VIIRS_NOAA20_NRT"]
+    region: RegionConfig | None = None
+
+
 class FIRMSAdapter(SourceAdapter):
     """NASA FIRMS fire hotspot adapter."""
 
     name = "firms"
-    stream_name = "CENTRAL_FIRE"
+    display_name = "NASA FIRMS Fire Hotspots"
+    description = "Near-real-time satellite-detected fire hotspots from NASA FIRMS."
+    settings_schema = FIRMSSettings
+    requires_api_key = "firms"
+    wizard_order = 2
+    default_cadence_s = 300
 
     def __init__(
         self,
@@ -125,26 +139,6 @@ class FIRMSAdapter(SourceAdapter):
         """
         return f"central.{event.category}"
 
-    @classmethod
-    def settings_schema(cls) -> dict[str, Any]:
-        """Return schema for FIRMS adapter settings."""
-        return {
-            "api_key_alias": {
-                "type": "str",
-                "default": "firms",
-                "description": "Alias for the FIRMS API key in config.api_keys",
-            },
-            "satellites": {
-                "type": "list[str]",
-                "default": ["VIIRS_SNPP_NRT", "VIIRS_NOAA20_NRT"],
-                "description": "List of satellite feeds to poll",
-            },
-            "region": {
-                "type": "RegionConfig",
-                "default": None,
-                "description": "Geographic bounding box to filter hotspots",
-            },
-        }
 
     async def startup(self) -> None:
         """Initialize HTTP session, dedup tracker, and fetch API key."""

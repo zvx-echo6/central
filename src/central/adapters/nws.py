@@ -19,6 +19,8 @@ from tenacity import (
 
 from central import __version__
 from central.adapter import SourceAdapter
+from pydantic import BaseModel
+
 from central.config_models import AdapterConfig, RegionConfig
 from central.config_store import ConfigStore
 from central.models import Event, Geo
@@ -189,11 +191,22 @@ def _build_regions(same_codes: list[str], ugc_codes: list[str]) -> list[str]:
     return sorted(regions)
 
 
+class NWSSettings(BaseModel):
+    """Settings schema for NWS adapter."""
+    contact_email: str = ""
+    region: RegionConfig | None = None
+
+
 class NWSAdapter(SourceAdapter):
     """National Weather Service alerts adapter."""
 
     name = "nws"
-    stream_name = "CENTRAL_WX"
+    display_name = "NWS Weather Alerts"
+    description = "National Weather Service active alerts via api.weather.gov."
+    settings_schema = NWSSettings
+    requires_api_key = None
+    wizard_order = 1
+    default_cadence_s = 60
 
     def __init__(
         self,
@@ -263,21 +276,6 @@ class NWSAdapter(SourceAdapter):
             # County name
             return f"{prefix}.alert.us.{state}.county.{code.lower()}"
 
-    @classmethod
-    def settings_schema(cls) -> dict[str, Any]:
-        """Return schema for NWS adapter settings."""
-        return {
-            "contact_email": {
-                "type": "str",
-                "default": "",
-                "description": "Contact email for NWS API User-Agent header",
-            },
-            "region": {
-                "type": "RegionConfig",
-                "default": None,
-                "description": "Geographic bounding box to filter alerts",
-            },
-        }
 
     def _geometry_intersects_region(self, geometry: dict[str, Any] | None) -> bool:
         """Check if feature geometry intersects configured region bbox.

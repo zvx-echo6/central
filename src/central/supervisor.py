@@ -25,11 +25,18 @@ from central.bootstrap_config import get_settings
 from central.stream_manager import StreamManager
 import central.adapters
 
-def _discover_adapters() -> dict[str, type[SourceAdapter]]:
+def discover_adapters() -> dict[str, type[SourceAdapter]]:
     """Auto-discover adapter classes from central.adapters package."""
     registry: dict[str, type[SourceAdapter]] = {}
     for module_info in pkgutil.iter_modules(central.adapters.__path__):
-        module = importlib.import_module(f"central.adapters.{module_info.name}")
+        try:
+            module = importlib.import_module(f"central.adapters.{module_info.name}")
+        except Exception as e:
+            logger.error(
+                "Failed to import adapter module",
+                extra={"module": module_info.name, "error": str(e)},
+            )
+            continue
         for attr_name in dir(module):
             attr = getattr(module, attr_name)
             if (
@@ -40,9 +47,6 @@ def _discover_adapters() -> dict[str, type[SourceAdapter]]:
             ):
                 registry[attr.name] = attr
     return registry
-
-
-_ADAPTER_REGISTRY: dict[str, type[SourceAdapter]] = _discover_adapters()
 
 CURSOR_DB_PATH = Path("/var/lib/central/cursors.db")
 
@@ -126,6 +130,7 @@ class Supervisor:
         self._config_store = config_store
         self._nats_url = nats_url
         self._cloudevents_config = cloudevents_config
+        self._adapters = discover_adapters()
         self._nc: nats.NATS | None = None
         self._js: JetStreamContext | None = None
         self._stream_manager: StreamManager | None = None
@@ -173,7 +178,7 @@ class Supervisor:
 
     def _create_adapter(self, config: AdapterConfig) -> SourceAdapter:
         """Create an adapter instance based on config name."""
-        cls = _ADAPTER_REGISTRY.get(config.name)
+        cls = self._adapters.get(config.name)
         if cls is None:
             raise ValueError(f"Unknown adapter type: {config.name}")
         return cls(
