@@ -147,6 +147,12 @@ class TestEventsFeedFrontendAuthenticated:
                 result = await events_list(mock_request)
 
         assert result.status_code == 200
+        # Verify filter was actually parsed and passed to template
+        mock_templates.TemplateResponse.assert_called_once()
+        call_kwargs = mock_templates.TemplateResponse.call_args.kwargs
+        context = call_kwargs.get("context", call_kwargs)
+        assert context["filter_values"]["since"] == "2026-05-17T00:00:00"
+        assert context["filter_values"]["until"] == "2026-05-17T12:00:00"
 
     @pytest.mark.asyncio
     async def test_events_region_filter(self):
@@ -194,6 +200,14 @@ class TestEventsFeedFrontendAuthenticated:
                 result = await events_list(mock_request)
 
         assert result.status_code == 200
+        # Verify region filter was actually parsed and passed to template
+        mock_templates.TemplateResponse.assert_called_once()
+        call_kwargs = mock_templates.TemplateResponse.call_args.kwargs
+        context = call_kwargs.get("context", call_kwargs)
+        assert context["filter_values"]["region_north"] == "49.5"
+        assert context["filter_values"]["region_south"] == "31"
+        assert context["filter_values"]["region_east"] == "-102"
+        assert context["filter_values"]["region_west"] == "-124.5"
 
     @pytest.mark.asyncio
     async def test_events_partial_region_shows_error_banner(self):
