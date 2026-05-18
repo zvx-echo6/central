@@ -6,20 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from central.gui.routes import events_list, events_rows
-
-
-class TestEventsFeedFrontendUnauthenticated:
-    """Test events feed frontend without authentication."""
-
-    @pytest.mark.asyncio
-    async def test_events_unauthenticated_redirects(self):
-        """GET /events without auth redirects to /login."""
-        # This test verifies the session middleware behavior
-        # In practice, the middleware redirects before the route is called
-        mock_request = MagicMock()
-        mock_request.state.operator = None
-        # The middleware would redirect, verified via integration tests
+from central.gui.routes import events_list, events_rows, events_json
 
 
 class TestEventsFeedFrontendAuthenticated:
@@ -458,3 +445,175 @@ class TestDataGeometryAttribute:
         context = mock_templates.TemplateResponse.call_args.kwargs.get("context")
         event = context["events"][0]
         assert event["geometry"] is None
+
+
+class TestCrossEndpointParity:
+    """Test that /events.json and /events return the same filtered results."""
+
+    @pytest.mark.asyncio
+    async def test_category_filter_both_endpoints(self):
+        """Category filter works on both /events.json and /events."""
+        mock_events = [
+            {
+                "id": "weather_event",
+                "time": datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
+                "received": datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
+                "adapter": "nws",
+                "category": "Weather Alert",
+                "subject": "Weather Event",
+                "geometry": None,
+                "data": {},
+                "regions": [],
+            },
+        ]
+
+        mock_conn = AsyncMock()
+        mock_conn.fetch.return_value = mock_events
+        mock_conn.fetchrow.return_value = {
+            "map_tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+            "map_attribution": "OpenStreetMap",
+        }
+
+        mock_pool = MagicMock()
+        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        query_params = {"category": "Weather Alert"}
+
+        # Test /events.json
+        json_request = MagicMock()
+        json_request.state.operator = MagicMock(id=1, username="admin")
+        json_request.query_params = query_params
+
+        with patch("central.gui.routes.get_pool", return_value=mock_pool):
+            json_response = await events_json(json_request)
+
+        json_data = json.loads(json_response.body)
+        assert len(json_data["events"]) == 1
+        assert json_data["events"][0]["category"] == "Weather Alert"
+
+        # Test /events
+        html_request = MagicMock()
+        html_request.state.operator = MagicMock(id=1, username="admin")
+        html_request.state.csrf_token = "test_csrf"
+        html_request.query_params = query_params
+
+        mock_templates = MagicMock()
+        mock_templates.TemplateResponse.return_value = MagicMock(status_code=200)
+
+        mock_conn.fetch.return_value = mock_events
+
+        with patch("central.gui.routes._get_templates", return_value=mock_templates):
+            with patch("central.gui.routes.get_pool", return_value=mock_pool):
+                await events_list(html_request)
+
+        html_context = mock_templates.TemplateResponse.call_args.kwargs.get("context")
+        assert len(html_context["events"]) == 1
+        assert html_context["events"][0]["category"] == "Weather Alert"
+
+    @pytest.mark.asyncio
+    async def test_cursor_pagination_both_endpoints(self):
+        """Cursor pagination works identically on both endpoints."""
+        first_page = [
+            {
+                "id": f"event_{i}",
+                "time": datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc) - timedelta(hours=i),
+                "received": datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc) - timedelta(hours=i),
+                "adapter": "nws",
+                "category": "Alert",
+                "subject": f"Event {i}",
+                "geometry": None,
+                "data": {},
+                "regions": [],
+            }
+            for i in range(3)
+        ]
+
+        mock_conn = AsyncMock()
+        mock_conn.fetch.return_value = first_page
+        mock_conn.fetchrow.return_value = {
+            "map_tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+            "map_attribution": "OpenStreetMap",
+        }
+
+        mock_pool = MagicMock()
+        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        json_request = MagicMock()
+        json_request.state.operator = MagicMock(id=1, username="admin")
+        json_request.query_params = {"limit": "2"}
+
+        with patch("central.gui.routes.get_pool", return_value=mock_pool):
+            json_response = await events_json(json_request)
+
+        json_data = json.loads(json_response.body)
+        json_cursor = json_data["next_cursor"]
+        assert json_cursor is not None
+
+        html_request = MagicMock()
+        html_request.state.operator = MagicMock(id=1, username="admin")
+        html_request.state.csrf_token = "test_csrf"
+        html_request.query_params = {"limit": "2"}
+
+        mock_templates = MagicMock()
+        mock_templates.TemplateResponse.return_value = MagicMock(status_code=200)
+
+        mock_conn.fetch.return_value = first_page
+
+        with patch("central.gui.routes._get_templates", return_value=mock_templates):
+            with patch("central.gui.routes.get_pool", return_value=mock_pool):
+                await events_list(html_request)
+
+        html_context = mock_templates.TemplateResponse.call_args.kwargs.get("context")
+        html_cursor = html_context["next_cursor"]
+
+        assert json_cursor == html_cursor
+
+
+class TestErrorSemantics:
+    """Test error handling differences between JSON and HTML endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_json_endpoint_returns_400_on_invalid_limit(self):
+        """/events.json?limit=0 returns 400 JSON error."""
+        mock_request = MagicMock()
+        mock_request.state.operator = MagicMock(id=1, username="admin")
+        mock_request.query_params = {"limit": "0"}
+
+        response = await events_json(mock_request)
+
+        assert response.status_code == 400
+        data = json.loads(response.body)
+        assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_html_endpoint_returns_200_with_error_banner(self):
+        """/events?limit=0 returns 200 HTML with error banner."""
+        mock_request = MagicMock()
+        mock_request.state.operator = MagicMock(id=1, username="admin")
+        mock_request.state.csrf_token = "test_csrf"
+        mock_request.query_params = {"limit": "0"}
+
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow.return_value = {
+            "map_tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+            "map_attribution": "OpenStreetMap",
+        }
+
+        mock_pool = MagicMock()
+        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        mock_templates = MagicMock()
+        mock_templates.TemplateResponse.return_value = MagicMock(status_code=200)
+
+        with patch("central.gui.routes._get_templates", return_value=mock_templates):
+            with patch("central.gui.routes.get_pool", return_value=mock_pool):
+                result = await events_list(mock_request)
+
+        assert result.status_code == 200
+        context = mock_templates.TemplateResponse.call_args.kwargs.get("context")
+        assert context["filter_error"] is not None
+        assert "limit" in context["filter_error"].lower()
+        assert context["events"] == []
