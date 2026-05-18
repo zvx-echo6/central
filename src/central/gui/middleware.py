@@ -16,7 +16,15 @@ SETUP_EXEMPT_PREFIXES = ("/static/", "/setup")
 
 # Paths that don't require authentication
 AUTH_EXEMPT_PATHS = {"/setup/operator", "/login", "/health"}
-AUTH_EXEMPT_PREFIXES = ("/static/",)
+AUTH_EXEMPT_PREFIXES = ("/static/", "/setup/")
+
+# Browser-noise paths that trigger CSRF race conditions
+BROWSER_NOISE_PATHS = {
+    "/favicon.ico",
+    "/apple-touch-icon.png",
+    "/apple-touch-icon-precomposed.png",
+    "/robots.txt",
+}
 
 
 def _is_exempt(path: str, exempt_paths: set, exempt_prefixes: tuple) -> bool:
@@ -29,33 +37,14 @@ def _is_exempt(path: str, exempt_paths: set, exempt_prefixes: tuple) -> bool:
     return False
 
 
-async def _get_wizard_redirect_step(conn) -> str:
-    """Determine which wizard step to redirect to based on DB state."""
-    # Check if any operators exist
-    op_count = await conn.fetchval("SELECT COUNT(*) FROM config.operators")
-    if op_count == 0:
+def _get_wizard_redirect_from_cookie(request: Request, csrf_secret: str) -> str:
+    """Determine wizard redirect step from cookie state."""
+    from central.gui.wizard import get_wizard_state, get_step_route
+
+    state = get_wizard_state(request, csrf_secret)
+    if state is None:
         return "/setup/operator"
-
-    # Check if system settings have been configured (map_tile_url not default)
-    sys_row = await conn.fetchrow(
-        "SELECT map_tile_url FROM config.system WHERE id = true"
-    )
-    default_tile = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-    if sys_row is None or sys_row["map_tile_url"] == default_tile:
-        return "/setup/system"
-
-    # Keys step is optional, so check adapters have been reviewed
-    # We consider adapters reviewed if any adapter has a non-null updated_at
-    # (meaning it was explicitly saved during setup)
-    adapters_touched = await conn.fetchval(
-        "SELECT COUNT(*) FROM config.adapters WHERE updated_at IS NOT NULL"
-    )
-    if adapters_touched == 0:
-        # Go to keys first, then adapters
-        return "/setup/keys"
-
-    # All steps done, go to finish
-    return "/setup/finish"
+    return get_step_route(state.wizard_step)
 
 
 class SetupGateMiddleware(BaseHTTPMiddleware):
@@ -63,6 +52,10 @@ class SetupGateMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
+
+        # Short-circuit browser-noise requests that cause CSRF races
+        if path in BROWSER_NOISE_PATHS:
+            return Response(status_code=204)
 
         # Check setup status from database
         pool = get_pool()
@@ -85,13 +78,16 @@ class SetupGateMiddleware(BaseHTTPMiddleware):
         if not setup_complete:
             # Setup not complete - only allow setup paths and static/health
             if path.startswith("/setup"):
-                # Allow all /setup/* paths (handler will enforce auth)
+                # Allow all /setup/* paths
                 # But /setup with no subpath should redirect to appropriate step
                 if path == "/setup" or path == "/setup/":
                     try:
-                        async with pool.acquire() as conn:
-                            redirect_step = await _get_wizard_redirect_step(conn)
-                            return RedirectResponse(url=redirect_step, status_code=302)
+                        from central.bootstrap_config import get_settings
+                        settings = get_settings()
+                        redirect_step = _get_wizard_redirect_from_cookie(
+                            request, settings.csrf_secret
+                        )
+                        return RedirectResponse(url=redirect_step, status_code=302)
                     except Exception:
                         logger.warning("Failed to determine wizard step", exc_info=True)
                         return RedirectResponse(url="/setup/operator", status_code=302)
@@ -118,6 +114,11 @@ class SessionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
 
+        # Short-circuit browser-noise requests (already handled by SetupGateMiddleware,
+        # but this protects if middleware order changes)
+        if path in BROWSER_NOISE_PATHS:
+            return Response(status_code=204)
+
         # Initialize state
         request.state.operator = None
         request.state.csrf_token = None
@@ -139,7 +140,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
                     request.state.operator = None
                     request.state.csrf_token = None
 
-        # Check if auth is required
+        # Check if auth is required - setup paths are exempt during wizard
         if not _is_exempt(path, AUTH_EXEMPT_PATHS, AUTH_EXEMPT_PREFIXES):
             if request.state.operator is None:
                 return RedirectResponse(url="/login", status_code=302)
