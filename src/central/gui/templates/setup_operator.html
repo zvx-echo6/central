@@ -7,17 +7,6 @@
 {% include "_wizard_header.html" %}
 {% endwith %}
 
-{% if existing_operator %}
-<article>
-    <header>
-        <h1>Operator Already Configured</h1>
-    </header>
-    <p>The operator account <strong>{{ existing_operator.username }}</strong> has been created.</p>
-    <div style="display: flex; gap: 1rem; margin-top: 1rem;">
-        <a href="/setup/system" role="button">Next &rarr;</a>
-    </div>
-</article>
-{% else %}
 <article>
     <header>
         <h1>Create Operator Account</h1>
@@ -53,5 +42,4 @@
         <button type="submit">Create Operator &rarr;</button>
     </form>
 </article>
-{% endif %}
 {% endblock %}

@@ -1,11 +1,10 @@
-"""Pre-auth CSRF protection for login and setup/operator pages.
+"""Pre-auth CSRF protection for login and setup pages.
 
 These routes cannot use session-bound CSRF because no session exists yet.
 Uses a simple cookie-based pattern with short-lived tokens.
 """
 
 import secrets
-from typing import Optional
 
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from starlette.requests import Request
@@ -31,6 +30,34 @@ def generate_pre_auth_csrf(secret_key: str) -> tuple[str, str]:
     plain_token = secrets.token_hex(32)
     serializer = _get_serializer(secret_key)
     signed_token = serializer.dumps(plain_token)
+    return plain_token, signed_token
+
+
+def reuse_or_generate_pre_auth_csrf(
+    request: Request,
+    secret_key: str,
+) -> tuple[str, str | None]:
+    """Reuse an existing valid pre-auth CSRF token, or generate new.
+    
+    Returns (plain_token, signed_token_for_cookie).
+    If signed_token_for_cookie is None, the existing cookie is
+    still valid and caller should not call set_pre_auth_csrf_cookie.
+    If non-None, caller MUST call set_pre_auth_csrf_cookie with
+    it to persist the new value.
+    """
+    cookie_value = request.cookies.get(PRE_AUTH_CSRF_COOKIE)
+    if cookie_value:
+        serializer = _get_serializer(secret_key)
+        try:
+            plain_token = serializer.loads(
+                cookie_value,
+                max_age=PRE_AUTH_CSRF_MAX_AGE,
+            )
+            return plain_token, None  # reuse existing
+        except (BadSignature, SignatureExpired):
+            pass  # fall through to generate
+
+    plain_token, signed_token = generate_pre_auth_csrf(secret_key)
     return plain_token, signed_token
 
 
