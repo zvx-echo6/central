@@ -2197,95 +2197,90 @@ async def api_keys_delete(
     return RedirectResponse(url="/api-keys", status_code=302)
 
 
-@router.get("/events.json")
-async def events_json(request: Request):
+
+
+# --- Events query helper ---
+
+class EventsQueryResult:
+    """Result from events query."""
+    def __init__(self, events: list, next_cursor: str | None, error: str | None = None):
+        self.events = events
+        self.next_cursor = next_cursor
+        self.error = error
+
+
+def _parse_events_params(params) -> tuple[dict | None, str | None]:
     """
-    Paginated, filterable JSON endpoint for events.
-    
-    Query parameters (all optional):
-        adapter: filter by adapter name
-        category: filter by event category
-        since: ISO 8601 datetime - events where time >= since
-        until: ISO 8601 datetime - events where time < until
-        region_north, region_south, region_east, region_west: bbox filter (all four required if any)
-        limit: page size (default 50, max 200)
-        cursor: opaque pagination cursor
-    
+    Parse and validate events query parameters.
+
     Returns:
-        {"events": [...], "next_cursor": string or null}
+        (parsed_params, error_message)
+        If error_message is not None, parsed_params is None.
     """
-    from fastapi.responses import JSONResponse
-    
-    params = request.query_params
-    
     # Parse and validate limit
     limit_str = params.get("limit", "50")
     try:
         limit = int(limit_str)
     except ValueError:
-        return JSONResponse(
-            {"error": f"Invalid limit value: {limit_str}"},
-            status_code=400,
-        )
-    
+        return None, f"Invalid limit value: {limit_str}"
+
     if limit < 1 or limit > 200:
-        return JSONResponse(
-            {"error": "limit must be between 1 and 200"},
-            status_code=400,
-        )
-    
+        return None, "limit must be between 1 and 200"
+
     # Parse adapter filter
     adapter = params.get("adapter")
-    
-    # Parse category filter  
+    if adapter == "":
+        adapter = None
+
+    # Parse category filter
     category = params.get("category")
-    
+    if category == "":
+        category = None
+
     # Parse since/until filters
     since = None
     until = None
-    
+
     since_str = params.get("since")
     if since_str:
         try:
             since = datetime.fromisoformat(since_str.replace("Z", "+00:00"))
         except ValueError:
-            return JSONResponse(
-                {"error": f"Invalid ISO 8601 datetime for since: {since_str}"},
-                status_code=400,
-            )
-    
+            return None, f"Invalid ISO 8601 datetime for since: {since_str}"
+
     until_str = params.get("until")
     if until_str:
         try:
             until = datetime.fromisoformat(until_str.replace("Z", "+00:00"))
         except ValueError:
-            return JSONResponse(
-                {"error": f"Invalid ISO 8601 datetime for until: {until_str}"},
-                status_code=400,
-            )
-    
+            return None, f"Invalid ISO 8601 datetime for until: {until_str}"
+
     # Validate since <= until
     if since and until and since > until:
-        return JSONResponse(
-            {"error": "since must be before or equal to until"},
-            status_code=400,
-        )
-    
+        return None, "since must be before or equal to until"
+
     # Parse region bbox
     region_north = params.get("region_north")
     region_south = params.get("region_south")
     region_east = params.get("region_east")
     region_west = params.get("region_west")
-    
+
+    # Treat empty strings as None
+    if region_north == "":
+        region_north = None
+    if region_south == "":
+        region_south = None
+    if region_east == "":
+        region_east = None
+    if region_west == "":
+        region_west = None
+
     region_params = [region_north, region_south, region_east, region_west]
     region_supplied = [p for p in region_params if p is not None]
-    
+
     if len(region_supplied) > 0 and len(region_supplied) < 4:
-        return JSONResponse(
-            {"error": "Region filter requires all four parameters: region_north, region_south, region_east, region_west"},
-            status_code=400,
-        )
-    
+        return None, "Region filter requires all four parameters: region_north, region_south, region_east, region_west"
+
     bbox = None
     if len(region_supplied) == 4:
         try:
@@ -2296,16 +2291,13 @@ async def events_json(request: Request):
                 "west": float(region_west),
             }
         except ValueError:
-            return JSONResponse(
-                {"error": "Region parameters must be valid numbers"},
-                status_code=400,
-            )
-    
+            return None, "Region parameters must be valid numbers"
+
     # Parse cursor
     cursor_time = None
     cursor_id = None
     cursor_str = params.get("cursor")
-    
+
     if cursor_str:
         try:
             decoded = base64.b64decode(cursor_str).decode("utf-8")
@@ -2315,59 +2307,82 @@ async def events_json(request: Request):
             cursor_time = datetime.fromisoformat(parts[0])
             cursor_id = parts[1]
         except Exception:
-            return JSONResponse(
-                {"error": "Invalid cursor"},
-                status_code=400,
-            )
-    
-    # Get database pool after validation
+            return None, "Invalid cursor"
+
+    return {
+        "limit": limit,
+        "adapter": adapter,
+        "category": category,
+        "since": since,
+        "until": until,
+        "bbox": bbox,
+        "cursor_time": cursor_time,
+        "cursor_id": cursor_id,
+    }, None
+
+
+async def _fetch_events(parsed_params: dict) -> EventsQueryResult:
+    """
+    Fetch events from database using parsed parameters.
+
+    Returns EventsQueryResult with events list, next_cursor, and optional error.
+    """
     pool = get_pool()
-    
+
+    limit = parsed_params["limit"]
+    adapter = parsed_params["adapter"]
+    category = parsed_params["category"]
+    since = parsed_params["since"]
+    until = parsed_params["until"]
+    bbox = parsed_params["bbox"]
+    cursor_time = parsed_params["cursor_time"]
+    cursor_id = parsed_params["cursor_id"]
+
     # Build query
     conditions = []
     query_params = []
     param_idx = 1
-    
+
     if adapter:
         conditions.append(f"adapter = ${param_idx}")
         query_params.append(adapter)
         param_idx += 1
-    
+
     if category:
         conditions.append(f"category = ${param_idx}")
         query_params.append(category)
         param_idx += 1
-    
+
     if since:
         conditions.append(f"time >= ${param_idx}")
         query_params.append(since)
         param_idx += 1
-    
+
     if until:
         conditions.append(f"time < ${param_idx}")
         query_params.append(until)
         param_idx += 1
-    
+
     if bbox:
         conditions.append(
             f"ST_Intersects(geom, ST_MakeEnvelope(${param_idx}, ${param_idx+1}, ${param_idx+2}, ${param_idx+3}, 4326))"
         )
         query_params.extend([bbox["west"], bbox["south"], bbox["east"], bbox["north"]])
         param_idx += 4
-    
+
     if cursor_time and cursor_id:
         conditions.append(f"(time, id) < (${param_idx}, ${param_idx+1})")
         query_params.append(cursor_time)
         query_params.append(cursor_id)
         param_idx += 2
-    
+
     where_clause = ""
     if conditions:
         where_clause = "WHERE " + " AND ".join(conditions)
-    
+
     # Fetch limit+1 to check for next page
     query = f"""
-        SELECT 
+        SELECT
             id,
             time,
             received,
@@ -2383,29 +2398,26 @@ async def events_json(request: Request):
         LIMIT ${param_idx}
     """
     query_params.append(limit + 1)
-    
+
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(query, *query_params)
     except Exception as e:
-        logger.error(f"Database error in events_json: {e}")
-        return JSONResponse(
-            {"error": "Database error"},
-            status_code=500,
-        )
-    
+        logger.error(f"Database error in _fetch_events: {e}")
+        return EventsQueryResult([], None, "Database error")
+
     # Check if there is a next page
     has_next = len(rows) > limit
     if has_next:
         rows = rows[:limit]
-    
+
     # Build response
     events = []
     for row in rows:
         geometry = None
         if row["geometry"]:
             geometry = json.loads(row["geometry"])
-        
+
         events.append({
             "id": row["id"],
             "time": row["time"].isoformat(),
@@ -2417,15 +2429,196 @@ async def events_json(request: Request):
             "data": dict(row["data"]) if row["data"] else {},
             "regions": list(row["regions"]) if row["regions"] else [],
         })
-    
+
     # Build next_cursor if there are more results
     next_cursor = None
     if has_next and events:
         last_event = rows[-1]
         cursor_data = f"{last_event['time'].isoformat()}|{last_event['id']}"
         next_cursor = base64.b64encode(cursor_data.encode("utf-8")).decode("utf-8")
-    
+
+    return EventsQueryResult(events, next_cursor)
+
+
+def _geometry_summary(geometry: dict | None) -> str:
+    """Generate a human-readable summary of a geometry."""
+    if not geometry:
+        return "None"
+
+    geom_type = geometry.get("type", "Unknown")
+
+    if geom_type == "Point":
+        return "Point"
+    elif geom_type == "LineString":
+        coords = geometry.get("coordinates", [])
+        return f"Line ({len(coords)} pts)"
+    elif geom_type == "Polygon":
+        coords = geometry.get("coordinates", [[]])
+        if coords:
+            return f"Polygon ({len(coords[0])} pts)"
+        return "Polygon"
+    elif geom_type == "MultiPolygon":
+        coords = geometry.get("coordinates", [])
+        return f"MultiPolygon ({len(coords)} parts)"
+    else:
+        return geom_type
+
+
+
+@router.get("/events.json")
+async def events_json(request: Request):
+    """
+    Paginated, filterable JSON endpoint for events.
+
+    Query parameters (all optional):
+        adapter: filter by adapter name
+        category: filter by event category
+        since: ISO 8601 datetime - events where time >= since
+        until: ISO 8601 datetime - events where time < until
+        region_north, region_south, region_east, region_west: bbox filter (all four required if any)
+        limit: page size (default 50, max 200)
+        cursor: opaque pagination cursor
+
+    Returns:
+        {"events": [...], "next_cursor": string or null}
+    """
+    from fastapi.responses import JSONResponse
+
+    params = request.query_params
+
+    # Parse and validate parameters using shared helper
+    parsed, error = _parse_events_params(params)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+
+    # Fetch events using shared helper
+    result = await _fetch_events(parsed)
+    if result.error:
+        return JSONResponse({"error": result.error}, status_code=500)
+
     return JSONResponse({
-        "events": events,
-        "next_cursor": next_cursor,
+        "events": result.events,
+        "next_cursor": result.next_cursor,
     })
+
+
+# --- Events feed frontend routes ---
+
+@router.get("/events", response_class=HTMLResponse)
+async def events_list(request: Request) -> HTMLResponse:
+    """Events feed page with filter form, table, and map."""
+    templates = _get_templates()
+    operator = getattr(request.state, "operator", None)
+    csrf_token = getattr(request.state, "csrf_token", "")
+
+    params = request.query_params
+
+    # Parse parameters
+    parsed, error = _parse_events_params(params)
+
+    # Get system settings for map tiles
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        system_row = await conn.fetchrow("SELECT map_tile_url, map_attribution FROM config.system")
+
+    tile_url = system_row["map_tile_url"] if system_row else "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    tile_attribution = system_row["map_attribution"] if system_row else "OpenStreetMap"
+
+    # Prepare filter values for template
+    filter_values = {
+        "adapter": params.get("adapter", ""),
+        "category": params.get("category", ""),
+        "since": params.get("since", ""),
+        "until": params.get("until", ""),
+        "region_north": params.get("region_north", ""),
+        "region_south": params.get("region_south", ""),
+        "region_east": params.get("region_east", ""),
+        "region_west": params.get("region_west", ""),
+        "limit": params.get("limit", "50"),
+    }
+
+    events = []
+    next_cursor = None
+
+    if error:
+        # Validation error - show error banner but don't fail the page
+        pass
+    else:
+        # Fetch events
+        result = await _fetch_events(parsed)
+        if result.error:
+            error = result.error
+        else:
+            events = result.events
+            next_cursor = result.next_cursor
+
+    # Add geometry summary to each event
+    for event in events:
+        event["geometry_summary"] = _geometry_summary(event.get("geometry"))
+
+    return templates.TemplateResponse(
+        request=request,
+        name="events_list.html",
+        context={
+            "operator": operator,
+            "csrf_token": csrf_token,
+            "events": events,
+            "next_cursor": next_cursor,
+            "filter_values": filter_values,
+            "filter_error": error,
+            "tile_url": tile_url,
+            "tile_attribution": tile_attribution,
+        },
+    )
+
+
+@router.get("/events/rows", response_class=HTMLResponse)
+async def events_rows(request: Request) -> HTMLResponse:
+    """HTMX fragment: events table rows only (no page chrome)."""
+    templates = _get_templates()
+
+    params = request.query_params
+
+    # Parse parameters
+    parsed, error = _parse_events_params(params)
+
+    # Prepare filter values for template
+    filter_values = {
+        "adapter": params.get("adapter", ""),
+        "category": params.get("category", ""),
+        "since": params.get("since", ""),
+        "until": params.get("until", ""),
+        "region_north": params.get("region_north", ""),
+        "region_south": params.get("region_south", ""),
+        "region_east": params.get("region_east", ""),
+        "region_west": params.get("region_west", ""),
+        "limit": params.get("limit", "50"),
+    }
+
+    events = []
+    next_cursor = None
+
+    if error:
+        pass
+    else:
+        result = await _fetch_events(parsed)
+        if result.error:
+            error = result.error
+        else:
+            events = result.events
+            next_cursor = result.next_cursor
+
+    # Add geometry summary to each event
+    for event in events:
+        event["geometry_summary"] = _geometry_summary(event.get("geometry"))
+
+    return templates.TemplateResponse(
+        request=request,
+        name="_events_rows.html",
+        context={
+            "events": events,
+            "next_cursor": next_cursor,
+            "filter_values": filter_values,
+            "filter_error": error,
+        },
+    )
