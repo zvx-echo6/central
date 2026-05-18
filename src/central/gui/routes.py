@@ -20,6 +20,9 @@ from central.gui.auth import (
 )
 from central.gui.audit import (
     ADAPTER_UPDATE,
+    API_KEY_CREATE,
+    API_KEY_DELETE,
+    API_KEY_ROTATE,
     AUTH_LOGIN,
     AUTH_LOGIN_FAILED,
     AUTH_LOGOUT,
@@ -1104,3 +1107,421 @@ async def streams_update(
         )
 
     return RedirectResponse(url="/streams", status_code=302)
+
+
+# Alias validation regex
+ALIAS_REGEX = re.compile(r'^[a-zA-Z0-9_]+$')
+
+
+@router.get("/api-keys", response_class=HTMLResponse)
+async def api_keys_list(
+    request: Request,
+    csrf_protect: CsrfProtect = Depends(),
+) -> HTMLResponse:
+    """List all API keys."""
+    templates = _get_templates()
+    pool = get_pool()
+    operator = request.state.operator
+
+    async with pool.acquire() as conn:
+        # Fetch keys (NOT encrypted_value)
+        rows = await conn.fetch(
+            """
+            SELECT alias, created_at, rotated_at, last_used_at
+            FROM config.api_keys
+            ORDER BY alias
+            """
+        )
+
+        # For each key, find adapters that reference it
+        keys = []
+        for row in rows:
+            adapters = await conn.fetch(
+                """
+                SELECT name FROM config.adapters
+                WHERE settings->>'api_key_alias' = $1
+                ORDER BY name
+                """,
+                row["alias"],
+            )
+            keys.append({
+                "alias": row["alias"],
+                "created_at": row["created_at"],
+                "rotated_at": row["rotated_at"],
+                "last_used_at": row["last_used_at"],
+                "used_by": [a["name"] for a in adapters],
+            })
+
+    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    response = templates.TemplateResponse(
+        request=request,
+        name="api_keys_list.html",
+        context={
+            "operator": operator,
+            "csrf_token": csrf_token,
+            "keys": keys,
+        },
+    )
+    csrf_protect.set_csrf_cookie(signed_token, response)
+    return response
+
+
+@router.get("/api-keys/new", response_class=HTMLResponse)
+async def api_keys_new(
+    request: Request,
+    csrf_protect: CsrfProtect = Depends(),
+) -> HTMLResponse:
+    """Show form to add a new API key."""
+    templates = _get_templates()
+    operator = request.state.operator
+
+    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    response = templates.TemplateResponse(
+        request=request,
+        name="api_keys_new.html",
+        context={
+            "operator": operator,
+            "csrf_token": csrf_token,
+        },
+    )
+    csrf_protect.set_csrf_cookie(signed_token, response)
+    return response
+
+
+@router.post("/api-keys", response_class=HTMLResponse)
+async def api_keys_create(
+    request: Request,
+    csrf_protect: CsrfProtect = Depends(),
+) -> Response:
+    """Create a new API key."""
+    from central.crypto import encrypt
+
+    templates = _get_templates()
+    pool = get_pool()
+    operator = request.state.operator
+
+    await csrf_protect.validate_csrf(request)
+
+    form = await request.form()
+    alias = form.get("alias", "").strip()
+    plaintext_key = form.get("plaintext_key", "")
+
+    errors: dict[str, str] = {}
+
+    # Validate alias
+    if not alias:
+        errors["alias"] = "Alias is required"
+    elif len(alias) > 64:
+        errors["alias"] = "Alias must be at most 64 characters"
+    elif not ALIAS_REGEX.match(alias):
+        errors["alias"] = "Alias must contain only letters, numbers, and underscores"
+
+    # Validate plaintext_key
+    if not plaintext_key:
+        errors["plaintext_key"] = "API key is required"
+    elif len(plaintext_key) > 4096:
+        errors["plaintext_key"] = "API key must be at most 4096 characters"
+
+    if errors:
+        csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+        response = templates.TemplateResponse(
+            request=request,
+            name="api_keys_new.html",
+            context={
+                "operator": operator,
+                "csrf_token": csrf_token,
+                "errors": errors,
+                "alias": alias,
+            },
+        )
+        csrf_protect.set_csrf_cookie(signed_token, response)
+        return response
+
+    # Encrypt the key
+    encrypted_value = encrypt(plaintext_key.encode())
+
+    async with pool.acquire() as conn:
+        # Check if alias already exists
+        existing = await conn.fetchrow(
+            "SELECT alias FROM config.api_keys WHERE alias = $1",
+            alias,
+        )
+
+        if existing:
+            errors["alias"] = "An API key with this alias already exists"
+            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            response = templates.TemplateResponse(
+                request=request,
+                name="api_keys_new.html",
+                context={
+                    "operator": operator,
+                    "csrf_token": csrf_token,
+                    "errors": errors,
+                    "alias": alias,
+                },
+            )
+            csrf_protect.set_csrf_cookie(signed_token, response)
+            return response
+
+        # Insert the new key
+        row = await conn.fetchrow(
+            """
+            INSERT INTO config.api_keys (alias, encrypted_value)
+            VALUES ($1, $2)
+            RETURNING created_at
+            """,
+            alias,
+            encrypted_value,
+        )
+
+        # Write audit log (no plaintext!)
+        await write_audit(
+            conn,
+            API_KEY_CREATE,
+            operator_id=operator.id,
+            target=alias,
+            before=None,
+            after={"alias": alias, "created_at": row["created_at"].isoformat()},
+        )
+
+    return RedirectResponse(url="/api-keys", status_code=302)
+
+
+@router.get("/api-keys/{alias}", response_class=HTMLResponse)
+async def api_keys_edit(
+    request: Request,
+    alias: str,
+    csrf_protect: CsrfProtect = Depends(),
+) -> Response:
+    """Show form to rotate or delete an API key."""
+    templates = _get_templates()
+    pool = get_pool()
+    operator = request.state.operator
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT alias, created_at, rotated_at, last_used_at
+            FROM config.api_keys
+            WHERE alias = $1
+            """,
+            alias,
+        )
+
+        if row is None:
+            return Response(status_code=404, content="API key not found")
+
+        # Find adapters that reference this key
+        adapters = await conn.fetch(
+            """
+            SELECT name FROM config.adapters
+            WHERE settings->>'api_key_alias' = $1
+            ORDER BY name
+            """,
+            alias,
+        )
+
+    key = {
+        "alias": row["alias"],
+        "created_at": row["created_at"],
+        "rotated_at": row["rotated_at"],
+        "last_used_at": row["last_used_at"],
+        "used_by": [a["name"] for a in adapters],
+    }
+
+    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    response = templates.TemplateResponse(
+        request=request,
+        name="api_keys_edit.html",
+        context={
+            "operator": operator,
+            "csrf_token": csrf_token,
+            "key": key,
+        },
+    )
+    csrf_protect.set_csrf_cookie(signed_token, response)
+    return response
+
+
+@router.post("/api-keys/{alias}", response_class=HTMLResponse)
+async def api_keys_rotate(
+    request: Request,
+    alias: str,
+    csrf_protect: CsrfProtect = Depends(),
+) -> Response:
+    """Rotate an API key."""
+    from central.crypto import encrypt
+
+    templates = _get_templates()
+    pool = get_pool()
+    operator = request.state.operator
+
+    await csrf_protect.validate_csrf(request)
+
+    form = await request.form()
+    new_plaintext_key = form.get("new_plaintext_key", "")
+
+    errors: dict[str, str] = {}
+
+    # Validate new key
+    if not new_plaintext_key:
+        errors["new_plaintext_key"] = "New API key is required"
+    elif len(new_plaintext_key) > 4096:
+        errors["new_plaintext_key"] = "API key must be at most 4096 characters"
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT alias, created_at, rotated_at, last_used_at
+            FROM config.api_keys
+            WHERE alias = $1
+            """,
+            alias,
+        )
+
+        if row is None:
+            return Response(status_code=404, content="API key not found")
+
+        if errors:
+            adapters = await conn.fetch(
+                """
+                SELECT name FROM config.adapters
+                WHERE settings->>'api_key_alias' = $1
+                ORDER BY name
+                """,
+                alias,
+            )
+
+            key = {
+                "alias": row["alias"],
+                "created_at": row["created_at"],
+                "rotated_at": row["rotated_at"],
+                "last_used_at": row["last_used_at"],
+                "used_by": [a["name"] for a in adapters],
+            }
+
+            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            response = templates.TemplateResponse(
+                request=request,
+                name="api_keys_edit.html",
+                context={
+                    "operator": operator,
+                    "csrf_token": csrf_token,
+                    "key": key,
+                    "errors": errors,
+                },
+            )
+            csrf_protect.set_csrf_cookie(signed_token, response)
+            return response
+
+        old_rotated_at = row["rotated_at"]
+
+        # Encrypt the new key
+        encrypted_value = encrypt(new_plaintext_key.encode())
+
+        # Update the key
+        new_row = await conn.fetchrow(
+            """
+            UPDATE config.api_keys
+            SET encrypted_value = $1, rotated_at = now()
+            WHERE alias = $2
+            RETURNING rotated_at
+            """,
+            encrypted_value,
+            alias,
+        )
+
+        # Write audit log (no plaintext!)
+        await write_audit(
+            conn,
+            API_KEY_ROTATE,
+            operator_id=operator.id,
+            target=alias,
+            before={"rotated_at": old_rotated_at.isoformat() if old_rotated_at else None},
+            after={"rotated_at": new_row["rotated_at"].isoformat()},
+        )
+
+    return RedirectResponse(url="/api-keys", status_code=302)
+
+
+@router.post("/api-keys/{alias}/delete", response_class=HTMLResponse)
+async def api_keys_delete(
+    request: Request,
+    alias: str,
+    csrf_protect: CsrfProtect = Depends(),
+) -> Response:
+    """Delete an API key."""
+    templates = _get_templates()
+    pool = get_pool()
+    operator = request.state.operator
+
+    await csrf_protect.validate_csrf(request)
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT alias, created_at, rotated_at, last_used_at
+            FROM config.api_keys
+            WHERE alias = $1
+            """,
+            alias,
+        )
+
+        if row is None:
+            return Response(status_code=404, content="API key not found")
+
+        # Check for adapter references
+        adapters = await conn.fetch(
+            """
+            SELECT name FROM config.adapters
+            WHERE settings->>'api_key_alias' = $1
+            ORDER BY name
+            """,
+            alias,
+        )
+
+        if adapters:
+            adapter_names = [a["name"] for a in adapters]
+            key = {
+                "alias": row["alias"],
+                "created_at": row["created_at"],
+                "rotated_at": row["rotated_at"],
+                "last_used_at": row["last_used_at"],
+                "used_by": adapter_names,
+            }
+
+            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            response = templates.TemplateResponse(
+                request=request,
+                name="api_keys_edit.html",
+                context={
+                    "operator": operator,
+                    "csrf_token": csrf_token,
+                    "key": key,
+                    "error": f"Cannot delete: used by {', '.join(adapter_names)}. Remove these references first.",
+                },
+            )
+            csrf_protect.set_csrf_cookie(signed_token, response)
+            return response
+
+        # Delete the key
+        await conn.execute(
+            "DELETE FROM config.api_keys WHERE alias = $1",
+            alias,
+        )
+
+        # Write audit log (no plaintext!)
+        await write_audit(
+            conn,
+            API_KEY_DELETE,
+            operator_id=operator.id,
+            target=alias,
+            before={
+                "alias": row["alias"],
+                "created_at": row["created_at"].isoformat(),
+                "rotated_at": row["rotated_at"].isoformat() if row["rotated_at"] else None,
+            },
+            after=None,
+        )
+
+    return RedirectResponse(url="/api-keys", status_code=302)

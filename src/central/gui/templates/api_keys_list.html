@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}Central — API Keys{% endblock %}
+
+{% block content %}
+<h1>API Keys</h1>
+
+<p><a href="/api-keys/new" role="button">Add New Key</a></p>
+
+{% if keys %}
+<table>
+    <thead>
+        <tr>
+            <th>Alias</th>
+            <th>Created</th>
+            <th>Rotated</th>
+            <th>Last Used</th>
+            <th>In Use By</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for key in keys %}
+        <tr>
+            <td><strong>{{ key.alias }}</strong></td>
+            <td>{{ key.created_at.strftime('%Y-%m-%d %H:%M') if key.created_at else '(never)' }}</td>
+            <td>{{ key.rotated_at.strftime('%Y-%m-%d %H:%M') if key.rotated_at else '(never)' }}</td>
+            <td>{{ key.last_used_at.strftime('%Y-%m-%d %H:%M') if key.last_used_at else '(never)' }}</td>
+            <td>{% if key.used_by %}{{ key.used_by | join(', ') }}{% else %}<em>(none)</em>{% endif %}</td>
+            <td>
+                <a href="/api-keys/{{ key.alias }}" role="button" class="outline" style="padding: 0.3em 0.6em; font-size: 0.9em;">Manage</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No API keys configured.</p>
+{% endif %}
+{% endblock %}
