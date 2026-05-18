@@ -9,9 +9,16 @@ logger = logging.getLogger("central.gui.routes")
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from fastapi_csrf_protect import CsrfProtect
+from central.bootstrap_config import get_settings
+from central.gui.csrf import (
+    generate_pre_auth_csrf,
+    set_pre_auth_csrf_cookie,
+    validate_pre_auth_csrf,
+    unset_pre_auth_csrf_cookie,
+)
 
 from central.gui.auth import (
+    CsrfValidationError,
     create_session,
     delete_session,
     hash_password,
@@ -28,7 +35,9 @@ from central.gui.audit import (
     AUTH_LOGOUT,
     AUTH_PASSWORD_CHANGE,
     OPERATOR_CREATE,
+    SETUP_COMPLETE,
     STREAM_UPDATE,
+    SYSTEM_UPDATE,
     write_audit,
 )
 from central.gui.db import get_pool
@@ -101,17 +110,16 @@ async def health() -> dict:
 
 
 @router.get("/", response_class=HTMLResponse)
-async def index(request: Request, csrf_protect: CsrfProtect = Depends()) -> HTMLResponse:
+async def index(request: Request) -> HTMLResponse:
     """Render the index page."""
     templates = _get_templates()
     operator = getattr(request.state, "operator", None)
-    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    csrf_token = request.state.csrf_token
     response = templates.TemplateResponse(
         request=request,
         name="index.html",
         context={"operator": operator, "csrf_token": csrf_token},
     )
-    csrf_protect.set_csrf_cookie(signed_token, response)
     return response
 
 
@@ -252,37 +260,83 @@ async def dashboard_polls(request: Request) -> HTMLResponse:
     )
 
 
-@router.get("/setup", response_class=HTMLResponse)
-async def setup_form(
+# =============================================================================
+# Setup Wizard routes
+# =============================================================================
+
+
+@router.get("/setup/operator", response_class=HTMLResponse)
+async def setup_operator_form(
     request: Request,
-    csrf_protect: CsrfProtect = Depends(),
 ) -> HTMLResponse:
-    """Render the setup form."""
+    """Render the setup operator form (step 1)."""
     templates = _get_templates()
-    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    pool = get_pool()
+    settings = get_settings()
+    csrf_token, signed_token = generate_pre_auth_csrf(settings.csrf_secret)
+
+    # Check if operator already exists
+    existing_operator = None
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT username FROM config.operators ORDER BY id LIMIT 1"
+        )
+        if row:
+            existing_operator = {"username": row["username"]}
+
     response = templates.TemplateResponse(
         request=request,
-        name="setup.html",
-        context={"csrf_token": csrf_token, "error": None},
+        name="setup_operator.html",
+        context={
+            "csrf_token": csrf_token,
+            "error": None,
+            "form_data": None,
+            "existing_operator": existing_operator,
+        },
     )
-    csrf_protect.set_csrf_cookie(signed_token, response)
+    set_pre_auth_csrf_cookie(response, signed_token)
     return response
 
 
-@router.post("/setup")
-async def setup_submit(
+@router.post("/setup/operator")
+async def setup_operator_submit(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
     confirm_password: str = Form(...),
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> Response:
-    """Process the setup form."""
+    """Process the setup operator form (step 1)."""
     templates = _get_templates()
     pool = get_pool()
 
     # Validate CSRF
-    await csrf_protect.validate_csrf(request)
+    settings = get_settings()
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not validate_pre_auth_csrf(request, form_csrf, settings.csrf_secret):
+        raise CsrfValidationError("Invalid CSRF token")
+
+    # Check if operator already exists (single-operator-per-install design)
+    async with pool.acquire() as conn:
+        count = await conn.fetchval("SELECT count(*) FROM config.operators")
+        if count > 0:
+            # Operator already exists — render confirmation page
+            existing = await conn.fetchrow(
+                "SELECT username FROM config.operators ORDER BY id LIMIT 1"
+            )
+            csrf_token = request.state.csrf_token
+            response = templates.TemplateResponse(
+                request=request,
+                name="setup_operator.html",
+                context={
+                    "csrf_token": csrf_token,
+                    "error": None,
+                    "form_data": None,
+                    "existing_operator": {"username": existing["username"]},
+                },
+            )
+            return response
 
     # Validate input
     error = None
@@ -295,14 +349,18 @@ async def setup_submit(
             error = str(e)
 
     if error:
-        csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+        csrf_token = request.state.csrf_token
         response = templates.TemplateResponse(
             request=request,
-            name="setup.html",
-            context={"csrf_token": csrf_token, "error": error},
+            name="setup_operator.html",
+            context={
+                "csrf_token": csrf_token,
+                "error": error,
+                "form_data": {"username": username},
+                "existing_operator": None,
+            },
             status_code=200,
         )
-        csrf_protect.set_csrf_cookie(signed_token, response)
         return response
 
     # Create operator
@@ -334,33 +392,673 @@ async def setup_submit(
         lifetime_days = sysrow["session_lifetime_days"] if sysrow else 90
 
         # Create session
-        token, expires_at = await create_session(conn, operator_id, lifetime_days)
+        token, expires_at, _ = await create_session(conn, operator_id, lifetime_days)
 
+    # Redirect to next step with session cookie
+    response = RedirectResponse(url="/setup/system", status_code=302)
+    _set_session_cookie(response, token, lifetime_days * 86400)
+    return response
+
+
+@router.get("/setup/system", response_class=HTMLResponse)
+async def setup_system_form(
+    request: Request,
+
+) -> HTMLResponse:
+    """Render the system settings form (step 2)."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    templates = _get_templates()
+    pool = get_pool()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
+        )
+        system = {
+            "map_tile_url": row["map_tile_url"] if row else "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+            "map_attribution": row["map_attribution"] if row else "&copy; OpenStreetMap contributors",
+        }
+
+    csrf_token = request.state.csrf_token
+    response = templates.TemplateResponse(
+        request=request,
+        name="setup_system.html",
+        context={
+            "csrf_token": csrf_token,
+            "error": None,
+            "errors": None,
+            "form_data": None,
+            "system": system,
+        },
+    )
+    return response
+
+
+@router.post("/setup/system")
+async def setup_system_submit(
+    request: Request,
+
+) -> Response:
+    """Process the system settings form (step 2)."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    templates = _get_templates()
+    pool = get_pool()
+
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
+
+    form = await request.form()
+    map_tile_url = form.get("map_tile_url", "").strip()
+    map_attribution = form.get("map_attribution", "").strip()
+
+    form_data = {
+        "map_tile_url": map_tile_url,
+        "map_attribution": map_attribution,
+    }
+
+    errors: dict[str, str] = {}
+
+    # Validate map_tile_url
+    if not map_tile_url:
+        errors["map_tile_url"] = "Map tile URL is required"
+    elif "{z}" not in map_tile_url or "{x}" not in map_tile_url or "{y}" not in map_tile_url:
+        errors["map_tile_url"] = "URL must contain {z}, {x}, and {y} placeholders"
+
+    # Validate map_attribution
+    if not map_attribution:
+        errors["map_attribution"] = "Map attribution is required"
+
+    async with pool.acquire() as conn:
+        if errors:
+            row = await conn.fetchrow(
+                "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
+            )
+            system = {
+                "map_tile_url": row["map_tile_url"] if row else "",
+                "map_attribution": row["map_attribution"] if row else "",
+            }
+
+            csrf_token = request.state.csrf_token
+            response = templates.TemplateResponse(
+                request=request,
+                name="setup_system.html",
+                context={
+                    "csrf_token": csrf_token,
+                    "error": None,
+                    "errors": errors,
+                    "form_data": form_data,
+                    "system": system,
+                },
+                status_code=200,
+            )
+            return response
+
+        # Get current values for audit
+        old_row = await conn.fetchrow(
+            "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
+        )
+        before = {
+            "map_tile_url": old_row["map_tile_url"] if old_row else None,
+            "map_attribution": old_row["map_attribution"] if old_row else None,
+        }
+
+        # Update system settings
+        await conn.execute(
+            """
+            UPDATE config.system
+            SET map_tile_url = $1, map_attribution = $2
+            WHERE id = true
+            """,
+            map_tile_url,
+            map_attribution,
+        )
+
+        # Write audit log
+        await write_audit(
+            conn,
+            SYSTEM_UPDATE,
+            operator_id=operator.id,
+            target="system",
+            before=before,
+            after={"map_tile_url": map_tile_url, "map_attribution": map_attribution},
+        )
+
+    return RedirectResponse(url="/setup/keys", status_code=302)
+
+
+@router.get("/setup/keys", response_class=HTMLResponse)
+async def setup_keys_form(
+    request: Request,
+
+) -> HTMLResponse:
+    """Render the API keys form (step 3)."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    from central.crypto import encrypt
+
+    templates = _get_templates()
+    pool = get_pool()
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT alias, created_at FROM config.api_keys ORDER BY alias"
+        )
+        keys = [{"alias": row["alias"], "created_at": row["created_at"]} for row in rows]
+
+    csrf_token = request.state.csrf_token
+    response = templates.TemplateResponse(
+        request=request,
+        name="setup_keys.html",
+        context={
+            "csrf_token": csrf_token,
+            "keys": keys,
+            "errors": None,
+            "form_data": None,
+            "success": None,
+        },
+    )
+    return response
+
+
+@router.post("/setup/keys")
+async def setup_keys_submit(
+    request: Request,
+
+) -> Response:
+    """Process the API keys form (step 3)."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
+
+    form = await request.form()
+    action = form.get("action", "add")
+
+    # If action is "next", redirect to adapters step
+    if action == "next":
+        return RedirectResponse(url="/setup/adapters", status_code=302)
+
+    from central.crypto import encrypt
+
+    templates = _get_templates()
+    pool = get_pool()
+
+    # Otherwise, add a new key
+    alias = form.get("alias", "").strip()
+    plaintext_key = form.get("plaintext_key", "")
+
+    form_data = {"alias": alias}
+    errors: dict[str, str] = {}
+
+    # Validate alias
+    if not alias:
+        errors["alias"] = "Alias is required"
+    elif len(alias) > 64:
+        errors["alias"] = "Alias must be at most 64 characters"
+    elif not ALIAS_REGEX.match(alias):
+        errors["alias"] = "Alias must contain only letters, numbers, and underscores"
+
+    # Validate plaintext_key
+    if not plaintext_key:
+        errors["plaintext_key"] = "API key is required"
+    elif len(plaintext_key) > 4096:
+        errors["plaintext_key"] = "API key must be at most 4096 characters"
+
+    async with pool.acquire() as conn:
+        if not errors:
+            # Check if alias already exists
+            existing = await conn.fetchrow(
+                "SELECT alias FROM config.api_keys WHERE alias = $1",
+                alias,
+            )
+            if existing:
+                errors["alias"] = "An API key with this alias already exists"
+
+        keys = await conn.fetch(
+            "SELECT alias, created_at FROM config.api_keys ORDER BY alias"
+        )
+        keys = [{"alias": row["alias"], "created_at": row["created_at"]} for row in keys]
+
+        if errors:
+            csrf_token = request.state.csrf_token
+            response = templates.TemplateResponse(
+                request=request,
+                name="setup_keys.html",
+                context={
+                    "csrf_token": csrf_token,
+                    "keys": keys,
+                    "errors": errors,
+                    "form_data": form_data,
+                    "success": None,
+                },
+                status_code=200,
+            )
+            return response
+
+        # Encrypt the key
+        encrypted_value = encrypt(plaintext_key.encode())
+
+        # Insert the new key
+        row = await conn.fetchrow(
+            """
+            INSERT INTO config.api_keys (alias, encrypted_value)
+            VALUES ($1, $2)
+            RETURNING created_at
+            """,
+            alias,
+            encrypted_value,
+        )
+
+        # Write audit log (no plaintext!)
+        await write_audit(
+            conn,
+            API_KEY_CREATE,
+            operator_id=operator.id,
+            target=alias,
+            before=None,
+            after={"alias": alias, "created_at": row["created_at"].isoformat()},
+        )
+
+        # Refresh keys list
+        keys = await conn.fetch(
+            "SELECT alias, created_at FROM config.api_keys ORDER BY alias"
+        )
+        keys = [{"alias": row["alias"], "created_at": row["created_at"]} for row in keys]
+
+    # Re-render with success message
+    csrf_token = request.state.csrf_token
+    response = templates.TemplateResponse(
+        request=request,
+        name="setup_keys.html",
+        context={
+            "csrf_token": csrf_token,
+            "keys": keys,
+            "errors": None,
+            "form_data": None,
+            "success": f"API key '{alias}' added successfully.",
+        },
+    )
+    return response
+
+
+@router.get("/setup/adapters", response_class=HTMLResponse)
+async def setup_adapters_form(
+    request: Request,
+
+) -> HTMLResponse:
+    """Render the adapters configuration form (step 4)."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    templates = _get_templates()
+    pool = get_pool()
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT name, enabled, cadence_s, settings
+            FROM config.adapters
+            ORDER BY name
+            """
+        )
+        adapters = []
+        for row in rows:
+            settings = row["settings"] or {}
+            adapters.append({
+                "name": row["name"],
+                "enabled": row["enabled"],
+                "cadence_s": row["cadence_s"],
+                "settings": settings,
+            })
+
+        # Get API keys for dropdown
+        api_keys = await conn.fetch(
+            "SELECT alias FROM config.api_keys ORDER BY alias"
+        )
+
+        # Get map tile settings
+        sys_row = await conn.fetchrow(
+            "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
+        )
+        tile_url = sys_row["map_tile_url"] if sys_row else "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+        tile_attribution = sys_row["map_attribution"] if sys_row else "&copy; OpenStreetMap contributors"
+
+    csrf_token = request.state.csrf_token
+    response = templates.TemplateResponse(
+        request=request,
+        name="setup_adapters.html",
+        context={
+            "csrf_token": csrf_token,
+            "adapters": adapters,
+            "api_keys": [{"alias": k["alias"]} for k in api_keys],
+            "valid_satellites": _get_valid_satellites(),
+            "valid_feeds": sorted(_get_valid_feeds()),
+            "tile_url": tile_url,
+            "tile_attribution": tile_attribution,
+            "error": None,
+            "errors": None,
+            "form_data": None,
+        },
+    )
+    return response
+
+
+@router.post("/setup/adapters")
+async def setup_adapters_submit(
+    request: Request,
+
+) -> Response:
+    """Process the adapters configuration form (step 4)."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    templates = _get_templates()
+    pool = get_pool()
+
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
+
+    form = await request.form()
+    errors: dict[str, str] = {}
+
+    async with pool.acquire() as conn:
+        # Get current adapters
+        rows = await conn.fetch(
+            """
+            SELECT name, enabled, cadence_s, settings
+            FROM config.adapters
+            ORDER BY name
+            """
+        )
+
+        for row in rows:
+            adapter_name = row["name"]
+            current_settings = row["settings"] or {}
+            new_settings = dict(current_settings)
+
+            # Parse enabled
+            enabled = f"{adapter_name}_enabled" in form
+
+            # Parse cadence
+            cadence_str = form.get(f"{adapter_name}_cadence_s", "")
+            try:
+                cadence_s = int(cadence_str)
+                if cadence_s < 60 or cadence_s > 3600:
+                    errors[f"{adapter_name}_cadence_s"] = "Cadence must be between 60 and 3600 seconds"
+            except ValueError:
+                errors[f"{adapter_name}_cadence_s"] = "Cadence must be a valid integer"
+                cadence_s = row["cadence_s"]
+
+            # Adapter-specific validation
+            if adapter_name == "nws":
+                contact_email = form.get(f"{adapter_name}_contact_email", "").strip()
+                if enabled:
+                    if not contact_email:
+                        errors[f"{adapter_name}_contact_email"] = "Contact email is required when enabled"
+                    elif not EMAIL_REGEX.match(contact_email):
+                        errors[f"{adapter_name}_contact_email"] = "Invalid email format"
+                    else:
+                        new_settings["contact_email"] = contact_email
+                else:
+                    new_settings["contact_email"] = contact_email if contact_email else current_settings.get("contact_email")
+
+            elif adapter_name == "firms":
+                api_key_alias = form.get(f"{adapter_name}_api_key_alias", "").strip()
+                satellites = form.getlist(f"{adapter_name}_satellites")
+
+                if api_key_alias:
+                    key_exists = await conn.fetchrow(
+                        "SELECT 1 FROM config.api_keys WHERE alias = $1",
+                        api_key_alias,
+                    )
+                    if not key_exists:
+                        errors[f"{adapter_name}_api_key_alias"] = f"API key alias '{api_key_alias}' does not exist"
+                    else:
+                        new_settings["api_key_alias"] = api_key_alias
+                else:
+                    new_settings["api_key_alias"] = None
+
+                # Validate satellites
+                valid_sats = set(_get_valid_satellites())
+                invalid_sats = [s for s in satellites if s not in valid_sats]
+                if invalid_sats:
+                    errors[f"{adapter_name}_satellites"] = f"Invalid satellites: {', '.join(invalid_sats)}"
+                else:
+                    new_settings["satellites"] = satellites
+
+            elif adapter_name == "usgs_quake":
+                feed = form.get(f"{adapter_name}_feed", "").strip()
+                valid_feeds = _get_valid_feeds()
+                if feed not in valid_feeds:
+                    errors[f"{adapter_name}_feed"] = f"Invalid feed"
+                else:
+                    new_settings["feed"] = feed
+
+            # Region validation
+            region_north_str = form.get(f"{adapter_name}_region_north", "").strip()
+            region_south_str = form.get(f"{adapter_name}_region_south", "").strip()
+            region_east_str = form.get(f"{adapter_name}_region_east", "").strip()
+            region_west_str = form.get(f"{adapter_name}_region_west", "").strip()
+
+            try:
+                region_north = float(region_north_str)
+                region_south = float(region_south_str)
+                region_east = float(region_east_str)
+                region_west = float(region_west_str)
+
+                if not (-90 <= region_south < region_north <= 90):
+                    errors[f"{adapter_name}_region"] = "Invalid latitude: south must be less than north, both between -90 and 90"
+                elif not (-180 <= region_west < region_east <= 180):
+                    errors[f"{adapter_name}_region"] = "Invalid longitude: west must be less than east, both between -180 and 180"
+                else:
+                    new_settings["region"] = {
+                        "north": region_north,
+                        "south": region_south,
+                        "east": region_east,
+                        "west": region_west,
+                    }
+            except ValueError:
+                errors[f"{adapter_name}_region"] = "Region coordinates must be valid numbers"
+
+            # Store parsed data for re-render on error or update
+            if not errors.get(f"{adapter_name}_cadence_s"):
+                # Update adapter
+                await conn.execute(
+                    """
+                    UPDATE config.adapters
+                    SET enabled = $1, cadence_s = $2, settings = $3, updated_at = now()
+                    WHERE name = $4
+                    """,
+                    enabled,
+                    cadence_s,
+                    new_settings,
+                    adapter_name,
+                )
+
+        # If any errors, re-render
+        if errors:
+            adapters = []
+            rows = await conn.fetch(
+                """
+                SELECT name, enabled, cadence_s, settings
+                FROM config.adapters
+                ORDER BY name
+                """
+            )
+            for row in rows:
+                settings = row["settings"] or {}
+                adapters.append({
+                    "name": row["name"],
+                    "enabled": row["enabled"],
+                    "cadence_s": row["cadence_s"],
+                    "settings": settings,
+                })
+
+            api_keys = await conn.fetch(
+                "SELECT alias FROM config.api_keys ORDER BY alias"
+            )
+
+            sys_row = await conn.fetchrow(
+                "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
+            )
+            tile_url = sys_row["map_tile_url"] if sys_row else "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+            tile_attribution = sys_row["map_attribution"] if sys_row else "&copy; OpenStreetMap contributors"
+
+            csrf_token = request.state.csrf_token
+            response = templates.TemplateResponse(
+                request=request,
+                name="setup_adapters.html",
+                context={
+                    "csrf_token": csrf_token,
+                    "adapters": adapters,
+                    "api_keys": [{"alias": k["alias"]} for k in api_keys],
+                    "valid_satellites": _get_valid_satellites(),
+                    "valid_feeds": sorted(_get_valid_feeds()),
+                    "tile_url": tile_url,
+                    "tile_attribution": tile_attribution,
+                    "error": "Please fix the errors below.",
+                    "errors": errors,
+                    "form_data": form,
+                },
+                status_code=200,
+            )
+            return response
+
+    return RedirectResponse(url="/setup/finish", status_code=302)
+
+
+@router.get("/setup/finish", response_class=HTMLResponse)
+async def setup_finish_form(
+    request: Request,
+
+) -> HTMLResponse:
+    """Render the finish setup page (step 5)."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    templates = _get_templates()
+    pool = get_pool()
+
+    async with pool.acquire() as conn:
+        # Get counts
+        operator_count = await conn.fetchval("SELECT COUNT(*) FROM config.operators")
+        key_count = await conn.fetchval("SELECT COUNT(*) FROM config.api_keys")
+
+        # Get system settings
+        sys_row = await conn.fetchrow(
+            "SELECT map_tile_url FROM config.system WHERE id = true"
+        )
+        system = {
+            "map_tile_url": sys_row["map_tile_url"] if sys_row else "",
+        }
+
+        # Get adapters
+        rows = await conn.fetch(
+            """
+            SELECT name, enabled, cadence_s
+            FROM config.adapters
+            ORDER BY name
+            """
+        )
+        adapters = [
+            {
+                "name": row["name"],
+                "enabled": row["enabled"],
+                "cadence_s": row["cadence_s"],
+            }
+            for row in rows
+        ]
+
+    csrf_token = request.state.csrf_token
+    response = templates.TemplateResponse(
+        request=request,
+        name="setup_finish.html",
+        context={
+            "csrf_token": csrf_token,
+            "operator_count": operator_count,
+            "key_count": key_count,
+            "system": system,
+            "adapters": adapters,
+        },
+    )
+    return response
+
+
+@router.post("/setup/finish")
+async def setup_finish_submit(
+    request: Request,
+
+) -> Response:
+    """Complete the setup wizard."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    pool = get_pool()
+
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
+
+    async with pool.acquire() as conn:
         # Mark setup complete
         await conn.execute(
             "UPDATE config.system SET setup_complete = true WHERE id = true"
         )
 
-    # Redirect with session cookie
-    response = RedirectResponse(url="/", status_code=302)
-    _set_session_cookie(response, token, lifetime_days * 86400)
-    return response
+        # Write audit log
+        await write_audit(
+            conn,
+            SETUP_COMPLETE,
+            operator_id=operator.id,
+            target="system",
+        )
+
+    return RedirectResponse(url="/", status_code=302)
 
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_form(
     request: Request,
-    csrf_protect: CsrfProtect = Depends(),
 ) -> HTMLResponse:
     """Render the login form."""
     templates = _get_templates()
-    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    settings = get_settings()
+    csrf_token, signed_token = generate_pre_auth_csrf(settings.csrf_secret)
     response = templates.TemplateResponse(
         request=request,
         name="login.html",
         context={"csrf_token": csrf_token, "error": None},
     )
-    csrf_protect.set_csrf_cookie(signed_token, response)
+    set_pre_auth_csrf_cookie(response, signed_token)
     return response
 
 
@@ -369,14 +1067,18 @@ async def login_submit(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> Response:
     """Process the login form."""
     templates = _get_templates()
     pool = get_pool()
 
     # Validate CSRF
-    await csrf_protect.validate_csrf(request)
+    settings = get_settings()
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not validate_pre_auth_csrf(request, form_csrf, settings.csrf_secret):
+        raise CsrfValidationError("Invalid CSRF token")
 
     # Look up operator
     async with pool.acquire() as conn:
@@ -392,27 +1094,25 @@ async def login_submit(
         if row is None:
             # Unknown user - still audit the attempt
             await write_audit(conn, AUTH_LOGIN_FAILED, target=username)
-            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            csrf_token = request.state.csrf_token
             response = templates.TemplateResponse(
                 request=request,
                 name="login.html",
                 context={"csrf_token": csrf_token, "error": "Invalid username or password"},
                 status_code=200,
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
             return response
 
         # Verify password
         if not verify_password(password, row["password_hash"]):
             await write_audit(conn, AUTH_LOGIN_FAILED, operator_id=row["id"], target=username)
-            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            csrf_token = request.state.csrf_token
             response = templates.TemplateResponse(
                 request=request,
                 name="login.html",
                 context={"csrf_token": csrf_token, "error": "Invalid username or password"},
                 status_code=200,
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
             return response
 
         # Get session lifetime
@@ -422,7 +1122,7 @@ async def login_submit(
         lifetime_days = sysrow["session_lifetime_days"] if sysrow else 90
 
         # Create session
-        token, expires_at = await create_session(conn, row["id"], lifetime_days)
+        token, expires_at, _ = await create_session(conn, row["id"], lifetime_days)
 
         # Audit login
         await write_audit(conn, AUTH_LOGIN, operator_id=row["id"], target=username)
@@ -436,13 +1136,16 @@ async def login_submit(
 @router.post("/logout")
 async def logout(
     request: Request,
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> Response:
     """Log out the current user."""
     pool = get_pool()
 
     # Validate CSRF
-    await csrf_protect.validate_csrf(request)
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
 
     # Get current session
     session_token = request.cookies.get("central_session")
@@ -463,17 +1166,16 @@ async def logout(
 @router.get("/change-password", response_class=HTMLResponse)
 async def change_password_form(
     request: Request,
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> HTMLResponse:
     """Render the change password form."""
     templates = _get_templates()
-    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    csrf_token = request.state.csrf_token
     response = templates.TemplateResponse(
         request=request,
         name="change_password.html",
         context={"csrf_token": csrf_token, "error": None, "success": False},
     )
-    csrf_protect.set_csrf_cookie(signed_token, response)
     return response
 
 
@@ -483,7 +1185,7 @@ async def change_password_submit(
     current_password: str = Form(...),
     new_password: str = Form(...),
     confirm_password: str = Form(...),
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> Response:
     """Process the change password form."""
     templates = _get_templates()
@@ -491,7 +1193,10 @@ async def change_password_submit(
     operator = request.state.operator
 
     # Validate CSRF
-    await csrf_protect.validate_csrf(request)
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
 
     # Get current password hash
     async with pool.acquire() as conn:
@@ -514,14 +1219,13 @@ async def change_password_submit(
                 error = str(e)
 
         if error:
-            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            csrf_token = request.state.csrf_token
             response = templates.TemplateResponse(
                 request=request,
                 name="change_password.html",
                 context={"csrf_token": csrf_token, "error": error, "success": False},
                 status_code=200,
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
             return response
 
         # Update password
@@ -556,7 +1260,7 @@ async def change_password_submit(
 @router.get("/adapters", response_class=HTMLResponse)
 async def adapters_list(
     request: Request,
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> HTMLResponse:
     """List all adapters."""
     templates = _get_templates()
@@ -584,7 +1288,7 @@ async def adapters_list(
             "updated_at": row["updated_at"],
         })
 
-    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    csrf_token = request.state.csrf_token
     response = templates.TemplateResponse(
         request=request,
         name="adapters_list.html",
@@ -594,7 +1298,6 @@ async def adapters_list(
             "adapters": adapters,
         },
     )
-    csrf_protect.set_csrf_cookie(signed_token, response)
     return response
 
 
@@ -602,7 +1305,7 @@ async def adapters_list(
 async def adapters_edit_form(
     request: Request,
     name: str,
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> Response:
     """Render the adapter edit form."""
     templates = _get_templates()
@@ -644,7 +1347,7 @@ async def adapters_edit_form(
         "updated_at": row["updated_at"],
     }
 
-    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    csrf_token = request.state.csrf_token
     response = templates.TemplateResponse(
         request=request,
         name="adapters_edit.html",
@@ -661,7 +1364,6 @@ async def adapters_edit_form(
             "tile_attribution": tile_attribution,
         },
     )
-    csrf_protect.set_csrf_cookie(signed_token, response)
     return response
 
 
@@ -669,7 +1371,7 @@ async def adapters_edit_form(
 async def adapters_edit_submit(
     request: Request,
     name: str,
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> Response:
     """Process the adapter edit form."""
     templates = _get_templates()
@@ -677,7 +1379,10 @@ async def adapters_edit_submit(
     operator = request.state.operator
 
     # Validate CSRF
-    await csrf_protect.validate_csrf(request)
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
 
     # Parse form data
     form = await request.form()
@@ -820,7 +1525,7 @@ async def adapters_edit_submit(
             tile_url = sys_row["map_tile_url"] if sys_row else "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             tile_attribution = sys_row["map_attribution"] if sys_row else "&copy; OpenStreetMap contributors"
 
-            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            csrf_token = request.state.csrf_token
             response = templates.TemplateResponse(
                 request=request,
                 name="adapters_edit.html",
@@ -838,7 +1543,6 @@ async def adapters_edit_submit(
                 },
                 status_code=200,
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
             return response
 
         # Build before state for audit
@@ -889,7 +1593,7 @@ async def adapters_edit_submit(
 @router.get("/streams", response_class=HTMLResponse)
 async def streams_list(
     request: Request,
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> HTMLResponse:
     """List all streams with live data."""
     from central.gui.nats import get_js
@@ -972,7 +1676,7 @@ async def streams_list(
 
         streams.append(stream_data)
 
-    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    csrf_token = request.state.csrf_token
     response = templates.TemplateResponse(
         request=request,
         name="streams_list.html",
@@ -982,7 +1686,6 @@ async def streams_list(
             "streams": streams,
         },
     )
-    csrf_protect.set_csrf_cookie(signed_token, response)
     return response
 
 
@@ -990,7 +1693,7 @@ async def streams_list(
 async def streams_update(
     request: Request,
     name: str,
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> Response:
     """Update stream max_age_s."""
     from central.gui.nats import get_js
@@ -1000,7 +1703,10 @@ async def streams_update(
     operator = request.state.operator
 
     # Validate CSRF
-    await csrf_protect.validate_csrf(request)
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
 
     form = await request.form()
     max_age_s_str = form.get("max_age_s", "").strip()
@@ -1069,7 +1775,7 @@ async def streams_update(
 
                 streams.append(stream_data)
 
-            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            csrf_token = request.state.csrf_token
             response = templates.TemplateResponse(
                 request=request,
                 name="streams_list.html",
@@ -1080,7 +1786,6 @@ async def streams_update(
                     "errors": errors,
                 },
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
             return response
 
         old_max_age_s = row["max_age_s"]
@@ -1116,7 +1821,7 @@ ALIAS_REGEX = re.compile(r'^[a-zA-Z0-9_]+$')
 @router.get("/api-keys", response_class=HTMLResponse)
 async def api_keys_list(
     request: Request,
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> HTMLResponse:
     """List all API keys."""
     templates = _get_templates()
@@ -1152,7 +1857,7 @@ async def api_keys_list(
                 "used_by": [a["name"] for a in adapters],
             })
 
-    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    csrf_token = request.state.csrf_token
     response = templates.TemplateResponse(
         request=request,
         name="api_keys_list.html",
@@ -1162,20 +1867,19 @@ async def api_keys_list(
             "keys": keys,
         },
     )
-    csrf_protect.set_csrf_cookie(signed_token, response)
     return response
 
 
 @router.get("/api-keys/new", response_class=HTMLResponse)
 async def api_keys_new(
     request: Request,
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> HTMLResponse:
     """Show form to add a new API key."""
     templates = _get_templates()
     operator = request.state.operator
 
-    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    csrf_token = request.state.csrf_token
     response = templates.TemplateResponse(
         request=request,
         name="api_keys_new.html",
@@ -1184,14 +1888,13 @@ async def api_keys_new(
             "csrf_token": csrf_token,
         },
     )
-    csrf_protect.set_csrf_cookie(signed_token, response)
     return response
 
 
 @router.post("/api-keys", response_class=HTMLResponse)
 async def api_keys_create(
     request: Request,
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> Response:
     """Create a new API key."""
     from central.crypto import encrypt
@@ -1200,7 +1903,10 @@ async def api_keys_create(
     pool = get_pool()
     operator = request.state.operator
 
-    await csrf_protect.validate_csrf(request)
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
 
     form = await request.form()
     alias = form.get("alias", "").strip()
@@ -1223,7 +1929,7 @@ async def api_keys_create(
         errors["plaintext_key"] = "API key must be at most 4096 characters"
 
     if errors:
-        csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+        csrf_token = request.state.csrf_token
         response = templates.TemplateResponse(
             request=request,
             name="api_keys_new.html",
@@ -1234,7 +1940,6 @@ async def api_keys_create(
                 "alias": alias,
             },
         )
-        csrf_protect.set_csrf_cookie(signed_token, response)
         return response
 
     # Encrypt the key
@@ -1249,7 +1954,7 @@ async def api_keys_create(
 
         if existing:
             errors["alias"] = "An API key with this alias already exists"
-            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            csrf_token = request.state.csrf_token
             response = templates.TemplateResponse(
                 request=request,
                 name="api_keys_new.html",
@@ -1260,7 +1965,6 @@ async def api_keys_create(
                     "alias": alias,
                 },
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
             return response
 
         # Insert the new key
@@ -1291,7 +1995,7 @@ async def api_keys_create(
 async def api_keys_edit(
     request: Request,
     alias: str,
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> Response:
     """Show form to rotate or delete an API key."""
     templates = _get_templates()
@@ -1329,7 +2033,7 @@ async def api_keys_edit(
         "used_by": [a["name"] for a in adapters],
     }
 
-    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    csrf_token = request.state.csrf_token
     response = templates.TemplateResponse(
         request=request,
         name="api_keys_edit.html",
@@ -1339,7 +2043,6 @@ async def api_keys_edit(
             "key": key,
         },
     )
-    csrf_protect.set_csrf_cookie(signed_token, response)
     return response
 
 
@@ -1347,7 +2050,7 @@ async def api_keys_edit(
 async def api_keys_rotate(
     request: Request,
     alias: str,
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> Response:
     """Rotate an API key."""
     from central.crypto import encrypt
@@ -1356,7 +2059,10 @@ async def api_keys_rotate(
     pool = get_pool()
     operator = request.state.operator
 
-    await csrf_protect.validate_csrf(request)
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
 
     form = await request.form()
     new_plaintext_key = form.get("new_plaintext_key", "")
@@ -1400,7 +2106,7 @@ async def api_keys_rotate(
                 "used_by": [a["name"] for a in adapters],
             }
 
-            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            csrf_token = request.state.csrf_token
             response = templates.TemplateResponse(
                 request=request,
                 name="api_keys_edit.html",
@@ -1411,7 +2117,6 @@ async def api_keys_rotate(
                     "errors": errors,
                 },
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
             return response
 
         old_rotated_at = row["rotated_at"]
@@ -1448,14 +2153,17 @@ async def api_keys_rotate(
 async def api_keys_delete(
     request: Request,
     alias: str,
-    csrf_protect: CsrfProtect = Depends(),
+
 ) -> Response:
     """Delete an API key."""
     templates = _get_templates()
     pool = get_pool()
     operator = request.state.operator
 
-    await csrf_protect.validate_csrf(request)
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -1490,7 +2198,7 @@ async def api_keys_delete(
                 "used_by": adapter_names,
             }
 
-            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            csrf_token = request.state.csrf_token
             response = templates.TemplateResponse(
                 request=request,
                 name="api_keys_edit.html",
@@ -1501,7 +2209,6 @@ async def api_keys_delete(
                     "error": f"Cannot delete: used by {', '.join(adapter_names)}. Remove these references first.",
                 },
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
             return response
 
         # Delete the key

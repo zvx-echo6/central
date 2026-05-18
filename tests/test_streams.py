@@ -52,10 +52,6 @@ class TestStreamsListAuthenticated:
         mock_response = MagicMock()
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         # Mock JetStream with proper state fields
         mock_js = AsyncMock()
         mock_stream_info = MagicMock()
@@ -74,7 +70,7 @@ class TestStreamsListAuthenticated:
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
                 with patch("central.gui.nats.get_js", return_value=mock_js):
-                    result = await streams_list(mock_request, mock_csrf)
+                    result = await streams_list(mock_request)
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -117,14 +113,10 @@ class TestStreamsListNatsUnavailable:
         mock_response = MagicMock()
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
                 with patch("central.gui.nats.get_js", return_value=None):
-                    result = await streams_list(mock_request, mock_csrf)
+                    result = await streams_list(mock_request)
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -157,10 +149,6 @@ class TestStreamsListPartialFailure:
         mock_response = MagicMock()
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         # Mock JetStream - CENTRAL_FIRE raises ValueError, CENTRAL_WX works
         mock_js = AsyncMock()
         test_ts = datetime(2026, 5, 17, 12, 0, 0, tzinfo=timezone.utc)
@@ -184,7 +172,7 @@ class TestStreamsListPartialFailure:
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
                 with patch("central.gui.nats.get_js", return_value=mock_js):
-                    result = await streams_list(mock_request, mock_csrf)
+                    result = await streams_list(mock_request)
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -222,10 +210,6 @@ class TestStreamsListEmptyStream:
         mock_response = MagicMock()
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         # Mock JetStream with empty stream (first_seq = 0)
         mock_js = AsyncMock()
         mock_stream_info = MagicMock()
@@ -239,7 +223,7 @@ class TestStreamsListEmptyStream:
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
                 with patch("central.gui.nats.get_js", return_value=mock_js):
-                    result = await streams_list(mock_request, mock_csrf)
+                    result = await streams_list(mock_request)
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -278,10 +262,6 @@ class TestStreamsListSingleMessage:
         mock_response = MagicMock()
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         # Mock JetStream with single message (first_seq == last_seq)
         mock_js = AsyncMock()
         mock_stream_info = MagicMock()
@@ -299,7 +279,7 @@ class TestStreamsListSingleMessage:
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
                 with patch("central.gui.nats.get_js", return_value=mock_js):
-                    result = await streams_list(mock_request, mock_csrf)
+                    result = await streams_list(mock_request)
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -337,10 +317,6 @@ class TestStreamsListGetMsgFailure:
         mock_response = MagicMock()
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         # Mock JetStream
         mock_js = AsyncMock()
         mock_stream_info = MagicMock()
@@ -365,7 +341,7 @@ class TestStreamsListGetMsgFailure:
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
                 with patch("central.gui.nats.get_js", return_value=mock_js):
-                    result = await streams_list(mock_request, mock_csrf)
+                    result = await streams_list(mock_request)
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -394,8 +370,12 @@ class TestStreamsUpdate:
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form = MagicMock()
-        mock_form.get.return_value = "1209600"  # 14 days
+        mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
+            "max_age_s": "1209600",
+        }.get(k, d)
         mock_request.form = AsyncMock(return_value=mock_form)
 
         mock_conn = AsyncMock()
@@ -405,9 +385,6 @@ class TestStreamsUpdate:
         mock_pool = MagicMock()
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
-
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
 
         captured_audit = {}
 
@@ -419,7 +396,7 @@ class TestStreamsUpdate:
 
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
             with patch("central.gui.routes.write_audit", side_effect=capture_audit):
-                result = await streams_update(mock_request, "CENTRAL_WX", mock_csrf)
+                result = await streams_update(mock_request, "CENTRAL_WX")
 
         assert result.status_code == 302
         assert result.headers["location"] == "/streams"
@@ -438,8 +415,12 @@ class TestStreamsUpdate:
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form = MagicMock()
-        mock_form.get.return_value = "60"  # 1 minute - too small
+        mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
+            "max_age_s": "60",
+        }.get(k, d)
         mock_request.form = AsyncMock(return_value=mock_form)
 
         mock_conn = AsyncMock()
@@ -458,15 +439,10 @@ class TestStreamsUpdate:
         mock_response.status_code = 200
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
                 with patch("central.gui.nats.get_js", return_value=None):
-                    result = await streams_update(mock_request, "CENTRAL_WX", mock_csrf)
+                    result = await streams_update(mock_request, "CENTRAL_WX")
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -480,9 +456,10 @@ class TestStreamsUpdate:
 
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="testop")
+        mock_request.state.csrf_token = "test_csrf_token"
 
         mock_form = MagicMock()
-        mock_form.get.return_value = "999999999"  # Way too large
+        mock_form.get.side_effect = lambda k, d="": {"csrf_token": "test_csrf_token", "max_age_s": "999999999"}.get(k, d)  # Way too large
         mock_request.form = AsyncMock(return_value=mock_form)
 
         mock_conn = AsyncMock()
@@ -501,15 +478,10 @@ class TestStreamsUpdate:
         mock_response.status_code = 200
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
                 with patch("central.gui.nats.get_js", return_value=None):
-                    result = await streams_update(mock_request, "CENTRAL_WX", mock_csrf)
+                    result = await streams_update(mock_request, "CENTRAL_WX")
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -523,8 +495,12 @@ class TestStreamsUpdate:
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form = MagicMock()
-        mock_form.get.return_value = "604800"
+        mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
+            "max_age_s": "604800",
+        }.get(k, d)
         mock_request.form = AsyncMock(return_value=mock_form)
 
         mock_conn = AsyncMock()
@@ -534,11 +510,8 @@ class TestStreamsUpdate:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
-            result = await streams_update(mock_request, "nonexistent", mock_csrf)
+            result = await streams_update(mock_request, "nonexistent")
 
         assert result.status_code == 404
 
@@ -554,8 +527,12 @@ class TestStreamsAudit:
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form = MagicMock()
-        mock_form.get.return_value = "1209600"  # 14 days
+        mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
+            "max_age_s": "1209600",
+        }.get(k, d)
         mock_request.form = AsyncMock(return_value=mock_form)
 
         mock_conn = AsyncMock()
@@ -565,9 +542,6 @@ class TestStreamsAudit:
         mock_pool = MagicMock()
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
-
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
 
         captured_audit = {}
 
@@ -580,7 +554,7 @@ class TestStreamsAudit:
 
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
             with patch("central.gui.routes.write_audit", side_effect=capture_audit):
-                await streams_update(mock_request, "CENTRAL_QUAKE", mock_csrf)
+                await streams_update(mock_request, "CENTRAL_QUAKE")
 
         assert captured_audit["action"] == "stream.update"
         assert captured_audit["operator_id"] == 1

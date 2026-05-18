@@ -1,0 +1,256 @@
+{% extends "base_wizard.html" %}
+
+{% block title %}Central - Configure Adapters{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" integrity="sha512-gc3xjCmIy673V6MyOAZhIW93xhM9ei1I+gLbmFjUHIjocENRsLX/QUE1htk5q1XV2D/iie/VQ8DXI6Uj8GB1Og==" crossorigin="anonymous">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js" integrity="sha512-ozq8xQKq6urvuU6jNgkfqAmT7jKN2XumbrX1JiB3TnF7tI48DPI4Ber9dLJ0ikXiRg9G9Vl2jXwqjZ5LDGQ3g==" crossorigin="anonymous"></script>
+{% endblock %}
+
+{% block content %}
+{% with step=4, step_name="Configure Adapters" %}
+{% include "_wizard_header.html" %}
+{% endwith %}
+
+<article>
+    <header>
+        <h1>Configure Adapters</h1>
+        <p>Enable and configure data source adapters. Each adapter polls an external API and normalizes events.</p>
+    </header>
+
+    {% if error %}
+    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    {% endif %}
+
+    <form action="/setup/adapters" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+        {% for adapter in adapters %}
+        <details open style="margin-bottom: 2rem;">
+            <summary><strong>{{ adapter.name }}</strong></summary>
+
+            <div style="padding: 1rem; border-left: 3px solid var(--pico-primary);">
+                <label>
+                    <input type="checkbox" name="{{ adapter.name }}_enabled"
+                           {% if form_data and form_data.get(adapter.name + '_enabled') %}checked
+                           {% elif not form_data and adapter.enabled %}checked{% endif %}>
+                    Enabled
+                </label>
+                {% if errors and errors.get(adapter.name + '_enabled') %}
+                <small style="color: var(--pico-color-red-500); display: block;">{{ errors[adapter.name + '_enabled'] }}</small>
+                {% endif %}
+
+                <label for="{{ adapter.name }}_cadence_s">Cadence (seconds)</label>
+                <input type="number" id="{{ adapter.name }}_cadence_s" name="{{ adapter.name }}_cadence_s"
+                       value="{{ form_data.get(adapter.name + '_cadence_s') if form_data else adapter.cadence_s }}"
+                       min="60" max="3600">
+                {% if errors and errors.get(adapter.name + '_cadence_s') %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[adapter.name + '_cadence_s'] }}</small>
+                {% endif %}
+
+                {% if adapter.name == 'nws' %}
+                <label for="{{ adapter.name }}_contact_email">Contact Email</label>
+                <input type="email" id="{{ adapter.name }}_contact_email" name="{{ adapter.name }}_contact_email"
+                       value="{{ form_data.get(adapter.name + '_contact_email') if form_data else adapter.settings.contact_email }}">
+                {% if errors and errors.get(adapter.name + '_contact_email') %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[adapter.name + '_contact_email'] }}</small>
+                {% endif %}
+                {% endif %}
+
+                {% if adapter.name == 'firms' %}
+                <label for="{{ adapter.name }}_api_key_alias">API Key Alias</label>
+                <select id="{{ adapter.name }}_api_key_alias" name="{{ adapter.name }}_api_key_alias">
+                    <option value="">(none)</option>
+                    {% for key in api_keys %}
+                    <option value="{{ key.alias }}"
+                            {% if (form_data.get(adapter.name + '_api_key_alias') if form_data else adapter.settings.api_key_alias) == key.alias %}selected{% endif %}>
+                        {{ key.alias }}
+                    </option>
+                    {% endfor %}
+                </select>
+                {% if errors and errors.get(adapter.name + '_api_key_alias') %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[adapter.name + '_api_key_alias'] }}</small>
+                {% endif %}
+
+                <label>Satellites</label>
+                {% for sat in valid_satellites %}
+                <label style="display: inline-block; margin-right: 1rem;">
+                    <input type="checkbox" name="{{ adapter.name }}_satellites" value="{{ sat }}"
+                           {% if sat in (form_data.getlist(adapter.name + '_satellites') if form_data else adapter.settings.satellites or []) %}checked{% endif %}>
+                    {{ sat }}
+                </label>
+                {% endfor %}
+                {% endif %}
+
+                {% if adapter.name == 'usgs_quake' %}
+                <label for="{{ adapter.name }}_feed">Feed</label>
+                <select id="{{ adapter.name }}_feed" name="{{ adapter.name }}_feed">
+                    {% for f in valid_feeds %}
+                    <option value="{{ f }}"
+                            {% if (form_data.get(adapter.name + '_feed') if form_data else adapter.settings.feed) == f %}selected{% endif %}>
+                        {{ f }}
+                    </option>
+                    {% endfor %}
+                </select>
+                {% if errors and errors.get(adapter.name + '_feed') %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[adapter.name + '_feed'] }}</small>
+                {% endif %}
+                {% endif %}
+
+                <h4>Region</h4>
+                {% set region = form_data if form_data else adapter.settings.region %}
+                <div id="region-picker-{{ adapter.name }}"
+                     data-adapter="{{ adapter.name }}"
+                     data-north="{{ form_data.get(adapter.name + '_region_north') if form_data else (adapter.settings.region.north if adapter.settings.region else 49.5) }}"
+                     data-south="{{ form_data.get(adapter.name + '_region_south') if form_data else (adapter.settings.region.south if adapter.settings.region else 31.0) }}"
+                     data-east="{{ form_data.get(adapter.name + '_region_east') if form_data else (adapter.settings.region.east if adapter.settings.region else -102.0) }}"
+                     data-west="{{ form_data.get(adapter.name + '_region_west') if form_data else (adapter.settings.region.west if adapter.settings.region else -124.5) }}"
+                     data-tile-url="{{ tile_url }}"
+                     data-tile-attr="{{ tile_attribution }}">
+
+                    <div id="region-map-{{ adapter.name }}" style="height: 300px; margin-bottom: 1rem;"></div>
+
+                    <div class="grid">
+                        <div>
+                            <label>North</label>
+                            <input type="number" name="{{ adapter.name }}_region_north" step="0.0001" min="-90" max="90" readonly
+                                   value="{{ form_data.get(adapter.name + '_region_north') if form_data else (adapter.settings.region.north if adapter.settings.region else 49.5) }}">
+                        </div>
+                        <div>
+                            <label>South</label>
+                            <input type="number" name="{{ adapter.name }}_region_south" step="0.0001" min="-90" max="90" readonly
+                                   value="{{ form_data.get(adapter.name + '_region_south') if form_data else (adapter.settings.region.south if adapter.settings.region else 31.0) }}">
+                        </div>
+                        <div>
+                            <label>East</label>
+                            <input type="number" name="{{ adapter.name }}_region_east" step="0.0001" min="-180" max="180" readonly
+                                   value="{{ form_data.get(adapter.name + '_region_east') if form_data else (adapter.settings.region.east if adapter.settings.region else -102.0) }}">
+                        </div>
+                        <div>
+                            <label>West</label>
+                            <input type="number" name="{{ adapter.name }}_region_west" step="0.0001" min="-180" max="180" readonly
+                                   value="{{ form_data.get(adapter.name + '_region_west') if form_data else (adapter.settings.region.west if adapter.settings.region else -124.5) }}">
+                        </div>
+                    </div>
+                    {% if errors and errors.get(adapter.name + '_region') %}
+                    <small style="color: var(--pico-color-red-500);">{{ errors[adapter.name + '_region'] }}</small>
+                    {% endif %}
+                </div>
+            </div>
+        </details>
+        {% endfor %}
+
+        <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+            <a href="/setup/keys" role="button" class="outline">&larr; Back</a>
+            <button type="submit">Next &rarr;</button>
+        </div>
+    </form>
+</article>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const adapters = ['nws', 'firms', 'usgs_quake'];
+
+    adapters.forEach(function(adapterName) {
+        const container = document.getElementById('region-picker-' + adapterName);
+        if (!container) return;
+
+        const savedNorth = parseFloat(container.dataset.north);
+        const savedSouth = parseFloat(container.dataset.south);
+        const savedEast = parseFloat(container.dataset.east);
+        const savedWest = parseFloat(container.dataset.west);
+        const tileUrl = container.dataset.tileUrl || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+        const tileAttr = container.dataset.tileAttr || '&copy; OpenStreetMap contributors';
+
+        const centerLat = (savedNorth + savedSouth) / 2;
+        const centerLng = (savedEast + savedWest) / 2;
+        const mapEl = document.getElementById('region-map-' + adapterName);
+        const map = L.map(mapEl).setView([centerLat, centerLng], 4);
+
+        L.tileLayer(tileUrl, {
+            attribution: tileAttr,
+            maxZoom: 18
+        }).addTo(map);
+
+        // Ensure map renders correctly even if container has not
+        // finished laying out at init time
+        setTimeout(function() { map.invalidateSize(); }, 100);
+
+        const bounds = L.latLngBounds(
+            L.latLng(savedSouth, savedWest),
+            L.latLng(savedNorth, savedEast)
+        );
+        map.fitBounds(bounds.pad(0.1));
+
+        let rectangle = L.rectangle(bounds, {
+            color: '#3388ff',
+            weight: 2,
+            fillOpacity: 0.2
+        });
+
+        // Set up Leaflet.draw for click-to-draw
+        const drawnItems = new L.FeatureGroup();
+        drawnItems.addLayer(rectangle);
+        map.addLayer(drawnItems);
+
+        const drawControl = new L.Control.Draw({
+            draw: {
+                rectangle: { shapeOptions: { color: '#3388ff', weight: 2,
+                                             fillOpacity: 0.2 } },
+                polyline: false,
+                polygon: false,
+                circle: false,
+                marker: false,
+                circlemarker: false
+            },
+            edit: {
+                featureGroup: drawnItems,
+                edit: false,
+                remove: false
+            }
+        });
+        map.addControl(drawControl);
+
+        rectangle.editing.enable();
+
+        const northInput = container.querySelector('input[name="' + adapterName + '_region_north"]');
+        const southInput = container.querySelector('input[name="' + adapterName + '_region_south"]');
+        const eastInput = container.querySelector('input[name="' + adapterName + '_region_east"]');
+        const westInput = container.querySelector('input[name="' + adapterName + '_region_west"]');
+
+        function updateInputs() {
+            const b = rectangle.getBounds();
+            northInput.value = b.getNorth().toFixed(4);
+            southInput.value = b.getSouth().toFixed(4);
+            eastInput.value = b.getEast().toFixed(4);
+            westInput.value = b.getWest().toFixed(4);
+        }
+
+        rectangle.on('edit', updateInputs);
+        updateInputs();
+
+        // When user draws a new rectangle, replace the existing one
+        map.on(L.Draw.Event.CREATED, function(e) {
+            drawnItems.clearLayers();
+            rectangle = e.layer;
+            rectangle.setStyle({ color: '#3388ff', weight: 2,
+                                 fillOpacity: 0.2 });
+            drawnItems.addLayer(rectangle);
+            rectangle.editing.enable();
+            rectangle.on('edit', updateInputs);
+            updateInputs();
+        });
+
+        // Fix map size when details is opened
+        const details = container.closest('details');
+        if (details) {
+            details.addEventListener('toggle', function() {
+                setTimeout(function() { map.invalidateSize(); }, 100);
+            });
+        }
+    });
+});
+</script>
+{% endblock %}

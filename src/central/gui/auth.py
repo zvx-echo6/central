@@ -12,6 +12,11 @@ from argon2.exceptions import VerifyMismatchError
 _hasher = PasswordHasher()
 
 
+class CsrfValidationError(Exception):
+    """Raised when CSRF token validation fails."""
+    pass
+
+
 @dataclass
 class Operator:
     """Operator account."""
@@ -46,39 +51,46 @@ def generate_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+def generate_csrf_token() -> str:
+    """Generate a cryptographically secure CSRF token."""
+    return secrets.token_hex(32)
+
+
 async def create_session(
     conn: Any,  # asyncpg.Connection
     operator_id: int,
     lifetime_days: int,
-) -> tuple[str, datetime]:
+) -> tuple[str, datetime, str]:
     """Create a new session for an operator.
     
-    Returns (token, expires_at).
+    Returns (token, expires_at, csrf_token).
     """
     token = generate_token()
+    csrf_token = generate_csrf_token()
     expires_at = datetime.now(timezone.utc) + timedelta(days=lifetime_days)
     
     await conn.execute(
         """
-        INSERT INTO config.sessions (token, operator_id, expires_at)
-        VALUES ($1, $2, $3)
+        INSERT INTO config.sessions (token, operator_id, expires_at, csrf_token)
+        VALUES ($1, $2, $3, $4)
         """,
         token,
         operator_id,
         expires_at,
+        csrf_token,
     )
     
-    return token, expires_at
+    return token, expires_at, csrf_token
 
 
-async def get_session(conn: Any, token: str) -> Operator | None:
-    """Look up a session and return the associated operator.
+async def get_session(conn: Any, token: str) -> tuple[Operator, str] | None:
+    """Look up a session and return the associated operator and csrf_token.
     
-    Returns None if token is invalid or expired.
+    Returns (Operator, csrf_token) or None if token is invalid or expired.
     """
     row = await conn.fetchrow(
         """
-        SELECT o.id, o.username, o.created_at, o.password_changed_at
+        SELECT o.id, o.username, o.created_at, o.password_changed_at, s.csrf_token
         FROM config.sessions s
         JOIN config.operators o ON s.operator_id = o.id
         WHERE s.token = $1 AND s.expires_at > now()
@@ -89,12 +101,14 @@ async def get_session(conn: Any, token: str) -> Operator | None:
     if row is None:
         return None
     
-    return Operator(
+    operator = Operator(
         id=row["id"],
         username=row["username"],
         created_at=row["created_at"],
         password_changed_at=row.get("password_changed_at"),
     )
+    
+    return operator, row["csrf_token"]
 
 
 async def delete_session(conn: Any, token: str) -> None:

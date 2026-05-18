@@ -75,13 +75,9 @@ class TestApiKeysListAuthenticated:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await api_keys_list(mock_request, mock_csrf)
+                result = await api_keys_list(mock_request)
 
         # Check template was called with correct context
         call_args = mock_templates.TemplateResponse.call_args
@@ -104,7 +100,8 @@ class TestApiKeysCreate:
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="admin")
 
-        form_data = {"alias": "test1", "plaintext_key": "secret-api-key-123"}
+        mock_request.state.csrf_token = "test_csrf_token"
+        form_data = {"csrf_token": "test_csrf_token", "alias": "test1", "plaintext_key": "secret-api-key-123"}
         mock_request.form = AsyncMock(return_value=form_data)
 
         mock_conn = AsyncMock()
@@ -119,13 +116,10 @@ class TestApiKeysCreate:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
             with patch("central.crypto.encrypt", return_value=b"encrypted_data"):
                 with patch("central.gui.routes.write_audit", new_callable=AsyncMock):
-                    result = await api_keys_create(mock_request, mock_csrf)
+                    result = await api_keys_create(mock_request)
 
         assert result.status_code == 302
         assert result.headers["location"] == "/api-keys"
@@ -136,7 +130,8 @@ class TestApiKeysCreate:
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="admin")
 
-        form_data = {"alias": "firms", "plaintext_key": "secret-key"}
+        mock_request.state.csrf_token = "test_csrf_token"
+        form_data = {"csrf_token": "test_csrf_token", "alias": "firms", "plaintext_key": "secret-key"}
         mock_request.form = AsyncMock(return_value=form_data)
 
         mock_templates = MagicMock()
@@ -150,15 +145,10 @@ class TestApiKeysCreate:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
                 with patch("central.crypto.encrypt", return_value=b"encrypted"):
-                    result = await api_keys_create(mock_request, mock_csrf)
+                    result = await api_keys_create(mock_request)
 
         # Should re-render form with error
         call_args = mock_templates.TemplateResponse.call_args
@@ -172,7 +162,8 @@ class TestApiKeysCreate:
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="admin")
 
-        form_data = {"alias": "", "plaintext_key": "secret-key"}
+        mock_request.state.csrf_token = "test_csrf_token"
+        form_data = {"csrf_token": "test_csrf_token", "alias": "", "plaintext_key": "secret-key"}
         mock_request.form = AsyncMock(return_value=form_data)
 
         mock_templates = MagicMock()
@@ -183,14 +174,9 @@ class TestApiKeysCreate:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await api_keys_create(mock_request, mock_csrf)
+                result = await api_keys_create(mock_request)
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -203,7 +189,8 @@ class TestApiKeysCreate:
         mock_request.state.operator = MagicMock(id=1, username="admin")
 
         # Test with space
-        form_data = {"alias": "test key", "plaintext_key": "secret-key"}
+        mock_request.state.csrf_token = "test_csrf_token"
+        form_data = {"csrf_token": "test_csrf_token", "alias": "test key", "plaintext_key": "secret-key"}
         mock_request.form = AsyncMock(return_value=form_data)
 
         mock_templates = MagicMock()
@@ -214,14 +201,9 @@ class TestApiKeysCreate:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await api_keys_create(mock_request, mock_csrf)
+                result = await api_keys_create(mock_request)
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -233,7 +215,8 @@ class TestApiKeysCreate:
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="admin")
 
-        form_data = {"alias": "test-key", "plaintext_key": "secret-key"}
+        mock_request.state.csrf_token = "test_csrf_token"
+        form_data = {"csrf_token": "test_csrf_token", "alias": "test-key", "plaintext_key": "secret-key"}
         mock_request.form = AsyncMock(return_value=form_data)
 
         mock_templates = MagicMock()
@@ -244,14 +227,9 @@ class TestApiKeysCreate:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await api_keys_create(mock_request, mock_csrf)
+                result = await api_keys_create(mock_request)
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -267,7 +245,8 @@ class TestApiKeysRotate:
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="admin")
 
-        form_data = {"new_plaintext_key": "new-secret-key-456"}
+        mock_request.state.csrf_token = "test_csrf_token"
+        form_data = {"csrf_token": "test_csrf_token", "new_plaintext_key": "new-secret-key-456"}
         mock_request.form = AsyncMock(return_value=form_data)
 
         mock_conn = AsyncMock()
@@ -290,13 +269,10 @@ class TestApiKeysRotate:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
             with patch("central.crypto.encrypt", return_value=b"new_encrypted"):
                 with patch("central.gui.routes.write_audit", new_callable=AsyncMock) as mock_audit:
-                    result = await api_keys_rotate(mock_request, "test1", mock_csrf)
+                    result = await api_keys_rotate(mock_request, "test1")
 
         assert result.status_code == 302
         # Check audit was called with no plaintext
@@ -313,6 +289,8 @@ class TestApiKeysDelete:
         """POST /api-keys/{alias}/delete with references shows error."""
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="admin")
+        mock_request.state.csrf_token = "test_csrf_token"
+        mock_request.form = AsyncMock(return_value={"csrf_token": "test_csrf_token"})
 
         mock_templates = MagicMock()
         mock_templates.TemplateResponse.return_value = MagicMock()
@@ -331,14 +309,9 @@ class TestApiKeysDelete:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await api_keys_delete(mock_request, "firms", mock_csrf)
+                result = await api_keys_delete(mock_request, "firms")
 
         # Should re-render with error
         call_args = mock_templates.TemplateResponse.call_args
@@ -351,6 +324,8 @@ class TestApiKeysDelete:
         """POST /api-keys/{alias}/delete without references deletes and redirects."""
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="admin")
+        mock_request.state.csrf_token = "test_csrf_token"
+        mock_request.form = AsyncMock(return_value={"csrf_token": "test_csrf_token"})
 
         mock_conn = AsyncMock()
         mock_conn.fetchrow.return_value = {
@@ -367,12 +342,9 @@ class TestApiKeysDelete:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
             with patch("central.gui.routes.write_audit", new_callable=AsyncMock) as mock_audit:
-                result = await api_keys_delete(mock_request, "test1", mock_csrf)
+                result = await api_keys_delete(mock_request, "test1")
 
         assert result.status_code == 302
         assert result.headers["location"] == "/api-keys"
@@ -388,7 +360,8 @@ class TestApiKeysAuditNoPlaintext:
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="admin")
 
-        form_data = {"alias": "newkey", "plaintext_key": "super-secret-value"}
+        mock_request.state.csrf_token = "test_csrf_token"
+        form_data = {"csrf_token": "test_csrf_token", "alias": "newkey", "plaintext_key": "super-secret-value"}
         mock_request.form = AsyncMock(return_value=form_data)
 
         mock_conn = AsyncMock()
@@ -401,13 +374,10 @@ class TestApiKeysAuditNoPlaintext:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
             with patch("central.crypto.encrypt", return_value=b"encrypted"):
                 with patch("central.gui.routes.write_audit", new_callable=AsyncMock) as mock_audit:
-                    await api_keys_create(mock_request, mock_csrf)
+                    await api_keys_create(mock_request)
 
         # Check audit call arguments
         call_kwargs = mock_audit.call_args.kwargs

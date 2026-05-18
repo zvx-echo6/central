@@ -39,6 +39,7 @@ def setup_master_key(master_key_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     clear_key_cache()
     monkeypatch.setenv("CENTRAL_DB_DSN", TEST_DB_DSN)
     monkeypatch.setenv("CENTRAL_MASTER_KEY_PATH", str(master_key_path))
+    monkeypatch.setenv("CENTRAL_CSRF_SECRET", "test-csrf-secret-for-testing-only-32chars")
 
 
 @pytest_asyncio.fixture

@@ -1,0 +1,88 @@
+{% extends "base_wizard.html" %}
+
+{% block title %}Central - API Keys{% endblock %}
+
+{% block content %}
+{% with step=3, step_name="API Keys" %}
+{% include "_wizard_header.html" %}
+{% endwith %}
+
+<article>
+    <header>
+        <h1>API Keys</h1>
+        <p>Add API keys for adapters that require external service credentials (e.g., FIRMS).</p>
+    </header>
+
+    {% if error %}
+    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    {% endif %}
+
+    {% if success %}
+    <p style="color: var(--pico-color-green-500);">{{ success }}</p>
+    {% endif %}
+
+    {% if keys %}
+    <h2>Existing Keys</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Alias</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for key in keys %}
+            <tr>
+                <td><strong>{{ key.alias }}</strong></td>
+                <td>{{ key.created_at.strftime('%Y-%m-%d %H:%M') if key.created_at else '(never)' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p><em>No API keys configured yet.</em></p>
+    {% endif %}
+
+    <h2>Add New Key</h2>
+    <form action="/setup/keys" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="add">
+
+        <div class="grid">
+            <div>
+                <label for="alias">Alias</label>
+                <input type="text" id="alias" name="alias" placeholder="e.g., firms"
+                       value="{{ form_data.alias if form_data else '' }}" maxlength="64">
+                {% if errors and errors.alias %}
+                <small style="color: var(--pico-color-red-500);">{{ errors.alias }}</small>
+                {% else %}
+                <small>Letters, numbers, and underscores only.</small>
+                {% endif %}
+            </div>
+            <div>
+                <label for="plaintext_key">API Key</label>
+                <input type="password" id="plaintext_key" name="plaintext_key"
+                       placeholder="Paste your API key">
+                {% if errors and errors.plaintext_key %}
+                <small style="color: var(--pico-color-red-500);">{{ errors.plaintext_key }}</small>
+                {% else %}
+                <small>Will be encrypted before storage.</small>
+                {% endif %}
+            </div>
+        </div>
+
+        <button type="submit" class="outline">Add Key</button>
+    </form>
+
+    <hr>
+
+    <form action="/setup/keys" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="next">
+        <div style="display: flex; gap: 1rem;">
+            <a href="/setup/system" role="button" class="outline">&larr; Back</a>
+            <button type="submit">Next &rarr;</button>
+        </div>
+    </form>
+</article>
+{% endblock %}

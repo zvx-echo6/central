@@ -29,23 +29,6 @@ _cleanup_task: asyncio.Task | None = None
 _app: FastAPI | None = None
 
 
-def _configure_csrf() -> None:
-    """Configure CSRF protection. Must be called before app starts."""
-    from fastapi_csrf_protect import CsrfProtect
-    from pydantic import BaseModel
-    from central.bootstrap_config import get_settings
-
-    class CsrfSettings(BaseModel):
-        secret_key: str
-        token_location: str = "body"
-        token_key: str = "csrf_token"
-
-    @CsrfProtect.load_config
-    def get_csrf_config():
-        settings = get_settings()
-        return CsrfSettings(secret_key=settings.csrf_secret)
-
-
 async def _session_cleanup_loop() -> None:
     """Periodically clean up expired sessions."""
     global _shutdown_event
@@ -117,9 +100,6 @@ def _create_app() -> FastAPI:
     from central.gui.middleware import SessionMiddleware, SetupGateMiddleware
     from central.gui.routes import router
 
-    # Configure CSRF before creating app
-    _configure_csrf()
-
     app = FastAPI(
         title="Central GUI",
         lifespan=lifespan,
@@ -137,45 +117,214 @@ def _create_app() -> FastAPI:
     app.include_router(router)
 
     # CSRF exception handler - return friendly error instead of 500
-    from fastapi_csrf_protect.exceptions import CsrfProtectError
+    from central.gui.auth import CsrfValidationError
+    from central.gui.csrf import generate_pre_auth_csrf, set_pre_auth_csrf_cookie
+    from central.bootstrap_config import get_settings
     from fastapi.responses import RedirectResponse
 
-    @app.exception_handler(CsrfProtectError)
-    async def csrf_exception_handler(request, exc: CsrfProtectError):
-        from fastapi_csrf_protect import CsrfProtect
-        
-        csrf_protect = CsrfProtect()
-        csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
-        
+    @app.exception_handler(CsrfValidationError)
+    async def csrf_exception_handler(request, exc: CsrfValidationError):
+        from central.gui.db import get_pool
+
+        settings = get_settings()
+        # For pre-auth paths, generate a new pre-auth token
+        # For session paths, we'll just show the error (session token stays valid)
+        csrf_token, signed_token = generate_pre_auth_csrf(settings.csrf_secret)
+        error_msg = "Your session expired. Please try again."
+
         if request.url.path == "/login":
             response = templates.TemplateResponse(
                 request=request,
                 name="login.html",
-                context={"csrf_token": csrf_token, "error": "Your session expired. Please try again."},
+                context={"csrf_token": csrf_token, "error": error_msg},
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
+            set_pre_auth_csrf_cookie(response, signed_token)
             return response
+
         elif request.url.path == "/setup":
+            # /setup is a redirect path now, not a form
+            return RedirectResponse("/setup", status_code=302)
+
+        elif request.url.path == "/setup/operator":
             response = templates.TemplateResponse(
                 request=request,
-                name="setup.html",
-                context={"csrf_token": csrf_token, "error": "Your session expired. Please try again."},
+                name="setup_operator.html",
+                context={"csrf_token": csrf_token, "error": error_msg, "form_data": None},
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
+            set_pre_auth_csrf_cookie(response, signed_token)
             return response
+
+        elif request.url.path == "/setup/system":
+            pool = get_pool()
+            system = {
+                "map_tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                "map_attribution": "&copy; OpenStreetMap contributors",
+            }
+            if pool:
+                try:
+                    async with pool.acquire() as conn:
+                        row = await conn.fetchrow(
+                            "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
+                        )
+                        if row:
+                            system = {
+                                "map_tile_url": row["map_tile_url"],
+                                "map_attribution": row["map_attribution"],
+                            }
+                except Exception:
+                    pass
+            response = templates.TemplateResponse(
+                request=request,
+                name="setup_system.html",
+                context={
+                    "csrf_token": csrf_token,
+                    "error": error_msg,
+                    "errors": None,
+                    "form_data": None,
+                    "system": system,
+                },
+            )
+            set_pre_auth_csrf_cookie(response, signed_token)
+            return response
+
+        elif request.url.path == "/setup/keys":
+            pool = get_pool()
+            keys = []
+            if pool:
+                try:
+                    async with pool.acquire() as conn:
+                        rows = await conn.fetch(
+                            "SELECT alias, created_at FROM config.api_keys ORDER BY alias"
+                        )
+                        keys = [{"alias": row["alias"], "created_at": row["created_at"]} for row in rows]
+                except Exception:
+                    pass
+            response = templates.TemplateResponse(
+                request=request,
+                name="setup_keys.html",
+                context={
+                    "csrf_token": csrf_token,
+                    "keys": keys,
+                    "errors": None,
+                    "form_data": None,
+                    "success": None,
+                    "error": error_msg,
+                },
+            )
+            set_pre_auth_csrf_cookie(response, signed_token)
+            return response
+
+        elif request.url.path == "/setup/adapters":
+            pool = get_pool()
+            adapters = []
+            api_keys = []
+            tile_url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+            tile_attribution = "&copy; OpenStreetMap contributors"
+            if pool:
+                try:
+                    async with pool.acquire() as conn:
+                        rows = await conn.fetch(
+                            "SELECT name, enabled, cadence_s, settings FROM config.adapters ORDER BY name"
+                        )
+                        for row in rows:
+                            settings = row["settings"] or {}
+                            adapters.append({
+                                "name": row["name"],
+                                "enabled": row["enabled"],
+                                "cadence_s": row["cadence_s"],
+                                "settings": settings,
+                            })
+                        key_rows = await conn.fetch(
+                            "SELECT alias FROM config.api_keys ORDER BY alias"
+                        )
+                        api_keys = [{"alias": k["alias"]} for k in key_rows]
+                        sys_row = await conn.fetchrow(
+                            "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
+                        )
+                        if sys_row:
+                            tile_url = sys_row["map_tile_url"]
+                            tile_attribution = sys_row["map_attribution"]
+                except Exception:
+                    pass
+
+            # Import helper functions for valid values
+            from central.gui.routes import _get_valid_satellites, _get_valid_feeds
+
+            response = templates.TemplateResponse(
+                request=request,
+                name="setup_adapters.html",
+                context={
+                    "csrf_token": csrf_token,
+                    "adapters": adapters,
+                    "api_keys": api_keys,
+                    "valid_satellites": _get_valid_satellites(),
+                    "valid_feeds": sorted(_get_valid_feeds()),
+                    "tile_url": tile_url,
+                    "tile_attribution": tile_attribution,
+                    "error": error_msg,
+                    "errors": None,
+                    "form_data": None,
+                },
+            )
+            set_pre_auth_csrf_cookie(response, signed_token)
+            return response
+
+        elif request.url.path == "/setup/finish":
+            pool = get_pool()
+            operator_count = 0
+            key_count = 0
+            system = {"map_tile_url": ""}
+            adapters = []
+            if pool:
+                try:
+                    async with pool.acquire() as conn:
+                        operator_count = await conn.fetchval("SELECT COUNT(*) FROM config.operators")
+                        key_count = await conn.fetchval("SELECT COUNT(*) FROM config.api_keys")
+                        sys_row = await conn.fetchrow(
+                            "SELECT map_tile_url FROM config.system WHERE id = true"
+                        )
+                        if sys_row:
+                            system = {"map_tile_url": sys_row["map_tile_url"]}
+                        rows = await conn.fetch(
+                            "SELECT name, enabled, cadence_s FROM config.adapters ORDER BY name"
+                        )
+                        adapters = [
+                            {"name": row["name"], "enabled": row["enabled"], "cadence_s": row["cadence_s"]}
+                            for row in rows
+                        ]
+                except Exception:
+                    pass
+            response = templates.TemplateResponse(
+                request=request,
+                name="setup_finish.html",
+                context={
+                    "csrf_token": csrf_token,
+                    "operator_count": operator_count,
+                    "key_count": key_count,
+                    "system": system,
+                    "adapters": adapters,
+                    "error": error_msg,
+                },
+            )
+            set_pre_auth_csrf_cookie(response, signed_token)
+            return response
+
         elif request.url.path == "/logout":
             return RedirectResponse("/login", status_code=302)
+
         elif request.url.path == "/change-password":
             response = templates.TemplateResponse(
                 request=request,
                 name="change_password.html",
-                context={"csrf_token": csrf_token, "error": "Your session expired. Please try again."},
+                context={"csrf_token": csrf_token, "error": error_msg},
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
+            set_pre_auth_csrf_cookie(response, signed_token)
             return response
+
         elif request.url.path.startswith("/adapters/"):
             # Redirect back to adapters list
             return RedirectResponse("/adapters", status_code=302)
+
         else:
             # Fallback: redirect to login
             return RedirectResponse("/login", status_code=302)

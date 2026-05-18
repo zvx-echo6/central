@@ -1,0 +1,49 @@
+{% extends "base_wizard.html" %}
+
+{% block title %}Central - System Settings{% endblock %}
+
+{% block content %}
+{% with step=2, step_name="System Settings" %}
+{% include "_wizard_header.html" %}
+{% endwith %}
+
+<article>
+    <header>
+        <h1>System Settings</h1>
+        <p>Configure map tile provider for the region picker.</p>
+    </header>
+
+    {% if error %}
+    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    {% endif %}
+
+    <form action="/setup/system" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+        <label for="map_tile_url">
+            Map Tile URL
+            <input type="text" id="map_tile_url" name="map_tile_url"
+                   value="{{ form_data.map_tile_url if form_data else system.map_tile_url }}" required>
+            <small>Use {z}, {x}, {y} placeholders. Example: https://tile.openstreetmap.org/{z}/{x}/{y}.png</small>
+        </label>
+        {% if errors and errors.map_tile_url %}
+        <small style="color: var(--pico-color-red-500);">{{ errors.map_tile_url }}</small>
+        {% endif %}
+
+        <label for="map_attribution">
+            Map Attribution
+            <input type="text" id="map_attribution" name="map_attribution"
+                   value="{{ form_data.map_attribution if form_data else system.map_attribution }}" required>
+            <small>Credit the map provider (required by most tile services).</small>
+        </label>
+        {% if errors and errors.map_attribution %}
+        <small style="color: var(--pico-color-red-500);">{{ errors.map_attribution }}</small>
+        {% endif %}
+
+        <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+            <a href="/setup/operator" role="button" class="outline">&larr; Back</a>
+            <button type="submit">Next &rarr;</button>
+        </div>
+    </form>
+</article>
+{% endblock %}

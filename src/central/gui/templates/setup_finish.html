@@ -1,0 +1,73 @@
+{% extends "base_wizard.html" %}
+
+{% block title %}Central - Finish Setup{% endblock %}
+
+{% block content %}
+{% with step=5, step_name="Finish Setup" %}
+{% include "_wizard_header.html" %}
+{% endwith %}
+
+<article>
+    <header>
+        <h1>Setup Complete</h1>
+        <p>Review your configuration and finish the setup wizard.</p>
+    </header>
+
+    {% if error %}
+    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    {% endif %}
+
+    <h2>Summary</h2>
+
+    <table>
+        <tbody>
+            <tr>
+                <th>Operators</th>
+                <td>{{ operator_count }} configured</td>
+            </tr>
+            <tr>
+                <th>API Keys</th>
+                <td>{{ key_count }} configured</td>
+            </tr>
+            <tr>
+                <th>Map Tile URL</th>
+                <td style="word-break: break-all;">{{ system.map_tile_url }}</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3>Adapters</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Adapter</th>
+                <th>Status</th>
+                <th>Cadence</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for adapter in adapters %}
+            <tr>
+                <td><strong>{{ adapter.name }}</strong></td>
+                <td>
+                    {% if adapter.enabled %}
+                    <span style="color: var(--pico-color-green-500);">Enabled</span>
+                    {% else %}
+                    <span style="color: var(--pico-color-grey-500);">Disabled</span>
+                    {% endif %}
+                </td>
+                <td>{{ adapter.cadence_s }}s</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <form action="/setup/finish" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div style="display: flex; gap: 1rem; margin-top: 2rem;">
+            <a href="/setup/adapters" role="button" class="outline">&larr; Back</a>
+            <button type="submit">Finish Setup</button>
+        </div>
+    </form>
+</article>
+{% endblock %}
