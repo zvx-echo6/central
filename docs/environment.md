@@ -28,6 +28,32 @@ The Windows workstation (matt-desktop) has no Central repository clones.
 The directory `C:\Users\mtthw\central_work\` is scratch space only and
 should not be used for commits.
 
+
+## Network and Service Bindings
+
+### Bind Address
+
+`central-gui` binds to `0.0.0.0` by design. Network gating is the
+operator's responsibility (firewall, Tailscale, etc.), not the app's.
+Do not switch to `127.0.0.1` or to a specific interface — operators
+choose their bind via whatever network they want to expose the service on.
+
+### NATS Listener Ports
+
+The default `nats-server.conf` listens on more than just :4222:
+
+| Port | Protocol | Used by Central? |
+|------|----------|------------------|
+| 4222 | NATS client | Yes (all) |
+| 8080 | WebSocket | No (Phase 0 leftover) |
+| 8222 | HTTP monitoring | No (manual ops only) |
+| 1883 | MQTT | No (Phase 0 leftover) |
+
+None of the unused ports cause active harm — they listen but no consumer
+connects. Operators can remove them from `nats-server.conf` if they want
+a tighter footprint. Documenting so future contributors don't grep for
+"MQTT integration" and come up confused.
+
 ## Repository
 
 | Property | Value |
