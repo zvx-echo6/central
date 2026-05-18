@@ -18,6 +18,7 @@ class TestSettingsFromEnv:
         monkeypatch.setenv("CENTRAL_NATS_URL", "nats://10.0.0.1:4222")
         monkeypatch.setenv("CENTRAL_MASTER_KEY_PATH", "/tmp/test.key")
         monkeypatch.setenv("CENTRAL_LOG_LEVEL", "DEBUG")
+        monkeypatch.setenv("CENTRAL_CSRF_SECRET", "testsecret12345678901234567890ab")
 
         settings = Settings()
 
@@ -29,6 +30,7 @@ class TestSettingsFromEnv:
     def test_defaults_applied(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Default values are used when env vars not set."""
         monkeypatch.setenv("CENTRAL_DB_DSN", "postgresql://x:y@localhost/db")
+        monkeypatch.setenv("CENTRAL_CSRF_SECRET", "testsecret12345678901234567890ab")
         # Clear any existing env vars that might interfere
         monkeypatch.delenv("CENTRAL_NATS_URL", raising=False)
         monkeypatch.delenv("CENTRAL_MASTER_KEY_PATH", raising=False)
@@ -44,13 +46,23 @@ class TestSettingsFromEnv:
 class TestSettingsFromFile:
     """Test loading settings from .env file."""
 
-    def test_reads_from_env_file(self, tmp_path: Path) -> None:
+    def test_reads_from_env_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Settings are read from .env file when env vars not present."""
+        # Remove any live env vars that would override the test .env file
+        monkeypatch.delenv("CENTRAL_DB_DSN", raising=False)
+        monkeypatch.delenv("CENTRAL_NATS_URL", raising=False)
+        monkeypatch.delenv("CENTRAL_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("CENTRAL_MASTER_KEY_PATH", raising=False)
+        monkeypatch.delenv("CENTRAL_CSRF_SECRET", raising=False)
+
         env_file = tmp_path / ".env"
         env_file.write_text(
             "CENTRAL_DB_DSN=postgresql://file:pass@localhost/filedb\n"
             "CENTRAL_NATS_URL=nats://file.local:4222\n"
             "CENTRAL_LOG_LEVEL=WARNING\n"
+            "CENTRAL_CSRF_SECRET=testsecret12345678901234567890ab\n"
         )
 
         # Create settings pointing to the temp .env file
@@ -65,8 +77,12 @@ class TestSettingsFromFile:
     ) -> None:
         """Environment variables take precedence over .env file."""
         env_file = tmp_path / ".env"
-        env_file.write_text("CENTRAL_DB_DSN=postgresql://file@localhost/filedb\n")
+        env_file.write_text(
+            "CENTRAL_DB_DSN=postgresql://file@localhost/filedb\n"
+            "CENTRAL_CSRF_SECRET=filesecret1234567890123456789012\n"
+        )
         monkeypatch.setenv("CENTRAL_DB_DSN", "postgresql://env@localhost/envdb")
+        monkeypatch.setenv("CENTRAL_CSRF_SECRET", "envsecret12345678901234567890ab")
 
         settings = Settings(_env_file=env_file)
 
@@ -80,6 +96,7 @@ class TestSettingsValidation:
         """Clear error when required CENTRAL_DB_DSN is missing."""
         # Ensure no env vars or .env file provides the DSN
         monkeypatch.delenv("CENTRAL_DB_DSN", raising=False)
+        monkeypatch.delenv("CENTRAL_CSRF_SECRET", raising=False)
 
         with pytest.raises(Exception) as exc_info:
             # Use a non-existent .env file path to ensure no fallback
@@ -91,6 +108,7 @@ class TestSettingsValidation:
     def test_invalid_log_level_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Invalid log level values are rejected."""
         monkeypatch.setenv("CENTRAL_DB_DSN", "postgresql://x@localhost/db")
+        monkeypatch.setenv("CENTRAL_CSRF_SECRET", "testsecret12345678901234567890ab")
         monkeypatch.setenv("CENTRAL_LOG_LEVEL", "INVALID")
 
         with pytest.raises(Exception):
@@ -103,6 +121,7 @@ class TestGetSettings:
     def test_caches_result(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """get_settings() returns cached instance."""
         monkeypatch.setenv("CENTRAL_DB_DSN", "postgresql://cached@localhost/db")
+        monkeypatch.setenv("CENTRAL_CSRF_SECRET", "testsecret12345678901234567890ab")
         get_settings.cache_clear()
 
         s1 = get_settings()
@@ -113,6 +132,7 @@ class TestGetSettings:
     def test_cache_clear_reloads(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """cache_clear() forces reload on next call."""
         monkeypatch.setenv("CENTRAL_DB_DSN", "postgresql://first@localhost/db")
+        monkeypatch.setenv("CENTRAL_CSRF_SECRET", "testsecret12345678901234567890ab")
         get_settings.cache_clear()
         s1 = get_settings()
 
