@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}Central — Streams{% endblock %}
+
+{% block content %}
+<h1>Streams</h1>
+
+<div class="grid">
+{% for stream in streams %}
+<article>
+    <header style="display: flex; justify-content: space-between; align-items: center;">
+        <strong>{{ stream.name }}</strong>
+        {% if stream.managed_max_bytes %}
+        <span style="font-size: 0.8em; background: var(--pico-secondary-background); padding: 0.2em 0.5em; border-radius: 4px;">Managed by supervisor</span>
+        {% endif %}
+    </header>
+
+    <div style="margin-bottom: 1rem;">
+        <strong>Live Data:</strong>
+        {% if stream.error %}
+        <span style="color: var(--pico-color-red-500);">({{ stream.error }})</span>
+        {% else %}
+        <ul style="margin: 0.5rem 0;">
+            <li>Messages: {{ stream.live_messages }}</li>
+            <li>Size: {{ stream.live_bytes|filesizeformat }}</li>
+            {% if stream.live_messages == 0 %}
+            <li>First message: (empty)</li>
+            <li>Last message: (empty)</li>
+            {% else %}
+            <li>First message:
+                {% if stream.live_first_ts %}
+                {{ stream.live_first_ts.isoformat() }}
+                {% elif stream.first_ts_error %}
+                (lookup failed: {{ stream.first_ts_error }})
+                {% else %}
+                (unknown)
+                {% endif %}
+            </li>
+            <li>Last message:
+                {% if stream.live_last_ts %}
+                {{ stream.live_last_ts.isoformat() }}
+                {% elif stream.last_ts_error %}
+                (lookup failed: {{ stream.last_ts_error }})
+                {% else %}
+                (unknown)
+                {% endif %}
+            </li>
+            {% endif %}
+        </ul>
+        {% endif %}
+    </div>
+
+    <div style="margin-bottom: 1rem;">
+        <strong>Configuration:</strong>
+        <ul style="margin: 0.5rem 0;">
+            <li>Max age: {{ (stream.max_age_s / 86400)|round(1) }} days ({{ stream.max_age_s }}s)</li>
+            <li>Max bytes (current): {{ stream.max_bytes_cfg|filesizeformat }}</li>
+        </ul>
+    </div>
+
+    {% if errors and errors[stream.name] %}
+    <p style="color: var(--pico-color-red-500);">{{ errors[stream.name] }}</p>
+    {% endif %}
+
+    <div>
+        <strong>Set Retention:</strong>
+        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
+            {% set presets = [(1, '1 day'), (7, '7 days'), (14, '14 days'), (30, '30 days'), (365, '365 days')] %}
+            {% for days, label in presets %}
+            {% set preset_seconds = days * 86400 %}
+            <form action="/streams/{{ stream.name }}" method="post" style="margin: 0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="max_age_s" value="{{ preset_seconds }}">
+                <button type="submit" class="{% if stream.max_age_s == preset_seconds %}contrast{% else %}outline{% endif %}" style="padding: 0.3em 0.6em; font-size: 0.9em;">
+                    {{ label }}
+                </button>
+            </form>
+            {% endfor %}
+        </div>
+
+        <form action="/streams/{{ stream.name }}" method="post" style="margin-top: 0.5rem; display: flex; gap: 0.5rem; align-items: center;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label for="custom_days_{{ stream.name }}" style="margin: 0;">Custom:</label>
+            <input type="number" id="custom_days_{{ stream.name }}" name="custom_days" min="1" max="1825" placeholder="days" style="width: 100px;" onchange="this.form.max_age_s.value = this.value * 86400;">
+            <input type="hidden" name="max_age_s" value="">
+            <button type="submit" class="outline" style="padding: 0.3em 0.6em;">Save</button>
+        </form>
+    </div>
+</article>
+{% endfor %}
+</div>
+{% endblock %}

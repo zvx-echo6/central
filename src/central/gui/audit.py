@@ -10,6 +10,7 @@ AUTH_LOGOUT = "auth.logout"
 AUTH_PASSWORD_CHANGE = "auth.password_change"
 OPERATOR_CREATE = "operator.create"
 ADAPTER_UPDATE = "adapter.update"
+STREAM_UPDATE = "stream.update"
 
 
 async def write_audit(
