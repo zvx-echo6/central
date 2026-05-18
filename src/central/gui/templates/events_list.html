@@ -417,7 +417,7 @@
     document.getElementById("fit-to-results").addEventListener("click", fitToAllLayers);
 
     // Initial load - bind layers and fit bounds
-    rebindEventLayers();
+    // rebindEventLayers(); // DISABLED: map shows all events, only table filters
     if (false) { // DISABLED: map never auto-fits
         fitToAllLayers();
         isInitialLoad = false;
@@ -426,7 +426,7 @@
     // Re-bind layers after HTMX swap (but do NOT fit bounds)
     document.body.addEventListener("htmx:afterSwap", function(evt) {
         if (evt.detail.target.id === "events-rows") {
-            rebindEventLayers();
+            // rebindEventLayers(); // DISABLED: map shows all events, only table filters
             // Do NOT call fitToAllLayers - preserve user viewport
         }
     });
