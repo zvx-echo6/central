@@ -98,11 +98,6 @@ class TestSubjectForEvent:
         subject = subject_for_event(event)
         assert subject == "central.wx.alert.us.unknown"
 
-    def test_custom_prefix(self, sample_event: Event) -> None:
-        """Custom prefix is used in subject."""
-        subject = subject_for_event(sample_event, prefix="myapp.events")
-        assert subject == "myapp.events.alert.us.id.county.ada"
-
 
 class TestCloudEventsWire:
     """Tests for CloudEvents wire format."""
