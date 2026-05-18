@@ -174,17 +174,44 @@ document.addEventListener('DOMContentLoaded', function() {
             maxZoom: 18
         }).addTo(map);
 
+        // Ensure map renders correctly even if container has not
+        // finished laying out at init time
+        setTimeout(function() { map.invalidateSize(); }, 100);
+
         const bounds = L.latLngBounds(
             L.latLng(savedSouth, savedWest),
             L.latLng(savedNorth, savedEast)
         );
         map.fitBounds(bounds.pad(0.1));
 
-        const rectangle = L.rectangle(bounds, {
+        let rectangle = L.rectangle(bounds, {
             color: '#3388ff',
             weight: 2,
             fillOpacity: 0.2
-        }).addTo(map);
+        });
+
+        // Set up Leaflet.draw for click-to-draw
+        const drawnItems = new L.FeatureGroup();
+        drawnItems.addLayer(rectangle);
+        map.addLayer(drawnItems);
+
+        const drawControl = new L.Control.Draw({
+            draw: {
+                rectangle: { shapeOptions: { color: '#3388ff', weight: 2,
+                                             fillOpacity: 0.2 } },
+                polyline: false,
+                polygon: false,
+                circle: false,
+                marker: false,
+                circlemarker: false
+            },
+            edit: {
+                featureGroup: drawnItems,
+                edit: false,
+                remove: false
+            }
+        });
+        map.addControl(drawControl);
 
         rectangle.editing.enable();
 
@@ -203,6 +230,18 @@ document.addEventListener('DOMContentLoaded', function() {
 
         rectangle.on('edit', updateInputs);
         updateInputs();
+
+        // When user draws a new rectangle, replace the existing one
+        map.on(L.Draw.Event.CREATED, function(e) {
+            drawnItems.clearLayers();
+            rectangle = e.layer;
+            rectangle.setStyle({ color: '#3388ff', weight: 2,
+                                 fillOpacity: 0.2 });
+            drawnItems.addLayer(rectangle);
+            rectangle.editing.enable();
+            rectangle.on('edit', updateInputs);
+            updateInputs();
+        });
 
         // Fix map size when details is opened
         const details = container.closest('details');
