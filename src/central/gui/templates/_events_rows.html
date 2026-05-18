@@ -20,7 +20,7 @@
         <tr data-row-idx="{{ loop.index0 }}"
             data-adapter="{{ event.adapter }}"
             data-category="{{ event.category }}"
-            data-time="{{ event.time.isoformat() }}"
+            data-time="{{ event.time }}"
             data-subject="{{ event.subject or '' }}"
             {% if event.geometry %}data-geometry='{{ event.geometry | tojson }}'{% endif %}>
             <td>{{ event.time }}</td>
