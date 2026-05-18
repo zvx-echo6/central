@@ -213,6 +213,7 @@
     var highlightedRow = null;
     var highlightedLayer = null;
     var isInitialLoad = true;
+    var programmaticMove = false;
 
     // Region input elements
     var northInput = document.getElementById("region_north");
@@ -224,6 +225,10 @@
     var viewportDebounceTimer = null;
 
     map.on("moveend", function() {
+        if (programmaticMove) {
+            programmaticMove = false;
+            return;
+        }
         if (viewportDebounceTimer) clearTimeout(viewportDebounceTimer);
         viewportDebounceTimer = setTimeout(applyViewportFilter, 400);
     });
@@ -339,6 +344,7 @@
     function fitToAllLayers() {
         var layers = eventLayerGroup.getLayers();
         if (layers.length === 0) return;
+        programmaticMove = true;
         var group = L.featureGroup(layers);
         map.fitBounds(group.getBounds(), { padding: [20, 20] });
     }
@@ -379,6 +385,7 @@
         if (row && row._mapLayer) {
             highlightRow(row, row._mapLayer, row._mapColor);
             try {
+                programmaticMove = true;
                 map.fitBounds(row._mapLayer.getBounds(), { padding: [50, 50] });
             } catch (err) {
                 // Point geometries
@@ -386,6 +393,7 @@
                 if (geomStr) {
                     var geom = JSON.parse(geomStr);
                     if (geom && geom.type === "Point" && geom.coordinates) {
+                        programmaticMove = true;
                         map.setView([geom.coordinates[1], geom.coordinates[0]], 10);
                     }
                 }
