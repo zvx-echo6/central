@@ -380,24 +380,11 @@
             return;
         }
 
-        // Row click to highlight and pan
+        // Row click to highlight (no auto-pan - user controls viewport)
         var row = e.target.closest("tr.event-row");
         if (row && row._mapLayer) {
             highlightRow(row, row._mapLayer, row._mapColor);
-            try {
-                programmaticMove = true;
-                map.fitBounds(row._mapLayer.getBounds(), { padding: [50, 50] });
-            } catch (err) {
-                // Point geometries
-                var geomStr = row.dataset.geometry;
-                if (geomStr) {
-                    var geom = JSON.parse(geomStr);
-                    if (geom && geom.type === "Point" && geom.coordinates) {
-                        programmaticMove = true;
-                        map.setView([geom.coordinates[1], geom.coordinates[0]], 10);
-                    }
-                }
-            }
+            // Map stays where user put it
         }
     });
 
@@ -431,7 +418,7 @@
 
     // Initial load - bind layers and fit bounds
     rebindEventLayers();
-    if (isInitialLoad) {
+    if (false) { // DISABLED: map never auto-fits
         fitToAllLayers();
         isInitialLoad = false;
     }
