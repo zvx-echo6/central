@@ -13,24 +13,40 @@ from typing import Any
 import nats
 from nats.js import JetStreamContext
 
+import importlib
+import pkgutil
+
 from central.adapter import SourceAdapter
-from central.adapters.nws import NWSAdapter
-from central.adapters.firms import FIRMSAdapter
-from central.adapters.usgs_quake import USGSQuakeAdapter
 from central.cloudevents_wire import wrap_event
 from central.config_models import AdapterConfig
 from central.config_source import ConfigSource, DbConfigSource
 from central.config_store import ConfigStore
 from central.bootstrap_config import get_settings
-from central.models import subject_for_event
 from central.stream_manager import StreamManager
+import central.adapters
 
-# Adapter registry - add new adapters here
-_ADAPTER_REGISTRY: dict[str, type[SourceAdapter]] = {
-    "nws": NWSAdapter,
-    "firms": FIRMSAdapter,
-    "usgs_quake": USGSQuakeAdapter,
-}
+def discover_adapters() -> dict[str, type[SourceAdapter]]:
+    """Auto-discover adapter classes from central.adapters package."""
+    registry: dict[str, type[SourceAdapter]] = {}
+    for module_info in pkgutil.iter_modules(central.adapters.__path__):
+        try:
+            module = importlib.import_module(f"central.adapters.{module_info.name}")
+        except Exception as e:
+            logger.error(
+                "Failed to import adapter module",
+                extra={"module": module_info.name, "error": str(e)},
+            )
+            continue
+        for attr_name in dir(module):
+            attr = getattr(module, attr_name)
+            if (
+                isinstance(attr, type)
+                and issubclass(attr, SourceAdapter)
+                and attr is not SourceAdapter
+                and hasattr(attr, "name")
+            ):
+                registry[attr.name] = attr
+    return registry
 
 CURSOR_DB_PATH = Path("/var/lib/central/cursors.db")
 
@@ -114,6 +130,7 @@ class Supervisor:
         self._config_store = config_store
         self._nats_url = nats_url
         self._cloudevents_config = cloudevents_config
+        self._adapters = discover_adapters()
         self._nc: nats.NATS | None = None
         self._js: JetStreamContext | None = None
         self._stream_manager: StreamManager | None = None
@@ -161,7 +178,7 @@ class Supervisor:
 
     def _create_adapter(self, config: AdapterConfig) -> SourceAdapter:
         """Create an adapter instance based on config name."""
-        cls = _ADAPTER_REGISTRY.get(config.name)
+        cls = self._adapters.get(config.name)
         if cls is None:
             raise ValueError(f"Unknown adapter type: {config.name}")
         return cls(
@@ -232,7 +249,7 @@ class Supervisor:
                     # Build CloudEvent (uses defaults if no config provided)
                     envelope, msg_id = wrap_event(event, self._cloudevents_config)
 
-                    subject = subject_for_event(event)
+                    subject = state.adapter.subject_for(event)
 
                     # Publish
                     await self._publish_event(subject, envelope, msg_id)

@@ -18,6 +18,8 @@ from tenacity import (
 )
 
 from central.adapter import SourceAdapter
+from pydantic import BaseModel
+
 from central.config_models import AdapterConfig, RegionConfig
 from central.config_store import ConfigStore
 from central.models import Event, Geo
@@ -49,10 +51,23 @@ SEVERITY_MAP = {
 }
 
 
+class FIRMSSettings(BaseModel):
+    """Settings schema for FIRMS adapter."""
+    api_key_alias: str = "firms"
+    satellites: list[str] = ["VIIRS_SNPP_NRT", "VIIRS_NOAA20_NRT"]
+    region: RegionConfig | None = None
+
+
 class FIRMSAdapter(SourceAdapter):
     """NASA FIRMS fire hotspot adapter."""
 
     name = "firms"
+    display_name = "NASA FIRMS Fire Hotspots"
+    description = "Near-real-time satellite-detected fire hotspots from NASA FIRMS."
+    settings_schema = FIRMSSettings
+    requires_api_key = "firms"
+    wizard_order = 2
+    default_cadence_s = 300
 
     def __init__(
         self,
@@ -115,6 +130,15 @@ class FIRMSAdapter(SourceAdapter):
                 "api_key_alias": self._api_key_alias,
             },
         )
+
+    def subject_for(self, event: Event) -> str:
+        """Compute NATS subject for a fire hotspot event.
+
+        Subject format: central.fire.hotspot.<satellite>.<confidence>
+        The category already contains this structure.
+        """
+        return f"central.{event.category}"
+
 
     async def startup(self) -> None:
         """Initialize HTTP session, dedup tracker, and fetch API key."""
@@ -417,14 +441,3 @@ class FIRMSAdapter(SourceAdapter):
             },
         )
 
-
-def subject_for_fire_hotspot(ev: Event) -> str:
-    """Compute the NATS subject for a fire hotspot event.
-
-    Subject format: central.fire.hotspot.<satellite>.<confidence>
-
-    The category already contains the satellite and confidence info,
-    so we just prefix with 'central.'.
-    """
-    # category is "fire.hotspot.<satellite>.<confidence>"
-    return f"central.{ev.category}"

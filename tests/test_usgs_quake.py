@@ -480,3 +480,122 @@ class TestApplyConfig:
         assert adapter._feed == "all_day"
 
         await adapter.shutdown()
+
+
+
+class TestSubjectFor:
+    """Test subject_for method for all magnitude tiers."""
+
+    @pytest.mark.asyncio
+    async def test_subject_minor(self, temp_db_path, mock_config_store):
+        config = make_adapter_config()
+        adapter = USGSQuakeAdapter(
+            config=config,
+            config_store=mock_config_store,
+            cursor_db_path=temp_db_path,
+        )
+        event = Event(
+            id="test-minor",
+            adapter="usgs_quake",
+            category="quake.event.minor",
+            time=datetime.now(timezone.utc),
+            severity=0,
+            geo=Geo(centroid=(-116.0, 45.0)),
+            data={},
+        )
+        assert adapter.subject_for(event) == "central.quake.event.minor"
+
+    @pytest.mark.asyncio
+    async def test_subject_light(self, temp_db_path, mock_config_store):
+        config = make_adapter_config()
+        adapter = USGSQuakeAdapter(
+            config=config,
+            config_store=mock_config_store,
+            cursor_db_path=temp_db_path,
+        )
+        event = Event(
+            id="test-light",
+            adapter="usgs_quake",
+            category="quake.event.light",
+            time=datetime.now(timezone.utc),
+            severity=1,
+            geo=Geo(centroid=(-116.0, 45.0)),
+            data={},
+        )
+        assert adapter.subject_for(event) == "central.quake.event.light"
+
+    @pytest.mark.asyncio
+    async def test_subject_moderate(self, temp_db_path, mock_config_store):
+        config = make_adapter_config()
+        adapter = USGSQuakeAdapter(
+            config=config,
+            config_store=mock_config_store,
+            cursor_db_path=temp_db_path,
+        )
+        event = Event(
+            id="test-moderate",
+            adapter="usgs_quake",
+            category="quake.event.moderate",
+            time=datetime.now(timezone.utc),
+            severity=2,
+            geo=Geo(centroid=(-116.0, 45.0)),
+            data={},
+        )
+        assert adapter.subject_for(event) == "central.quake.event.moderate"
+
+    @pytest.mark.asyncio
+    async def test_subject_strong(self, temp_db_path, mock_config_store):
+        config = make_adapter_config()
+        adapter = USGSQuakeAdapter(
+            config=config,
+            config_store=mock_config_store,
+            cursor_db_path=temp_db_path,
+        )
+        event = Event(
+            id="test-strong",
+            adapter="usgs_quake",
+            category="quake.event.strong",
+            time=datetime.now(timezone.utc),
+            severity=3,
+            geo=Geo(centroid=(-116.0, 45.0)),
+            data={},
+        )
+        assert adapter.subject_for(event) == "central.quake.event.strong"
+
+    @pytest.mark.asyncio
+    async def test_subject_major(self, temp_db_path, mock_config_store):
+        config = make_adapter_config()
+        adapter = USGSQuakeAdapter(
+            config=config,
+            config_store=mock_config_store,
+            cursor_db_path=temp_db_path,
+        )
+        event = Event(
+            id="test-major",
+            adapter="usgs_quake",
+            category="quake.event.major",
+            time=datetime.now(timezone.utc),
+            severity=4,
+            geo=Geo(centroid=(-116.0, 45.0)),
+            data={},
+        )
+        assert adapter.subject_for(event) == "central.quake.event.major"
+
+    @pytest.mark.asyncio
+    async def test_subject_great(self, temp_db_path, mock_config_store):
+        config = make_adapter_config()
+        adapter = USGSQuakeAdapter(
+            config=config,
+            config_store=mock_config_store,
+            cursor_db_path=temp_db_path,
+        )
+        event = Event(
+            id="test-great",
+            adapter="usgs_quake",
+            category="quake.event.great",
+            time=datetime.now(timezone.utc),
+            severity=5,
+            geo=Geo(centroid=(-116.0, 45.0)),
+            data={},
+        )
+        assert adapter.subject_for(event) == "central.quake.event.great"

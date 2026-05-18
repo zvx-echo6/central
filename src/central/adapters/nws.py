@@ -19,6 +19,8 @@ from tenacity import (
 
 from central import __version__
 from central.adapter import SourceAdapter
+from pydantic import BaseModel
+
 from central.config_models import AdapterConfig, RegionConfig
 from central.config_store import ConfigStore
 from central.models import Event, Geo
@@ -189,10 +191,22 @@ def _build_regions(same_codes: list[str], ugc_codes: list[str]) -> list[str]:
     return sorted(regions)
 
 
+class NWSSettings(BaseModel):
+    """Settings schema for NWS adapter."""
+    contact_email: str = ""
+    region: RegionConfig | None = None
+
+
 class NWSAdapter(SourceAdapter):
     """National Weather Service alerts adapter."""
 
     name = "nws"
+    display_name = "NWS Weather Alerts"
+    description = "National Weather Service active alerts via api.weather.gov."
+    settings_schema = NWSSettings
+    requires_api_key = None
+    wizard_order = 1
+    default_cadence_s = 60
 
     def __init__(
         self,
@@ -233,6 +247,35 @@ class NWSAdapter(SourceAdapter):
                 "contact_email": self.contact_email,
             },
         )
+
+    def subject_for(self, event: Event) -> str:
+        """Compute NATS subject for a weather alert.
+
+        Subject format: central.wx.alert.us.<state>.<type>.<code>
+        where type is 'county' or 'zone' based on primary_region format.
+        """
+        prefix = "central.wx"
+
+        if event.geo.primary_region is None:
+            return f"{prefix}.alert.us.unknown"
+
+        region = event.geo.primary_region
+
+        # Parse US-<STATE>-<CODE> format
+        parts = region.split("-")
+        if len(parts) < 3 or parts[0] != "US":
+            return f"{prefix}.alert.us.unknown"
+
+        state = parts[1].lower()
+        code = "-".join(parts[2:])  # Handle multi-part names
+
+        if code.startswith("Z") and len(code) >= 2 and code[1:].isdigit():
+            # Zone code like Z033
+            return f"{prefix}.alert.us.{state}.zone.{code.lower()}"
+        else:
+            # County name
+            return f"{prefix}.alert.us.{state}.county.{code.lower()}"
+
 
     def _geometry_intersects_region(self, geometry: dict[str, Any] | None) -> bool:
         """Check if feature geometry intersects configured region bbox.

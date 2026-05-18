@@ -17,6 +17,8 @@ from tenacity import (
 )
 
 from central.adapter import SourceAdapter
+from pydantic import BaseModel
+
 from central.config_models import AdapterConfig, RegionConfig
 from central.config_store import ConfigStore
 from central.models import Event, Geo
@@ -60,10 +62,22 @@ def magnitude_to_severity(mag: float) -> int:
     return 5
 
 
+class USGSQuakeSettings(BaseModel):
+    """Settings schema for USGS quake adapter."""
+    feed: str = "all_hour"
+    region: RegionConfig | None = None
+
+
 class USGSQuakeAdapter(SourceAdapter):
     """USGS Earthquake Hazards Program adapter."""
 
     name = "usgs_quake"
+    display_name = "USGS Earthquakes"
+    description = "USGS earthquake feed (configurable window)."
+    settings_schema = USGSQuakeSettings
+    requires_api_key = None
+    wizard_order = 3
+    default_cadence_s = 60
 
     def __init__(
         self,
@@ -398,3 +412,9 @@ class USGSQuakeAdapter(SourceAdapter):
             new_count += 1
 
         logger.info("USGS quake yielded events", extra={"count": new_count})
+
+    def subject_for(self, event: Event) -> str:
+        """Return NATS subject for quake event."""
+        return f"central.{event.category}"
+
+

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from central.models import Event, Geo, subject_for_event
+from central.models import Event, Geo
 from central.config import NWSAdapterConfig, CloudEventsConfig, NATSConfig, PostgresConfig, Config
 from central.cloudevents_wire import wrap_event
 
@@ -56,47 +56,6 @@ def sample_config() -> Config:
         postgres=PostgresConfig(dsn="postgresql://user:pass@localhost/db"),
     )
 
-
-class TestSubjectForEvent:
-    """Tests for subject_for_event helper."""
-
-    def test_county_subject(self, sample_event: Event) -> None:
-        """County codes produce county subject."""
-        subject = subject_for_event(sample_event)
-        assert subject == "central.wx.alert.us.id.county.ada"
-
-    def test_zone_subject(self, sample_geo: Geo) -> None:
-        """Zone codes produce zone subject."""
-        geo = Geo(
-            centroid=sample_geo.centroid,
-            bbox=sample_geo.bbox,
-            regions=["US-ID-Z033"],
-            primary_region="US-ID-Z033",
-        )
-        event = Event(
-            id="test-zone",
-            adapter="nws",
-            category="wx.alert.winter_storm_warning",
-            time=datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
-            geo=geo,
-            data={},
-        )
-        subject = subject_for_event(event)
-        assert subject == "central.wx.alert.us.id.zone.z033"
-
-    def test_unknown_subject(self, sample_event: Event) -> None:
-        """Missing primary_region produces unknown subject."""
-        geo = Geo(regions=[], primary_region=None)
-        event = Event(
-            id="test-unknown",
-            adapter="nws",
-            category="wx.alert.test",
-            time=datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
-            geo=geo,
-            data={},
-        )
-        subject = subject_for_event(event)
-        assert subject == "central.wx.alert.us.unknown"
 
 
 class TestCloudEventsWire:
