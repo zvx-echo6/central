@@ -43,6 +43,7 @@ class TestSessionMiddleware:
             "username": "admin",
             "created_at": datetime.now(timezone.utc),
             "password_changed_at": datetime.now(timezone.utc),
+            "csrf_token": "mock_csrf_token_12345",
         })
         mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_conn.__aexit__ = AsyncMock()
@@ -99,6 +100,7 @@ class TestSessionMiddleware:
             "username": "admin",
             "created_at": datetime.now(timezone.utc),
             "password_changed_at": datetime.now(timezone.utc),
+            "csrf_token": "mock_csrf_token_12345",
         })
         mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_conn.__aexit__ = AsyncMock()

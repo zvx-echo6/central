@@ -92,29 +92,33 @@ class TestSessionManagement:
         mock_conn = MagicMock()
         mock_conn.execute = AsyncMock()
 
-        token, expires_at = await create_session(mock_conn, operator_id=1, lifetime_days=90)
+        token, expires_at, csrf_token = await create_session(mock_conn, operator_id=1, lifetime_days=90)
 
         assert len(token) == 43
+        assert len(csrf_token) == 64  # 32 bytes hex = 64 chars
         mock_conn.execute.assert_called_once()
         call_args = mock_conn.execute.call_args
         assert "INSERT INTO config.sessions" in call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_get_session_found(self):
-        """get_session returns Operator when session exists."""
+        """get_session returns (Operator, csrf_token) when session exists."""
         mock_conn = MagicMock()
         mock_conn.fetchrow = AsyncMock(return_value={
             "id": 1,
             "username": "testuser",
             "created_at": datetime.now(timezone.utc),
             "password_changed_at": datetime.now(timezone.utc),
+            "csrf_token": "test_csrf_token_12345",
         })
 
-        operator = await get_session(mock_conn, "valid-token")
+        result = await get_session(mock_conn, "valid-token")
 
-        assert operator is not None
+        assert result is not None
+        operator, csrf_token = result
         assert operator.id == 1
         assert operator.username == "testuser"
+        assert csrf_token == "test_csrf_token_12345"
 
     @pytest.mark.asyncio
     async def test_get_session_not_found(self):

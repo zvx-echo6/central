@@ -113,13 +113,14 @@ class SetupGateMiddleware(BaseHTTPMiddleware):
 
 
 class SessionMiddleware(BaseHTTPMiddleware):
-    """Load session from cookie and attach operator to request.state."""
+    """Load session from cookie and attach operator + csrf_token to request.state."""
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
 
-        # Initialize operator to None
+        # Initialize state
         request.state.operator = None
+        request.state.csrf_token = None
 
         # Try to load session from cookie
         session_token = request.cookies.get("central_session")
@@ -128,11 +129,15 @@ class SessionMiddleware(BaseHTTPMiddleware):
             if pool is not None:
                 try:
                     async with pool.acquire() as conn:
-                        operator = await get_session(conn, session_token)
-                        request.state.operator = operator
+                        result = await get_session(conn, session_token)
+                        if result is not None:
+                            operator, csrf_token = result
+                            request.state.operator = operator
+                            request.state.csrf_token = csrf_token
                 except Exception:
                     logger.warning("Failed to load session", exc_info=True)
                     request.state.operator = None
+                    request.state.csrf_token = None
 
         # Check if auth is required
         if not _is_exempt(path, AUTH_EXEMPT_PATHS, AUTH_EXEMPT_PREFIXES):

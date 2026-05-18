@@ -29,23 +29,6 @@ _cleanup_task: asyncio.Task | None = None
 _app: FastAPI | None = None
 
 
-def _configure_csrf() -> None:
-    """Configure CSRF protection. Must be called before app starts."""
-    from fastapi_csrf_protect import CsrfProtect
-    from pydantic import BaseModel
-    from central.bootstrap_config import get_settings
-
-    class CsrfSettings(BaseModel):
-        secret_key: str
-        token_location: str = "body"
-        token_key: str = "csrf_token"
-
-    @CsrfProtect.load_config
-    def get_csrf_config():
-        settings = get_settings()
-        return CsrfSettings(secret_key=settings.csrf_secret)
-
-
 async def _session_cleanup_loop() -> None:
     """Periodically clean up expired sessions."""
     global _shutdown_event
@@ -117,9 +100,6 @@ def _create_app() -> FastAPI:
     from central.gui.middleware import SessionMiddleware, SetupGateMiddleware
     from central.gui.routes import router
 
-    # Configure CSRF before creating app
-    _configure_csrf()
-
     app = FastAPI(
         title="Central GUI",
         lifespan=lifespan,
@@ -137,16 +117,19 @@ def _create_app() -> FastAPI:
     app.include_router(router)
 
     # CSRF exception handler - return friendly error instead of 500
-    from fastapi_csrf_protect.exceptions import CsrfProtectError
+    from central.gui.auth import CsrfValidationError
+    from central.gui.csrf import generate_pre_auth_csrf, set_pre_auth_csrf_cookie
+    from central.bootstrap_config import get_settings
     from fastapi.responses import RedirectResponse
 
-    @app.exception_handler(CsrfProtectError)
-    async def csrf_exception_handler(request, exc: CsrfProtectError):
-        from fastapi_csrf_protect import CsrfProtect
+    @app.exception_handler(CsrfValidationError)
+    async def csrf_exception_handler(request, exc: CsrfValidationError):
         from central.gui.db import get_pool
 
-        csrf_protect = CsrfProtect()
-        csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+        settings = get_settings()
+        # For pre-auth paths, generate a new pre-auth token
+        # For session paths, we'll just show the error (session token stays valid)
+        csrf_token, signed_token = generate_pre_auth_csrf(settings.csrf_secret)
         error_msg = "Your session expired. Please try again."
 
         if request.url.path == "/login":
@@ -155,7 +138,7 @@ def _create_app() -> FastAPI:
                 name="login.html",
                 context={"csrf_token": csrf_token, "error": error_msg},
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
+            set_pre_auth_csrf_cookie(response, signed_token)
             return response
 
         elif request.url.path == "/setup":
@@ -168,7 +151,7 @@ def _create_app() -> FastAPI:
                 name="setup_operator.html",
                 context={"csrf_token": csrf_token, "error": error_msg, "form_data": None},
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
+            set_pre_auth_csrf_cookie(response, signed_token)
             return response
 
         elif request.url.path == "/setup/system":
@@ -201,7 +184,7 @@ def _create_app() -> FastAPI:
                     "system": system,
                 },
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
+            set_pre_auth_csrf_cookie(response, signed_token)
             return response
 
         elif request.url.path == "/setup/keys":
@@ -228,7 +211,7 @@ def _create_app() -> FastAPI:
                     "error": error_msg,
                 },
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
+            set_pre_auth_csrf_cookie(response, signed_token)
             return response
 
         elif request.url.path == "/setup/adapters":
@@ -283,7 +266,7 @@ def _create_app() -> FastAPI:
                     "form_data": None,
                 },
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
+            set_pre_auth_csrf_cookie(response, signed_token)
             return response
 
         elif request.url.path == "/setup/finish":
@@ -323,7 +306,7 @@ def _create_app() -> FastAPI:
                     "error": error_msg,
                 },
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
+            set_pre_auth_csrf_cookie(response, signed_token)
             return response
 
         elif request.url.path == "/logout":
@@ -335,7 +318,7 @@ def _create_app() -> FastAPI:
                 name="change_password.html",
                 context={"csrf_token": csrf_token, "error": error_msg},
             )
-            csrf_protect.set_csrf_cookie(signed_token, response)
+            set_pre_auth_csrf_cookie(response, signed_token)
             return response
 
         elif request.url.path.startswith("/adapters/"):
