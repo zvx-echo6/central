@@ -1,0 +1,378 @@
+{% extends "base.html" %}
+
+{% block title %}Events - Central{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+<style>
+    #events-map {
+        height: 400px;
+        margin-bottom: 1rem;
+        border-radius: var(--pico-border-radius);
+    }
+    .events-table {
+        font-size: 0.9rem;
+    }
+    .events-table td {
+        vertical-align: middle;
+    }
+    .events-table tr:hover {
+        background-color: var(--pico-primary-focus);
+        cursor: pointer;
+    }
+    .events-table tr.highlighted {
+        background-color: var(--pico-primary-background);
+    }
+    .filter-form .grid {
+        margin-bottom: 0.5rem;
+    }
+    .filter-form label {
+        margin-bottom: 0.25rem;
+    }
+    .filter-form input, .filter-form select {
+        margin-bottom: 0.5rem;
+    }
+    .region-inputs {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.5rem;
+    }
+    .region-inputs input {
+        font-size: 0.85rem;
+    }
+    .region-controls {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        margin-bottom: 0.5rem;
+    }
+    .pagination-info {
+        margin-top: 1rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Events</h1>
+
+{% if filter_error %}
+<article aria-label="Filter Error" style="background-color: var(--pico-del-color); padding: 1rem; margin-bottom: 1rem;">
+    <strong>Filter Error:</strong> {{ filter_error }}
+</article>
+{% endif %}
+
+<details open>
+    <summary>Filters</summary>
+    <form class="filter-form" action="/events" method="get"
+          hx-get="/events/rows" hx-target="#events-rows" hx-push-url="true">
+
+        <div class="grid">
+            <div>
+                <label for="adapter">Adapter</label>
+                <select id="adapter" name="adapter">
+                    <option value="">All</option>
+                    <option value="nws" {% if filter_values.adapter == 'nws' %}selected{% endif %}>nws</option>
+                    <option value="firms" {% if filter_values.adapter == 'firms' %}selected{% endif %}>firms</option>
+                    <option value="usgs_quake" {% if filter_values.adapter == 'usgs_quake' %}selected{% endif %}>usgs_quake</option>
+                </select>
+            </div>
+            <div>
+                <label for="category">Category</label>
+                <input type="text" id="category" name="category" placeholder="Exact match"
+                       value="{{ filter_values.category }}">
+            </div>
+            <div>
+                <label for="since">From</label>
+                <input type="datetime-local" id="since" name="since"
+                       value="{{ filter_values.since }}">
+            </div>
+            <div>
+                <label for="until">To</label>
+                <input type="datetime-local" id="until" name="until"
+                       value="{{ filter_values.until }}">
+            </div>
+        </div>
+
+        <div>
+            <label>Region (draw on map or enter coordinates)</label>
+            <div class="region-controls">
+                <button type="button" id="clear-region-btn" class="outline secondary" style="width: auto; padding: 0.25rem 0.75rem;">
+                    Clear Region
+                </button>
+                <small>Draw a rectangle on the map to filter by region</small>
+            </div>
+            <div class="region-inputs">
+                <div>
+                    <label for="region_north">N</label>
+                    <input type="number" id="region_north" name="region_north" step="0.0001" min="-90" max="90" readonly
+                           value="{{ filter_values.region_north }}">
+                </div>
+                <div>
+                    <label for="region_south">S</label>
+                    <input type="number" id="region_south" name="region_south" step="0.0001" min="-90" max="90" readonly
+                           value="{{ filter_values.region_south }}">
+                </div>
+                <div>
+                    <label for="region_east">E</label>
+                    <input type="number" id="region_east" name="region_east" step="0.0001" min="-180" max="180" readonly
+                           value="{{ filter_values.region_east }}">
+                </div>
+                <div>
+                    <label for="region_west">W</label>
+                    <input type="number" id="region_west" name="region_west" step="0.0001" min="-180" max="180" readonly
+                           value="{{ filter_values.region_west }}">
+                </div>
+            </div>
+        </div>
+
+        <input type="hidden" name="limit" value="{{ filter_values.limit }}">
+
+        <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+            <button type="submit">Apply</button>
+            <a href="/events" role="button" class="outline">Clear Filters</a>
+        </div>
+    </form>
+</details>
+
+<div id="events-map"></div>
+
+<div id="events-rows">
+    {% include "_events_rows.html" %}
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+<script>
+(function() {
+    const tileUrl = {{ tile_url | tojson }};
+    const tileAttr = {{ tile_attribution | tojson }};
+
+    // Initialize map
+    const map = L.map('events-map').setView([39, -98], 4);
+
+    L.tileLayer(tileUrl, {
+        attribution: tileAttr,
+        maxZoom: 18
+    }).addTo(map);
+
+    // Layer groups for event geometries
+    const eventLayers = {};
+    let highlightedRow = null;
+    let highlightedLayer = null;
+
+    // Styles
+    const defaultStyle = {
+        color: '#3388ff',
+        weight: 2,
+        fillOpacity: 0.2
+    };
+    const highlightStyle = {
+        color: '#ff3333',
+        weight: 4,
+        fillOpacity: 0.4
+    };
+
+    // Region filter rectangle
+    let filterRect = null;
+    const drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
+
+    // Draw control for region filter
+    const drawControl = new L.Control.Draw({
+        draw: {
+            rectangle: { shapeOptions: { color: '#ff7800', weight: 2, fillOpacity: 0.1 } },
+            polyline: false,
+            polygon: false,
+            circle: false,
+            marker: false,
+            circlemarker: false
+        },
+        edit: {
+            featureGroup: drawnItems,
+            edit: false,
+            remove: false
+        }
+    });
+    map.addControl(drawControl);
+
+    // Region input elements
+    const northInput = document.getElementById('region_north');
+    const southInput = document.getElementById('region_south');
+    const eastInput = document.getElementById('region_east');
+    const westInput = document.getElementById('region_west');
+
+    // Update inputs from rectangle
+    function updateRegionInputs(bounds) {
+        northInput.value = bounds.getNorth().toFixed(4);
+        southInput.value = bounds.getSouth().toFixed(4);
+        eastInput.value = bounds.getEast().toFixed(4);
+        westInput.value = bounds.getWest().toFixed(4);
+    }
+
+    // Handle new rectangle drawn
+    map.on(L.Draw.Event.CREATED, function(e) {
+        drawnItems.clearLayers();
+        filterRect = e.layer;
+        filterRect.setStyle({ color: '#ff7800', weight: 2, fillOpacity: 0.1 });
+        drawnItems.addLayer(filterRect);
+        updateRegionInputs(filterRect.getBounds());
+        // Auto-submit the form via HTMX
+        document.querySelector('.filter-form').dispatchEvent(new Event('submit', { bubbles: true }));
+    });
+
+    // Clear region button
+    document.getElementById('clear-region-btn').addEventListener('click', function() {
+        drawnItems.clearLayers();
+        filterRect = null;
+        northInput.value = '';
+        southInput.value = '';
+        eastInput.value = '';
+        westInput.value = '';
+        // Auto-submit to refresh
+        document.querySelector('.filter-form').dispatchEvent(new Event('submit', { bubbles: true }));
+    });
+
+    // If region values exist, show the filter rectangle
+    if (northInput.value && southInput.value && eastInput.value && westInput.value) {
+        const bounds = L.latLngBounds(
+            L.latLng(parseFloat(southInput.value), parseFloat(westInput.value)),
+            L.latLng(parseFloat(northInput.value), parseFloat(eastInput.value))
+        );
+        filterRect = L.rectangle(bounds, { color: '#ff7800', weight: 2, fillOpacity: 0.1 });
+        drawnItems.addLayer(filterRect);
+    }
+
+    // Function to add event geometries to map
+    function loadEventGeometries() {
+        // Clear existing event layers
+        Object.values(eventLayers).forEach(layer => map.removeLayer(layer));
+        Object.keys(eventLayers).forEach(key => delete eventLayers[key]);
+
+        const rows = document.querySelectorAll('#events-rows tr[data-geometry]');
+        const bounds = L.latLngBounds();
+        let hasGeometries = false;
+
+        rows.forEach((row, idx) => {
+            const geomStr = row.dataset.geometry;
+            if (!geomStr || geomStr === '') return;
+
+            try {
+                const geom = JSON.parse(geomStr);
+                if (!geom) return;
+
+                const layer = L.geoJSON(geom, {
+                    style: defaultStyle,
+                    pointToLayer: function(feature, latlng) {
+                        return L.circleMarker(latlng, {
+                            radius: 8,
+                            ...defaultStyle
+                        });
+                    }
+                });
+
+                layer.addTo(map);
+                eventLayers[idx] = layer;
+
+                // Extend bounds
+                try {
+                    bounds.extend(layer.getBounds());
+                    hasGeometries = true;
+                } catch (e) {
+                    // Point geometries might not have getBounds
+                    if (geom.type === 'Point' && geom.coordinates) {
+                        bounds.extend(L.latLng(geom.coordinates[1], geom.coordinates[0]));
+                        hasGeometries = true;
+                    }
+                }
+
+                // Click on geometry highlights row
+                layer.on('click', function() {
+                    highlightRow(row, layer);
+                });
+            } catch (e) {
+                console.error('Error parsing geometry:', e);
+            }
+        });
+
+        // Fit map to all geometries
+        if (hasGeometries) {
+            map.fitBounds(bounds.pad(0.1));
+        }
+    }
+
+    // Highlight a row and its geometry
+    function highlightRow(row, layer) {
+        // Reset previous highlight
+        if (highlightedRow) {
+            highlightedRow.classList.remove('highlighted');
+        }
+        if (highlightedLayer) {
+            highlightedLayer.setStyle(defaultStyle);
+        }
+
+        // Set new highlight
+        row.classList.add('highlighted');
+        highlightedRow = row;
+
+        if (layer) {
+            layer.setStyle(highlightStyle);
+            highlightedLayer = layer;
+            // Pan to geometry
+            try {
+                map.fitBounds(layer.getBounds().pad(0.2));
+            } catch (e) {
+                // For points
+                const geom = JSON.parse(row.dataset.geometry);
+                if (geom && geom.type === 'Point' && geom.coordinates) {
+                    map.setView([geom.coordinates[1], geom.coordinates[0]], 10);
+                }
+            }
+        }
+    }
+
+    // Row hover/click handlers
+    function attachRowHandlers() {
+        const rows = document.querySelectorAll('#events-rows tr[data-row-idx]');
+        rows.forEach(row => {
+            const idx = parseInt(row.dataset.rowIdx);
+            row.addEventListener('click', function() {
+                const layer = eventLayers[idx];
+                highlightRow(row, layer);
+            });
+            row.addEventListener('mouseenter', function() {
+                const layer = eventLayers[idx];
+                if (layer && layer !== highlightedLayer) {
+                    layer.setStyle({ ...defaultStyle, weight: 3 });
+                }
+            });
+            row.addEventListener('mouseleave', function() {
+                const layer = eventLayers[idx];
+                if (layer && layer !== highlightedLayer) {
+                    layer.setStyle(defaultStyle);
+                }
+            });
+        });
+    }
+
+    // Initial load
+    loadEventGeometries();
+    attachRowHandlers();
+
+    // Re-attach handlers after HTMX swap
+    document.body.addEventListener('htmx:afterSwap', function(evt) {
+        if (evt.detail.target.id === 'events-rows') {
+            loadEventGeometries();
+            attachRowHandlers();
+        }
+    });
+
+    // Fix map rendering after container shows
+    setTimeout(function() { map.invalidateSize(); }, 100);
+})();
+</script>
+
+{% endblock %}

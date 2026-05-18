@@ -1,0 +1,50 @@
+{% if filter_error %}
+<article aria-label="Filter Error" style="background-color: var(--pico-del-color); padding: 1rem; margin-bottom: 1rem;">
+    <strong>Filter Error:</strong> {{ filter_error }}
+</article>
+{% endif %}
+
+{% if events %}
+<table class="events-table">
+    <thead>
+        <tr>
+            <th>Time</th>
+            <th>Adapter</th>
+            <th>Category</th>
+            <th>Geometry</th>
+            <th>Subject</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for event in events %}
+        <tr data-row-idx="{{ loop.index0 }}"
+            {% if event.geometry %}data-geometry="{{ event.geometry | tojson | e }}"{% endif %}>
+            <td>{{ event.time }}</td>
+            <td>{{ event.adapter }}</td>
+            <td>{{ event.category }}</td>
+            <td>{{ event.geometry_summary }}</td>
+            <td>{{ event.subject or '—' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="pagination-info">
+    <span>Showing {{ events | length }} event{{ 's' if events | length != 1 else '' }}.</span>
+    {% if next_cursor %}
+    <a href="/events?cursor={{ next_cursor }}{% if filter_values.adapter %}&amp;adapter={{ filter_values.adapter }}{% endif %}{% if filter_values.category %}&amp;category={{ filter_values.category | urlencode }}{% endif %}{% if filter_values.since %}&amp;since={{ filter_values.since }}{% endif %}{% if filter_values.until %}&amp;until={{ filter_values.until }}{% endif %}{% if filter_values.region_north %}&amp;region_north={{ filter_values.region_north }}&amp;region_south={{ filter_values.region_south }}&amp;region_east={{ filter_values.region_east }}&amp;region_west={{ filter_values.region_west }}{% endif %}&amp;limit={{ filter_values.limit }}"
+       role="button"
+       hx-get="/events/rows?cursor={{ next_cursor }}{% if filter_values.adapter %}&amp;adapter={{ filter_values.adapter }}{% endif %}{% if filter_values.category %}&amp;category={{ filter_values.category | urlencode }}{% endif %}{% if filter_values.since %}&amp;since={{ filter_values.since }}{% endif %}{% if filter_values.until %}&amp;until={{ filter_values.until }}{% endif %}{% if filter_values.region_north %}&amp;region_north={{ filter_values.region_north }}&amp;region_south={{ filter_values.region_south }}&amp;region_east={{ filter_values.region_east }}&amp;region_west={{ filter_values.region_west }}{% endif %}&amp;limit={{ filter_values.limit }}"
+       hx-target="#events-rows"
+       hx-push-url="true">
+        Next &rarr;
+    </a>
+    {% else %}
+    <span><em>End of results</em></span>
+    {% endif %}
+</div>
+{% else %}
+<article>
+    <p>No events match the filters.</p>
+</article>
+{% endif %}
