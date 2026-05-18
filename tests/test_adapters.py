@@ -55,13 +55,9 @@ class TestAdaptersListAuthenticated:
         mock_response = MagicMock()
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await adapters_list(mock_request, mock_csrf)
+                result = await adapters_list(mock_request)
 
         # Verify template was called with adapters
         call_args = mock_templates.TemplateResponse.call_args
@@ -105,13 +101,9 @@ class TestAdaptersEditForm:
         mock_response = MagicMock()
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await adapters_edit_form(mock_request, "nws", mock_csrf)
+                result = await adapters_edit_form(mock_request, "nws")
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -133,11 +125,8 @@ class TestAdaptersEditForm:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
-            result = await adapters_edit_form(mock_request, "nonexistent", mock_csrf)
+            result = await adapters_edit_form(mock_request, "nonexistent")
 
         assert result.status_code == 404
 
@@ -156,7 +145,9 @@ class TestAdaptersEditSubmit:
 
         # Mock form data
         mock_form = MagicMock()
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
             "cadence_s": "120",
             "contact_email": "new@example.com",
             "region_north": "49.0",
@@ -183,12 +174,9 @@ class TestAdaptersEditSubmit:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
             with patch("central.gui.routes.write_audit", new_callable=AsyncMock) as mock_audit:
-                result = await adapters_edit_submit(mock_request, "nws", mock_csrf)
+                result = await adapters_edit_submit(mock_request, "nws")
 
         assert result.status_code == 302
         assert result.headers["location"] == "/adapters"
@@ -204,7 +192,9 @@ class TestAdaptersEditSubmit:
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
         mock_form = MagicMock()
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
             "cadence_s": "30",
             "contact_email": "test@example.com",
             "region_north": "49.0",
@@ -239,14 +229,9 @@ class TestAdaptersEditSubmit:
         mock_response.status_code = 200
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await adapters_edit_submit(mock_request, "nws", mock_csrf)
+                result = await adapters_edit_submit(mock_request, "nws")
 
         # Should re-render form with error
         call_args = mock_templates.TemplateResponse.call_args
@@ -263,7 +248,9 @@ class TestAdaptersEditSubmit:
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
         mock_form = MagicMock()
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
             "cadence_s": "300",
             "api_key_alias": "nonexistent_key",
             "region_north": "49.5",
@@ -299,14 +286,9 @@ class TestAdaptersEditSubmit:
         mock_response.status_code = 200
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await adapters_edit_submit(mock_request, "firms", mock_csrf)
+                result = await adapters_edit_submit(mock_request, "firms")
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -322,7 +304,9 @@ class TestAdaptersEditSubmit:
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
         mock_form = MagicMock()
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
             "cadence_s": "120",
             "feed": "invalid_feed",
             "region_north": "49.0",
@@ -357,14 +341,9 @@ class TestAdaptersEditSubmit:
         mock_response.status_code = 200
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await adapters_edit_submit(mock_request, "usgs_quake", mock_csrf)
+                result = await adapters_edit_submit(mock_request, "usgs_quake")
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -383,7 +362,9 @@ class TestAdaptersAudit:
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
         mock_form = MagicMock()
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
             "cadence_s": "120",
             "contact_email": "new@example.com",
             "region_north": "49.0",
@@ -410,9 +391,6 @@ class TestAdaptersAudit:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         captured_audit = {}
 
         async def capture_audit(conn, action, operator_id=None, target=None, before=None, after=None):
@@ -423,7 +401,7 @@ class TestAdaptersAudit:
 
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
             with patch("central.gui.routes.write_audit", side_effect=capture_audit):
-                result = await adapters_edit_submit(mock_request, "nws", mock_csrf)
+                result = await adapters_edit_submit(mock_request, "nws")
 
         assert captured_audit["action"] == "adapter.update"
         assert captured_audit["target"] == "nws"
@@ -449,7 +427,9 @@ class TestAdaptersJsonbRegression:
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
         mock_form = MagicMock()
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
             "cadence_s": "120",
             "contact_email": "test@example.com",
             "region_north": "49.0",
@@ -476,12 +456,9 @@ class TestAdaptersJsonbRegression:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
             with patch("central.gui.routes.write_audit", new_callable=AsyncMock):
-                await adapters_edit_submit(mock_request, "nws", mock_csrf)
+                await adapters_edit_submit(mock_request, "nws")
 
         # Get the settings argument passed to execute (3rd positional arg after query)
         call_args = mock_conn.execute.call_args
@@ -502,7 +479,9 @@ class TestAdaptersJsonbRegression:
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
         mock_form = MagicMock()
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
             "cadence_s": "120",
             "contact_email": "new@example.com",
             "region_north": "49.0",
@@ -529,9 +508,6 @@ class TestAdaptersJsonbRegression:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         captured_audit = {}
 
         async def capture_audit(conn, action, operator_id=None, target=None, before=None, after=None):
@@ -540,7 +516,7 @@ class TestAdaptersJsonbRegression:
 
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
             with patch("central.gui.routes.write_audit", side_effect=capture_audit):
-                await adapters_edit_submit(mock_request, "nws", mock_csrf)
+                await adapters_edit_submit(mock_request, "nws")
 
         # CRITICAL: before and after must be dicts, NOT strings
         assert isinstance(captured_audit["before"], dict), f"before should be dict, got {type(captured_audit['before'])}"

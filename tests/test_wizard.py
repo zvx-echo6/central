@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from central.gui.routes import (
     setup_operator_form,
     setup_operator_submit,
@@ -87,18 +86,17 @@ class TestSetupOperatorForm:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await setup_operator_form(mock_request, mock_csrf)
+                with patch("central.gui.routes.get_settings") as mock_settings:
+                    mock_settings.return_value.csrf_secret = "testsecret"
+                    with patch("central.gui.routes.generate_pre_auth_csrf", return_value=("test_token", "signed_token")):
+                        result = await setup_operator_form(mock_request)
 
         mock_templates.TemplateResponse.assert_called_once()
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
-        assert context["csrf_token"] == "token"
+        assert "csrf_token" in context and context["csrf_token"]
         assert context["error"] is None
         assert context["existing_operator"] is None
 
@@ -119,13 +117,12 @@ class TestSetupOperatorForm:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await setup_operator_form(mock_request, mock_csrf)
+                with patch("central.gui.routes.get_settings") as mock_settings:
+                    mock_settings.return_value.csrf_secret = "testsecret"
+                    with patch("central.gui.routes.generate_pre_auth_csrf", return_value=("test_token", "signed_token")):
+                        result = await setup_operator_form(mock_request)
 
         mock_templates.TemplateResponse.assert_called_once()
         call_args = mock_templates.TemplateResponse.call_args
@@ -141,6 +138,13 @@ class TestSetupOperatorSubmit:
     async def test_password_mismatch_shows_error(self):
         """POST with password mismatch re-renders with error."""
         mock_request = MagicMock()
+        mock_request.state.csrf_token = "test_csrf"
+        mock_request.form = AsyncMock(return_value={
+            "csrf_token": "test_csrf",
+            "username": "testuser",
+            "password": "password1",
+            "confirm_password": "password2",  # Mismatch
+        })
         mock_templates = MagicMock()
         mock_templates.TemplateResponse.return_value = MagicMock()
 
@@ -151,20 +155,17 @@ class TestSetupOperatorSubmit:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await setup_operator_submit(
-                    mock_request,
-                    username="admin",
-                    password="password123",
-                    confirm_password="different",
-                    csrf_protect=mock_csrf,
-                )
+                with patch("central.gui.routes.validate_pre_auth_csrf", return_value=True):
+                    with patch("central.gui.routes.get_settings") as mock_settings:
+                        mock_settings.return_value.csrf_secret = "testsecret"
+                        result = await setup_operator_submit(
+                            mock_request,
+                            username="testuser",
+                            password="password1",
+                            confirm_password="password2",
+                        )
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -174,6 +175,13 @@ class TestSetupOperatorSubmit:
     async def test_valid_creates_operator_and_redirects(self):
         """POST with valid data creates operator and redirects to /setup/system."""
         mock_request = MagicMock()
+        mock_request.state.csrf_token = "test_csrf"
+        mock_request.form = AsyncMock(return_value={
+            "csrf_token": "test_csrf",
+            "username": "testuser",
+            "password": "password123",
+            "confirm_password": "password123",
+        })
 
         mock_conn = AsyncMock()
         mock_conn.fetchval.return_value = 0  # No existing operators
@@ -186,21 +194,20 @@ class TestSetupOperatorSubmit:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
-            with patch("central.gui.routes.hash_password", return_value="hashed"):
-                with patch("central.gui.routes.create_session", new_callable=AsyncMock) as mock_session:
-                    mock_session.return_value = ("session_token", datetime.now())
-                    with patch("central.gui.routes.write_audit", new_callable=AsyncMock):
-                        result = await setup_operator_submit(
-                            mock_request,
-                            username="admin",
-                            password="password123",
-                            confirm_password="password123",
-                            csrf_protect=mock_csrf,
-                        )
+            with patch("central.gui.routes.validate_pre_auth_csrf", return_value=True):
+                with patch("central.gui.routes.get_settings") as mock_settings:
+                    mock_settings.return_value.csrf_secret = "testsecret"
+                    with patch("central.gui.routes.hash_password", return_value="hashed"):
+                        with patch("central.gui.routes.create_session", new_callable=AsyncMock) as mock_session:
+                            mock_session.return_value = ("session_token", datetime.now(), "csrf_token")
+                            with patch("central.gui.routes.write_audit", new_callable=AsyncMock):
+                                result = await setup_operator_submit(
+                                    mock_request,
+                                    username="testuser",
+                                    password="password123",
+                                    confirm_password="password123",
+                                )
 
         assert result.status_code == 302
         assert result.headers["location"] == "/setup/system"
@@ -209,6 +216,12 @@ class TestSetupOperatorSubmit:
     async def test_post_when_operator_exists_shows_confirmation(self):
         """POST when operator exists returns 200 with confirmation, no insert."""
         mock_request = MagicMock()
+        mock_request.form = AsyncMock(return_value={
+            "csrf_token": "test_csrf",
+            "username": "testuser",
+            "password": "password123",
+            "confirm_password": "password123",
+        })
 
         mock_templates = MagicMock()
         mock_response = MagicMock()
@@ -223,21 +236,19 @@ class TestSetupOperatorSubmit:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
+        mock_request.state.csrf_token = "test_csrf"
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                with patch("central.gui.routes.write_audit", new_callable=AsyncMock) as mock_audit:
-                    result = await setup_operator_submit(
-                        mock_request,
-                        username="newadmin",
-                        password="password123",
-                        confirm_password="password123",
-                        csrf_protect=mock_csrf,
-                    )
+                with patch("central.gui.routes.validate_pre_auth_csrf", return_value=True):
+                    with patch("central.gui.routes.get_settings") as mock_settings:
+                        mock_settings.return_value.csrf_secret = "testsecret"
+                        with patch("central.gui.routes.write_audit", new_callable=AsyncMock) as mock_audit:
+                            result = await setup_operator_submit(
+                                mock_request,
+                                username="testuser",
+                                password="password123",
+                                confirm_password="password123",
+                            )
 
         # Should return 200, not 500 or redirect
         assert result.status_code == 200
@@ -259,10 +270,7 @@ class TestSetupSystemForm:
         """GET /setup/system without auth redirects to /setup/operator."""
         mock_request = MagicMock()
         mock_request.state.operator = None
-
-        mock_csrf = MagicMock()
-
-        result = await setup_system_form(mock_request, mock_csrf)
+        result = await setup_system_form(mock_request)
         assert result.status_code == 302
         assert result.headers["location"] == "/setup/operator"
 
@@ -285,13 +293,9 @@ class TestSetupSystemForm:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await setup_system_form(mock_request, mock_csrf)
+                result = await setup_system_form(mock_request)
 
         mock_templates.TemplateResponse.assert_called_once()
 
@@ -304,9 +308,11 @@ class TestSetupSystemSubmit:
         """POST without {z},{x},{y} placeholders shows error."""
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="admin")
+        mock_request.state.csrf_token = "test_csrf_token"
 
         form_data = MagicMock()
         form_data.get = lambda k, default="": {
+            "csrf_token": "test_csrf_token",
             "map_tile_url": "https://example.com/tiles",
             "map_attribution": "Test",
         }.get(k, default)
@@ -325,14 +331,9 @@ class TestSetupSystemSubmit:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await setup_system_submit(mock_request, mock_csrf)
+                result = await setup_system_submit(mock_request)
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -343,9 +344,11 @@ class TestSetupSystemSubmit:
         """POST with valid data updates system and redirects to /setup/keys."""
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="admin")
+        mock_request.state.csrf_token = "test_csrf_token"
 
         form_data = MagicMock()
         form_data.get = lambda k, default="": {
+            "csrf_token": "test_csrf_token",
             "map_tile_url": "https://example.com/{z}/{x}/{y}.png",
             "map_attribution": "Test Attribution",
         }.get(k, default)
@@ -362,12 +365,9 @@ class TestSetupSystemSubmit:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
             with patch("central.gui.routes.write_audit", new_callable=AsyncMock):
-                result = await setup_system_submit(mock_request, mock_csrf)
+                result = await setup_system_submit(mock_request)
 
         assert result.status_code == 302
         assert result.headers["location"] == "/setup/keys"
@@ -381,10 +381,7 @@ class TestSetupKeysForm:
         """GET /setup/keys without auth redirects to /setup/operator."""
         mock_request = MagicMock()
         mock_request.state.operator = None
-
-        mock_csrf = MagicMock()
-
-        result = await setup_keys_form(mock_request, mock_csrf)
+        result = await setup_keys_form(mock_request)
         assert result.status_code == 302
         assert result.headers["location"] == "/setup/operator"
 
@@ -397,16 +394,17 @@ class TestSetupKeysSubmit:
         """POST with action=next redirects to /setup/adapters."""
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="admin")
+        mock_request.state.csrf_token = "test_csrf_token"
 
         form_data = MagicMock()
-        form_data.get = lambda k, default="": {"action": "next"}.get(k, default)
+        form_data.get = lambda k, default="": {
+            "csrf_token": "test_csrf_token",
+            "action": "next",
+        }.get(k, default)
         mock_request.form = AsyncMock(return_value=form_data)
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         # No need to mock get_pool since action="next" returns before it's called
-        result = await setup_keys_submit(mock_request, mock_csrf)
+        result = await setup_keys_submit(mock_request)
         assert result.status_code == 302
         assert result.headers["location"] == "/setup/adapters"
 
@@ -415,9 +413,11 @@ class TestSetupKeysSubmit:
         """POST with action=add creates key and re-renders with success."""
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="admin")
+        mock_request.state.csrf_token = "test_csrf_token"
 
         form_data = MagicMock()
         form_data.get = lambda k, default="": {
+            "csrf_token": "test_csrf_token",
             "action": "add",
             "alias": "testkey",
             "plaintext_key": "secret123",
@@ -441,16 +441,11 @@ class TestSetupKeysSubmit:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
                 with patch("central.crypto.encrypt", return_value=b"encrypted"):
                     with patch("central.gui.routes.write_audit", new_callable=AsyncMock):
-                        result = await setup_keys_submit(mock_request, mock_csrf)
+                        result = await setup_keys_submit(mock_request)
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -465,10 +460,7 @@ class TestSetupAdaptersForm:
         """GET /setup/adapters without auth redirects to /setup/operator."""
         mock_request = MagicMock()
         mock_request.state.operator = None
-
-        mock_csrf = MagicMock()
-
-        result = await setup_adapters_form(mock_request, mock_csrf)
+        result = await setup_adapters_form(mock_request)
         assert result.status_code == 302
         assert result.headers["location"] == "/setup/operator"
 
@@ -481,10 +473,7 @@ class TestSetupFinishForm:
         """GET /setup/finish without auth redirects to /setup/operator."""
         mock_request = MagicMock()
         mock_request.state.operator = None
-
-        mock_csrf = MagicMock()
-
-        result = await setup_finish_form(mock_request, mock_csrf)
+        result = await setup_finish_form(mock_request)
         assert result.status_code == 302
         assert result.headers["location"] == "/setup/operator"
 
@@ -509,13 +498,9 @@ class TestSetupFinishForm:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await setup_finish_form(mock_request, mock_csrf)
+                result = await setup_finish_form(mock_request)
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -532,6 +517,12 @@ class TestSetupFinishSubmit:
         """POST /setup/finish marks setup_complete=true and redirects to /."""
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="admin")
+        mock_request.state.csrf_token = "test_csrf_token"
+        
+        # Mock form with CSRF token
+        form_data = MagicMock()
+        form_data.get = lambda k, default="": {"csrf_token": "test_csrf_token"}.get(k, default)
+        mock_request.form = AsyncMock(return_value=form_data)
 
         mock_conn = AsyncMock()
         mock_conn.execute = AsyncMock()
@@ -540,12 +531,9 @@ class TestSetupFinishSubmit:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_pool.acquire.return_value.__aexit__.return_value = None
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
             with patch("central.gui.routes.write_audit", new_callable=AsyncMock) as mock_audit:
-                result = await setup_finish_submit(mock_request, mock_csrf)
+                result = await setup_finish_submit(mock_request)
 
         assert result.status_code == 302
         assert result.headers["location"] == "/"

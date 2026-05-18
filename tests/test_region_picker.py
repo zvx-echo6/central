@@ -51,13 +51,9 @@ class TestRegionPickerInTemplate:
         mock_response = MagicMock()
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await adapters_edit_form(mock_request, "firms", mock_csrf)
+                result = await adapters_edit_form(mock_request, "firms")
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -79,7 +75,9 @@ class TestRegionValidation:
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
         mock_form = MagicMock()
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
             "cadence_s": "300",
             "api_key_alias": "firms",
             "region_north": "45.0",
@@ -109,9 +107,6 @@ class TestRegionValidation:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         captured_settings = {}
 
         async def capture_execute(query, *args):
@@ -122,7 +117,7 @@ class TestRegionValidation:
 
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
             with patch("central.gui.routes.write_audit", new_callable=AsyncMock):
-                result = await adapters_edit_submit(mock_request, "firms", mock_csrf)
+                result = await adapters_edit_submit(mock_request, "firms")
 
         assert result.status_code == 302
         assert captured_settings["settings"]["region"]["north"] == 45.0
@@ -139,7 +134,9 @@ class TestRegionValidation:
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
         mock_form = MagicMock()
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
             "cadence_s": "300",
             "api_key_alias": "firms",
             "region_north": "30.0",  # Less than south!
@@ -175,14 +172,9 @@ class TestRegionValidation:
         mock_response.status_code = 200
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await adapters_edit_submit(mock_request, "firms", mock_csrf)
+                result = await adapters_edit_submit(mock_request, "firms")
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -198,7 +190,9 @@ class TestRegionValidation:
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
         mock_form = MagicMock()
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
             "cadence_s": "300",
             "api_key_alias": "firms",
             "region_north": "45.0",
@@ -234,14 +228,9 @@ class TestRegionValidation:
         mock_response.status_code = 200
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await adapters_edit_submit(mock_request, "firms", mock_csrf)
+                result = await adapters_edit_submit(mock_request, "firms")
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -257,7 +246,9 @@ class TestRegionValidation:
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
         mock_form = MagicMock()
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
             "cadence_s": "300",
             "api_key_alias": "firms",
             "region_north": "95.0",  # > 90!
@@ -293,14 +284,9 @@ class TestRegionValidation:
         mock_response.status_code = 200
         mock_templates.TemplateResponse.return_value = mock_response
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
-        mock_csrf.set_csrf_cookie = MagicMock()
-
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await adapters_edit_submit(mock_request, "firms", mock_csrf)
+                result = await adapters_edit_submit(mock_request, "firms")
 
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
@@ -319,7 +305,9 @@ class TestRegionAuditLog:
         mock_request.state.operator = MagicMock(id=1, username="testop")
 
         mock_form = MagicMock()
+        mock_request.state.csrf_token = "test_csrf_token"
         mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
             "cadence_s": "300",
             "api_key_alias": "firms",
             "region_north": "45.0",
@@ -352,9 +340,6 @@ class TestRegionAuditLog:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        mock_csrf = MagicMock()
-        mock_csrf.validate_csrf = AsyncMock()
-
         captured_audit = {}
 
         async def capture_audit(conn, action, operator_id=None, target=None, before=None, after=None):
@@ -363,7 +348,7 @@ class TestRegionAuditLog:
 
         with patch("central.gui.routes.get_pool", return_value=mock_pool):
             with patch("central.gui.routes.write_audit", side_effect=capture_audit):
-                result = await adapters_edit_submit(mock_request, "firms", mock_csrf)
+                result = await adapters_edit_submit(mock_request, "firms")
 
         # Before should have old region
         assert captured_audit["before"]["settings"]["region"]["north"] == 49.5
