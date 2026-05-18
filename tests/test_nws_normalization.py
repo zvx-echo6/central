@@ -17,7 +17,6 @@ from central.adapters.nws import (
     SEVERITY_MAP,
 )
 from central.config_models import AdapterConfig
-from central.models import subject_for_event
 
 
 # Sample NWS GeoJSON features for testing
@@ -272,7 +271,7 @@ class TestSubjectDerivation:
     def test_county_subject(self, adapter: NWSAdapter) -> None:
         event = adapter._normalize_feature(SAMPLE_FEATURE_ID)
         assert event is not None
-        subject = subject_for_event(event)
+        subject = adapter.subject_for(event)
         # Primary region should be alphabetically first
         # Could be county or zone depending on sort order
         assert subject.startswith("central.wx.alert.us.id.")
@@ -294,7 +293,7 @@ class TestSubjectDerivation:
         }
         event = adapter._normalize_feature(feature)
         assert event is not None
-        subject = subject_for_event(event)
+        subject = adapter.subject_for(event)
         assert "zone" in subject
 
 

@@ -193,6 +193,7 @@ class NWSAdapter(SourceAdapter):
     """National Weather Service alerts adapter."""
 
     name = "nws"
+    stream_name = "CENTRAL_WX"
 
     def __init__(
         self,
@@ -233,6 +234,50 @@ class NWSAdapter(SourceAdapter):
                 "contact_email": self.contact_email,
             },
         )
+
+    def subject_for(self, event: Event) -> str:
+        """Compute NATS subject for a weather alert.
+
+        Subject format: central.wx.alert.us.<state>.<type>.<code>
+        where type is 'county' or 'zone' based on primary_region format.
+        """
+        prefix = "central.wx"
+
+        if event.geo.primary_region is None:
+            return f"{prefix}.alert.us.unknown"
+
+        region = event.geo.primary_region
+
+        # Parse US-<STATE>-<CODE> format
+        parts = region.split("-")
+        if len(parts) < 3 or parts[0] != "US":
+            return f"{prefix}.alert.us.unknown"
+
+        state = parts[1].lower()
+        code = "-".join(parts[2:])  # Handle multi-part names
+
+        if code.startswith("Z") and len(code) >= 2 and code[1:].isdigit():
+            # Zone code like Z033
+            return f"{prefix}.alert.us.{state}.zone.{code.lower()}"
+        else:
+            # County name
+            return f"{prefix}.alert.us.{state}.county.{code.lower()}"
+
+    @classmethod
+    def settings_schema(cls) -> dict[str, Any]:
+        """Return schema for NWS adapter settings."""
+        return {
+            "contact_email": {
+                "type": "str",
+                "default": "",
+                "description": "Contact email for NWS API User-Agent header",
+            },
+            "region": {
+                "type": "RegionConfig",
+                "default": None,
+                "description": "Geographic bounding box to filter alerts",
+            },
+        }
 
     def _geometry_intersects_region(self, geometry: dict[str, Any] | None) -> bool:
         """Check if feature geometry intersects configured region bbox.

@@ -10,7 +10,6 @@ from central.adapters.firms import (
     FIRMSAdapter,
     CONFIDENCE_MAP,
     SATELLITE_SHORT,
-    subject_for_fire_hotspot,
 )
 from central.config_models import AdapterConfig, RegionConfig
 from central.models import Event, Geo
@@ -285,7 +284,14 @@ class TestDeduplication:
 class TestSubjectGeneration:
     """Test subject generation for fire hotspots."""
 
-    def test_subject_format(self):
+    @pytest.mark.asyncio
+    async def test_subject_format(self, temp_db_path, mock_config_store):
+        config = make_adapter_config()
+        adapter = FIRMSAdapter(
+            config=config,
+            config_store=mock_config_store,
+            cursor_db_path=temp_db_path,
+        )
         event = Event(
             id="test",
             adapter="firms",
@@ -296,10 +302,17 @@ class TestSubjectGeneration:
             data={},
         )
 
-        subject = subject_for_fire_hotspot(event)
+        subject = adapter.subject_for(event)
         assert subject == "central.fire.hotspot.viirs_snpp.high"
 
-    def test_subject_nominal_confidence(self):
+    @pytest.mark.asyncio
+    async def test_subject_nominal_confidence(self, temp_db_path, mock_config_store):
+        config = make_adapter_config()
+        adapter = FIRMSAdapter(
+            config=config,
+            config_store=mock_config_store,
+            cursor_db_path=temp_db_path,
+        )
         event = Event(
             id="test",
             adapter="firms",
@@ -310,7 +323,7 @@ class TestSubjectGeneration:
             data={},
         )
 
-        subject = subject_for_fire_hotspot(event)
+        subject = adapter.subject_for(event)
         assert subject == "central.fire.hotspot.viirs_noaa20.nominal"
 
 

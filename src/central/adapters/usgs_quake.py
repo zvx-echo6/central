@@ -64,6 +64,7 @@ class USGSQuakeAdapter(SourceAdapter):
     """USGS Earthquake Hazards Program adapter."""
 
     name = "usgs_quake"
+    stream_name = "CENTRAL_QUAKE"
 
     def __init__(
         self,
@@ -398,3 +399,34 @@ class USGSQuakeAdapter(SourceAdapter):
             new_count += 1
 
         logger.info("USGS quake yielded events", extra={"count": new_count})
+
+    def subject_for(self, event: Event) -> str:
+        """Return NATS subject for quake event."""
+        return f"central.{event.category}"
+
+    @classmethod
+    def settings_schema(cls) -> dict[str, Any]:
+        """Return JSON Schema for USGS quake adapter settings."""
+        return {
+            "type": "object",
+            "properties": {
+                "feed": {
+                    "type": "string",
+                    "enum": ["all_hour", "all_day", "all_week", "all_month"],
+                    "default": "all_hour",
+                    "description": "USGS feed type",
+                },
+                "region": {
+                    "type": "object",
+                    "properties": {
+                        "north": {"type": "number"},
+                        "south": {"type": "number"},
+                        "east": {"type": "number"},
+                        "west": {"type": "number"},
+                    },
+                    "required": ["north", "south", "east", "west"],
+                    "description": "Bounding box for earthquake monitoring",
+                },
+            },
+            "required": ["region"],
+        }

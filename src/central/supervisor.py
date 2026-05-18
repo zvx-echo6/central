@@ -13,24 +13,36 @@ from typing import Any
 import nats
 from nats.js import JetStreamContext
 
+import importlib
+import pkgutil
+
 from central.adapter import SourceAdapter
-from central.adapters.nws import NWSAdapter
-from central.adapters.firms import FIRMSAdapter
-from central.adapters.usgs_quake import USGSQuakeAdapter
 from central.cloudevents_wire import wrap_event
 from central.config_models import AdapterConfig
 from central.config_source import ConfigSource, DbConfigSource
 from central.config_store import ConfigStore
 from central.bootstrap_config import get_settings
-from central.models import subject_for_event
 from central.stream_manager import StreamManager
+import central.adapters
 
-# Adapter registry - add new adapters here
-_ADAPTER_REGISTRY: dict[str, type[SourceAdapter]] = {
-    "nws": NWSAdapter,
-    "firms": FIRMSAdapter,
-    "usgs_quake": USGSQuakeAdapter,
-}
+def _discover_adapters() -> dict[str, type[SourceAdapter]]:
+    """Auto-discover adapter classes from central.adapters package."""
+    registry: dict[str, type[SourceAdapter]] = {}
+    for module_info in pkgutil.iter_modules(central.adapters.__path__):
+        module = importlib.import_module(f"central.adapters.{module_info.name}")
+        for attr_name in dir(module):
+            attr = getattr(module, attr_name)
+            if (
+                isinstance(attr, type)
+                and issubclass(attr, SourceAdapter)
+                and attr is not SourceAdapter
+                and hasattr(attr, "name")
+            ):
+                registry[attr.name] = attr
+    return registry
+
+
+_ADAPTER_REGISTRY: dict[str, type[SourceAdapter]] = _discover_adapters()
 
 CURSOR_DB_PATH = Path("/var/lib/central/cursors.db")
 
@@ -232,7 +244,7 @@ class Supervisor:
                     # Build CloudEvent (uses defaults if no config provided)
                     envelope, msg_id = wrap_event(event, self._cloudevents_config)
 
-                    subject = subject_for_event(event)
+                    subject = state.adapter.subject_for(event)
 
                     # Publish
                     await self._publish_event(subject, envelope, msg_id)

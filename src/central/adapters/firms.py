@@ -53,6 +53,7 @@ class FIRMSAdapter(SourceAdapter):
     """NASA FIRMS fire hotspot adapter."""
 
     name = "firms"
+    stream_name = "CENTRAL_FIRE"
 
     def __init__(
         self,
@@ -115,6 +116,35 @@ class FIRMSAdapter(SourceAdapter):
                 "api_key_alias": self._api_key_alias,
             },
         )
+
+    def subject_for(self, event: Event) -> str:
+        """Compute NATS subject for a fire hotspot event.
+
+        Subject format: central.fire.hotspot.<satellite>.<confidence>
+        The category already contains this structure.
+        """
+        return f"central.{event.category}"
+
+    @classmethod
+    def settings_schema(cls) -> dict[str, Any]:
+        """Return schema for FIRMS adapter settings."""
+        return {
+            "api_key_alias": {
+                "type": "str",
+                "default": "firms",
+                "description": "Alias for the FIRMS API key in config.api_keys",
+            },
+            "satellites": {
+                "type": "list[str]",
+                "default": ["VIIRS_SNPP_NRT", "VIIRS_NOAA20_NRT"],
+                "description": "List of satellite feeds to poll",
+            },
+            "region": {
+                "type": "RegionConfig",
+                "default": None,
+                "description": "Geographic bounding box to filter hotspots",
+            },
+        }
 
     async def startup(self) -> None:
         """Initialize HTTP session, dedup tracker, and fetch API key."""
@@ -417,14 +447,3 @@ class FIRMSAdapter(SourceAdapter):
             },
         )
 
-
-def subject_for_fire_hotspot(ev: Event) -> str:
-    """Compute the NATS subject for a fire hotspot event.
-
-    Subject format: central.fire.hotspot.<satellite>.<confidence>
-
-    The category already contains the satellite and confidence info,
-    so we just prefix with 'central.'.
-    """
-    # category is "fire.hotspot.<satellite>.<confidence>"
-    return f"central.{ev.category}"
