@@ -13,6 +13,10 @@
         <p>Add API keys for adapters that require external service credentials (e.g., FIRMS).</p>
     </header>
 
+    {% if error %}
+    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    {% endif %}
+
     {% if success %}
     <p style="color: var(--pico-color-green-500);">{{ success }}</p>
     {% endif %}

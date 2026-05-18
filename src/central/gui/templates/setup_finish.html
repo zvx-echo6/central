@@ -13,6 +13,10 @@
         <p>Review your configuration and finish the setup wizard.</p>
     </header>
 
+    {% if error %}
+    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    {% endif %}
+
     <h2>Summary</h2>
 
     <table>

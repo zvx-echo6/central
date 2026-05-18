@@ -107,3 +107,166 @@ class TestCsrfHandlerNoTraceback:
 
         assert handler is not None
         assert inspect.iscoroutinefunction(handler)
+
+
+class TestCsrfHandlerWizardPaths:
+    """Test CSRF exception handler for wizard paths."""
+
+    @pytest.mark.asyncio
+    async def test_setup_operator_csrf_error_renders_form_with_error(self):
+        """CSRF error on /setup/operator re-renders form with error message."""
+        from central.gui import _create_app
+        from fastapi_csrf_protect.exceptions import TokenValidationError
+        from fastapi.responses import HTMLResponse
+
+        app = _create_app()
+        from fastapi_csrf_protect.exceptions import CsrfProtectError
+        handler = app.exception_handlers.get(CsrfProtectError)
+
+        mock_request = MagicMock()
+        mock_request.url.path = "/setup/operator"
+
+        exc = TokenValidationError("Invalid token")
+
+        result = await handler(mock_request, exc)
+
+        # Should be HTML response, not redirect
+        assert hasattr(result, "body")
+        assert result.status_code == 200
+        body = result.body.decode() if hasattr(result.body, "decode") else str(result.body)
+        assert "session expired" in body.lower()
+
+    @pytest.mark.asyncio
+    async def test_setup_system_csrf_error_renders_form_with_error(self):
+        """CSRF error on /setup/system re-renders form with error message."""
+        from central.gui import _create_app
+        from fastapi_csrf_protect.exceptions import TokenValidationError
+
+        app = _create_app()
+        from fastapi_csrf_protect.exceptions import CsrfProtectError
+        handler = app.exception_handlers.get(CsrfProtectError)
+
+        mock_request = MagicMock()
+        mock_request.url.path = "/setup/system"
+
+        exc = TokenValidationError("Invalid token")
+
+        with patch("central.gui.db.get_pool", return_value=None):
+            result = await handler(mock_request, exc)
+
+        assert hasattr(result, "body")
+        assert result.status_code == 200
+        body = result.body.decode() if hasattr(result.body, "decode") else str(result.body)
+        assert "session expired" in body.lower()
+
+    @pytest.mark.asyncio
+    async def test_setup_keys_csrf_error_renders_form_with_error(self):
+        """CSRF error on /setup/keys re-renders form with error message."""
+        from central.gui import _create_app
+        from fastapi_csrf_protect.exceptions import TokenValidationError
+
+        app = _create_app()
+        from fastapi_csrf_protect.exceptions import CsrfProtectError
+        handler = app.exception_handlers.get(CsrfProtectError)
+
+        mock_request = MagicMock()
+        mock_request.url.path = "/setup/keys"
+
+        exc = TokenValidationError("Invalid token")
+
+        with patch("central.gui.db.get_pool", return_value=None):
+            result = await handler(mock_request, exc)
+
+        assert hasattr(result, "body")
+        assert result.status_code == 200
+        body = result.body.decode() if hasattr(result.body, "decode") else str(result.body)
+        assert "session expired" in body.lower()
+
+    @pytest.mark.asyncio
+    async def test_setup_adapters_csrf_error_renders_form_with_error(self):
+        """CSRF error on /setup/adapters re-renders form with error message."""
+        from central.gui import _create_app
+        from fastapi_csrf_protect.exceptions import TokenValidationError
+
+        app = _create_app()
+        from fastapi_csrf_protect.exceptions import CsrfProtectError
+        handler = app.exception_handlers.get(CsrfProtectError)
+
+        mock_request = MagicMock()
+        mock_request.url.path = "/setup/adapters"
+
+        exc = TokenValidationError("Invalid token")
+
+        with patch("central.gui.db.get_pool", return_value=None):
+            result = await handler(mock_request, exc)
+
+        assert hasattr(result, "body")
+        assert result.status_code == 200
+        body = result.body.decode() if hasattr(result.body, "decode") else str(result.body)
+        assert "session expired" in body.lower()
+
+    @pytest.mark.asyncio
+    async def test_setup_finish_csrf_error_renders_form_with_error(self):
+        """CSRF error on /setup/finish re-renders form with error message."""
+        from central.gui import _create_app
+        from fastapi_csrf_protect.exceptions import TokenValidationError
+
+        app = _create_app()
+        from fastapi_csrf_protect.exceptions import CsrfProtectError
+        handler = app.exception_handlers.get(CsrfProtectError)
+
+        mock_request = MagicMock()
+        mock_request.url.path = "/setup/finish"
+
+        exc = TokenValidationError("Invalid token")
+
+        with patch("central.gui.db.get_pool", return_value=None):
+            result = await handler(mock_request, exc)
+
+        assert hasattr(result, "body")
+        assert result.status_code == 200
+        body = result.body.decode() if hasattr(result.body, "decode") else str(result.body)
+        assert "session expired" in body.lower()
+
+    @pytest.mark.asyncio
+    async def test_setup_base_csrf_error_redirects_to_setup(self):
+        """CSRF error on /setup redirects to /setup (middleware routes to step)."""
+        from central.gui import _create_app
+        from fastapi_csrf_protect.exceptions import TokenValidationError
+        from fastapi.responses import RedirectResponse
+
+        app = _create_app()
+        from fastapi_csrf_protect.exceptions import CsrfProtectError
+        handler = app.exception_handlers.get(CsrfProtectError)
+
+        mock_request = MagicMock()
+        mock_request.url.path = "/setup"
+
+        exc = TokenValidationError("Invalid token")
+
+        result = await handler(mock_request, exc)
+
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 302
+
+    @pytest.mark.asyncio
+    async def test_login_csrf_error_still_works(self):
+        """CSRF error on /login still renders login form with error (regression test)."""
+        from central.gui import _create_app
+        from fastapi_csrf_protect.exceptions import TokenValidationError
+
+        app = _create_app()
+        from fastapi_csrf_protect.exceptions import CsrfProtectError
+        handler = app.exception_handlers.get(CsrfProtectError)
+
+        mock_request = MagicMock()
+        mock_request.url.path = "/login"
+
+        exc = TokenValidationError("Invalid token")
+
+        result = await handler(mock_request, exc)
+
+        assert hasattr(result, "body")
+        assert result.status_code == 200
+        body = result.body.decode() if hasattr(result.body, "decode") else str(result.body)
+        assert "session expired" in body.lower()
