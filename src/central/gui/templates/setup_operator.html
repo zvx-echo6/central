@@ -1,0 +1,45 @@
+{% extends "base_wizard.html" %}
+
+{% block title %}Central - Create Operator{% endblock %}
+
+{% block content %}
+{% with step=1, step_name="Create Operator" %}
+{% include "_wizard_header.html" %}
+{% endwith %}
+
+<article>
+    <header>
+        <h1>Create Operator Account</h1>
+        <p>Create the initial operator account to manage Central.</p>
+    </header>
+
+    {% if error %}
+    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    {% endif %}
+
+    <form action="/setup/operator" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+        <label for="username">
+            Username
+            <input type="text" id="username" name="username" required
+                   autocomplete="username" autofocus value="{{ form_data.username if form_data else '' }}">
+        </label>
+
+        <label for="password">
+            Password
+            <input type="password" id="password" name="password" required
+                   autocomplete="new-password" minlength="8">
+            <small>Minimum 8 characters</small>
+        </label>
+
+        <label for="confirm_password">
+            Confirm Password
+            <input type="password" id="confirm_password" name="confirm_password" required
+                   autocomplete="new-password">
+        </label>
+
+        <button type="submit">Create Operator &rarr;</button>
+    </form>
+</article>
+{% endblock %}

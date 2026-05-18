@@ -12,11 +12,10 @@ from central.gui.db import get_pool
 logger = logging.getLogger(__name__)
 
 # Paths that don't require setup to be complete
-SETUP_EXEMPT_PATHS = {"/setup", "/health"}
-SETUP_EXEMPT_PREFIXES = ("/static/",)
+SETUP_EXEMPT_PREFIXES = ("/static/", "/setup")
 
 # Paths that don't require authentication
-AUTH_EXEMPT_PATHS = {"/setup", "/login", "/health"}
+AUTH_EXEMPT_PATHS = {"/setup/operator", "/login", "/health"}
 AUTH_EXEMPT_PREFIXES = ("/static/",)
 
 
@@ -28,6 +27,35 @@ def _is_exempt(path: str, exempt_paths: set, exempt_prefixes: tuple) -> bool:
         if path.startswith(prefix):
             return True
     return False
+
+
+async def _get_wizard_redirect_step(conn) -> str:
+    """Determine which wizard step to redirect to based on DB state."""
+    # Check if any operators exist
+    op_count = await conn.fetchval("SELECT COUNT(*) FROM config.operators")
+    if op_count == 0:
+        return "/setup/operator"
+
+    # Check if system settings have been configured (map_tile_url not default)
+    sys_row = await conn.fetchrow(
+        "SELECT map_tile_url FROM config.system WHERE id = true"
+    )
+    default_tile = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    if sys_row is None or sys_row["map_tile_url"] == default_tile:
+        return "/setup/system"
+
+    # Keys step is optional, so check adapters have been reviewed
+    # We consider adapters reviewed if any adapter has a non-null updated_at
+    # (meaning it was explicitly saved during setup)
+    adapters_touched = await conn.fetchval(
+        "SELECT COUNT(*) FROM config.adapters WHERE updated_at IS NOT NULL"
+    )
+    if adapters_touched == 0:
+        # Go to keys first, then adapters
+        return "/setup/keys"
+
+    # All steps done, go to finish
+    return "/setup/finish"
 
 
 class SetupGateMiddleware(BaseHTTPMiddleware):
@@ -55,12 +83,30 @@ class SetupGateMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if not setup_complete:
-            # Setup not complete - only allow exempt paths
-            if not _is_exempt(path, SETUP_EXEMPT_PATHS, SETUP_EXEMPT_PREFIXES):
+            # Setup not complete - only allow setup paths and static/health
+            if path.startswith("/setup"):
+                # Allow all /setup/* paths (handler will enforce auth)
+                # But /setup with no subpath should redirect to appropriate step
+                if path == "/setup" or path == "/setup/":
+                    try:
+                        async with pool.acquire() as conn:
+                            redirect_step = await _get_wizard_redirect_step(conn)
+                            return RedirectResponse(url=redirect_step, status_code=302)
+                    except Exception:
+                        logger.warning("Failed to determine wizard step", exc_info=True)
+                        return RedirectResponse(url="/setup/operator", status_code=302)
+                return await call_next(request)
+            elif path == "/health" or path.startswith("/static/"):
+                return await call_next(request)
+            elif path == "/login":
+                # During setup, login redirects to /setup
+                return RedirectResponse(url="/setup", status_code=302)
+            else:
+                # All other paths redirect to /setup
                 return RedirectResponse(url="/setup", status_code=302)
         else:
-            # Setup complete - redirect /setup to /
-            if path == "/setup":
+            # Setup complete - redirect /setup* to /
+            if path.startswith("/setup"):
                 return RedirectResponse(url="/", status_code=302)
 
         return await call_next(request)

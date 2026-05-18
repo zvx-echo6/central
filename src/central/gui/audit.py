@@ -14,6 +14,8 @@ STREAM_UPDATE = "stream.update"
 API_KEY_CREATE = "api_key.create"
 API_KEY_ROTATE = "api_key.rotate"
 API_KEY_DELETE = "api_key.delete"
+SYSTEM_UPDATE = "system.update"
+SETUP_COMPLETE = "setup.complete"
 
 
 async def write_audit(

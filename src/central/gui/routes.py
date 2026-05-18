@@ -28,7 +28,9 @@ from central.gui.audit import (
     AUTH_LOGOUT,
     AUTH_PASSWORD_CHANGE,
     OPERATOR_CREATE,
+    SETUP_COMPLETE,
     STREAM_UPDATE,
+    SYSTEM_UPDATE,
     write_audit,
 )
 from central.gui.db import get_pool
@@ -252,32 +254,37 @@ async def dashboard_polls(request: Request) -> HTMLResponse:
     )
 
 
-@router.get("/setup", response_class=HTMLResponse)
-async def setup_form(
+# =============================================================================
+# Setup Wizard routes
+# =============================================================================
+
+
+@router.get("/setup/operator", response_class=HTMLResponse)
+async def setup_operator_form(
     request: Request,
     csrf_protect: CsrfProtect = Depends(),
 ) -> HTMLResponse:
-    """Render the setup form."""
+    """Render the setup operator form (step 1)."""
     templates = _get_templates()
     csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
     response = templates.TemplateResponse(
         request=request,
-        name="setup.html",
-        context={"csrf_token": csrf_token, "error": None},
+        name="setup_operator.html",
+        context={"csrf_token": csrf_token, "error": None, "form_data": None},
     )
     csrf_protect.set_csrf_cookie(signed_token, response)
     return response
 
 
-@router.post("/setup")
-async def setup_submit(
+@router.post("/setup/operator")
+async def setup_operator_submit(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
     confirm_password: str = Form(...),
     csrf_protect: CsrfProtect = Depends(),
 ) -> Response:
-    """Process the setup form."""
+    """Process the setup operator form (step 1)."""
     templates = _get_templates()
     pool = get_pool()
 
@@ -298,8 +305,12 @@ async def setup_submit(
         csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
         response = templates.TemplateResponse(
             request=request,
-            name="setup.html",
-            context={"csrf_token": csrf_token, "error": error},
+            name="setup_operator.html",
+            context={
+                "csrf_token": csrf_token,
+                "error": error,
+                "form_data": {"username": username},
+            },
             status_code=200,
         )
         csrf_protect.set_csrf_cookie(signed_token, response)
@@ -336,15 +347,651 @@ async def setup_submit(
         # Create session
         token, expires_at = await create_session(conn, operator_id, lifetime_days)
 
+    # Redirect to next step with session cookie
+    response = RedirectResponse(url="/setup/system", status_code=302)
+    _set_session_cookie(response, token, lifetime_days * 86400)
+    return response
+
+
+@router.get("/setup/system", response_class=HTMLResponse)
+async def setup_system_form(
+    request: Request,
+    csrf_protect: CsrfProtect = Depends(),
+) -> HTMLResponse:
+    """Render the system settings form (step 2)."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    templates = _get_templates()
+    pool = get_pool()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
+        )
+        system = {
+            "map_tile_url": row["map_tile_url"] if row else "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+            "map_attribution": row["map_attribution"] if row else "&copy; OpenStreetMap contributors",
+        }
+
+    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    response = templates.TemplateResponse(
+        request=request,
+        name="setup_system.html",
+        context={
+            "csrf_token": csrf_token,
+            "error": None,
+            "errors": None,
+            "form_data": None,
+            "system": system,
+        },
+    )
+    csrf_protect.set_csrf_cookie(signed_token, response)
+    return response
+
+
+@router.post("/setup/system")
+async def setup_system_submit(
+    request: Request,
+    csrf_protect: CsrfProtect = Depends(),
+) -> Response:
+    """Process the system settings form (step 2)."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    templates = _get_templates()
+    pool = get_pool()
+
+    await csrf_protect.validate_csrf(request)
+
+    form = await request.form()
+    map_tile_url = form.get("map_tile_url", "").strip()
+    map_attribution = form.get("map_attribution", "").strip()
+
+    form_data = {
+        "map_tile_url": map_tile_url,
+        "map_attribution": map_attribution,
+    }
+
+    errors: dict[str, str] = {}
+
+    # Validate map_tile_url
+    if not map_tile_url:
+        errors["map_tile_url"] = "Map tile URL is required"
+    elif "{z}" not in map_tile_url or "{x}" not in map_tile_url or "{y}" not in map_tile_url:
+        errors["map_tile_url"] = "URL must contain {z}, {x}, and {y} placeholders"
+
+    # Validate map_attribution
+    if not map_attribution:
+        errors["map_attribution"] = "Map attribution is required"
+
+    async with pool.acquire() as conn:
+        if errors:
+            row = await conn.fetchrow(
+                "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
+            )
+            system = {
+                "map_tile_url": row["map_tile_url"] if row else "",
+                "map_attribution": row["map_attribution"] if row else "",
+            }
+
+            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            response = templates.TemplateResponse(
+                request=request,
+                name="setup_system.html",
+                context={
+                    "csrf_token": csrf_token,
+                    "error": None,
+                    "errors": errors,
+                    "form_data": form_data,
+                    "system": system,
+                },
+                status_code=200,
+            )
+            csrf_protect.set_csrf_cookie(signed_token, response)
+            return response
+
+        # Get current values for audit
+        old_row = await conn.fetchrow(
+            "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
+        )
+        before = {
+            "map_tile_url": old_row["map_tile_url"] if old_row else None,
+            "map_attribution": old_row["map_attribution"] if old_row else None,
+        }
+
+        # Update system settings
+        await conn.execute(
+            """
+            UPDATE config.system
+            SET map_tile_url = $1, map_attribution = $2
+            WHERE id = true
+            """,
+            map_tile_url,
+            map_attribution,
+        )
+
+        # Write audit log
+        await write_audit(
+            conn,
+            SYSTEM_UPDATE,
+            operator_id=operator.id,
+            target="system",
+            before=before,
+            after={"map_tile_url": map_tile_url, "map_attribution": map_attribution},
+        )
+
+    return RedirectResponse(url="/setup/keys", status_code=302)
+
+
+@router.get("/setup/keys", response_class=HTMLResponse)
+async def setup_keys_form(
+    request: Request,
+    csrf_protect: CsrfProtect = Depends(),
+) -> HTMLResponse:
+    """Render the API keys form (step 3)."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    from central.crypto import encrypt
+
+    templates = _get_templates()
+    pool = get_pool()
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT alias, created_at FROM config.api_keys ORDER BY alias"
+        )
+        keys = [{"alias": row["alias"], "created_at": row["created_at"]} for row in rows]
+
+    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    response = templates.TemplateResponse(
+        request=request,
+        name="setup_keys.html",
+        context={
+            "csrf_token": csrf_token,
+            "keys": keys,
+            "errors": None,
+            "form_data": None,
+            "success": None,
+        },
+    )
+    csrf_protect.set_csrf_cookie(signed_token, response)
+    return response
+
+
+@router.post("/setup/keys")
+async def setup_keys_submit(
+    request: Request,
+    csrf_protect: CsrfProtect = Depends(),
+) -> Response:
+    """Process the API keys form (step 3)."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    await csrf_protect.validate_csrf(request)
+
+    form = await request.form()
+    action = form.get("action", "add")
+
+    # If action is "next", redirect to adapters step
+    if action == "next":
+        return RedirectResponse(url="/setup/adapters", status_code=302)
+
+    from central.crypto import encrypt
+
+    templates = _get_templates()
+    pool = get_pool()
+
+    # Otherwise, add a new key
+    alias = form.get("alias", "").strip()
+    plaintext_key = form.get("plaintext_key", "")
+
+    form_data = {"alias": alias}
+    errors: dict[str, str] = {}
+
+    # Validate alias
+    if not alias:
+        errors["alias"] = "Alias is required"
+    elif len(alias) > 64:
+        errors["alias"] = "Alias must be at most 64 characters"
+    elif not ALIAS_REGEX.match(alias):
+        errors["alias"] = "Alias must contain only letters, numbers, and underscores"
+
+    # Validate plaintext_key
+    if not plaintext_key:
+        errors["plaintext_key"] = "API key is required"
+    elif len(plaintext_key) > 4096:
+        errors["plaintext_key"] = "API key must be at most 4096 characters"
+
+    async with pool.acquire() as conn:
+        if not errors:
+            # Check if alias already exists
+            existing = await conn.fetchrow(
+                "SELECT alias FROM config.api_keys WHERE alias = $1",
+                alias,
+            )
+            if existing:
+                errors["alias"] = "An API key with this alias already exists"
+
+        keys = await conn.fetch(
+            "SELECT alias, created_at FROM config.api_keys ORDER BY alias"
+        )
+        keys = [{"alias": row["alias"], "created_at": row["created_at"]} for row in keys]
+
+        if errors:
+            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            response = templates.TemplateResponse(
+                request=request,
+                name="setup_keys.html",
+                context={
+                    "csrf_token": csrf_token,
+                    "keys": keys,
+                    "errors": errors,
+                    "form_data": form_data,
+                    "success": None,
+                },
+                status_code=200,
+            )
+            csrf_protect.set_csrf_cookie(signed_token, response)
+            return response
+
+        # Encrypt the key
+        encrypted_value = encrypt(plaintext_key.encode())
+
+        # Insert the new key
+        row = await conn.fetchrow(
+            """
+            INSERT INTO config.api_keys (alias, encrypted_value)
+            VALUES ($1, $2)
+            RETURNING created_at
+            """,
+            alias,
+            encrypted_value,
+        )
+
+        # Write audit log (no plaintext!)
+        await write_audit(
+            conn,
+            API_KEY_CREATE,
+            operator_id=operator.id,
+            target=alias,
+            before=None,
+            after={"alias": alias, "created_at": row["created_at"].isoformat()},
+        )
+
+        # Refresh keys list
+        keys = await conn.fetch(
+            "SELECT alias, created_at FROM config.api_keys ORDER BY alias"
+        )
+        keys = [{"alias": row["alias"], "created_at": row["created_at"]} for row in keys]
+
+    # Re-render with success message
+    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    response = templates.TemplateResponse(
+        request=request,
+        name="setup_keys.html",
+        context={
+            "csrf_token": csrf_token,
+            "keys": keys,
+            "errors": None,
+            "form_data": None,
+            "success": f"API key '{alias}' added successfully.",
+        },
+    )
+    csrf_protect.set_csrf_cookie(signed_token, response)
+    return response
+
+
+@router.get("/setup/adapters", response_class=HTMLResponse)
+async def setup_adapters_form(
+    request: Request,
+    csrf_protect: CsrfProtect = Depends(),
+) -> HTMLResponse:
+    """Render the adapters configuration form (step 4)."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    templates = _get_templates()
+    pool = get_pool()
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT name, enabled, cadence_s, settings
+            FROM config.adapters
+            ORDER BY name
+            """
+        )
+        adapters = []
+        for row in rows:
+            settings = row["settings"] or {}
+            adapters.append({
+                "name": row["name"],
+                "enabled": row["enabled"],
+                "cadence_s": row["cadence_s"],
+                "settings": settings,
+            })
+
+        # Get API keys for dropdown
+        api_keys = await conn.fetch(
+            "SELECT alias FROM config.api_keys ORDER BY alias"
+        )
+
+        # Get map tile settings
+        sys_row = await conn.fetchrow(
+            "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
+        )
+        tile_url = sys_row["map_tile_url"] if sys_row else "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+        tile_attribution = sys_row["map_attribution"] if sys_row else "&copy; OpenStreetMap contributors"
+
+    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    response = templates.TemplateResponse(
+        request=request,
+        name="setup_adapters.html",
+        context={
+            "csrf_token": csrf_token,
+            "adapters": adapters,
+            "api_keys": [{"alias": k["alias"]} for k in api_keys],
+            "valid_satellites": _get_valid_satellites(),
+            "valid_feeds": sorted(_get_valid_feeds()),
+            "tile_url": tile_url,
+            "tile_attribution": tile_attribution,
+            "error": None,
+            "errors": None,
+            "form_data": None,
+        },
+    )
+    csrf_protect.set_csrf_cookie(signed_token, response)
+    return response
+
+
+@router.post("/setup/adapters")
+async def setup_adapters_submit(
+    request: Request,
+    csrf_protect: CsrfProtect = Depends(),
+) -> Response:
+    """Process the adapters configuration form (step 4)."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    templates = _get_templates()
+    pool = get_pool()
+
+    await csrf_protect.validate_csrf(request)
+
+    form = await request.form()
+    errors: dict[str, str] = {}
+
+    async with pool.acquire() as conn:
+        # Get current adapters
+        rows = await conn.fetch(
+            """
+            SELECT name, enabled, cadence_s, settings
+            FROM config.adapters
+            ORDER BY name
+            """
+        )
+
+        for row in rows:
+            adapter_name = row["name"]
+            current_settings = row["settings"] or {}
+            new_settings = dict(current_settings)
+
+            # Parse enabled
+            enabled = f"{adapter_name}_enabled" in form
+
+            # Parse cadence
+            cadence_str = form.get(f"{adapter_name}_cadence_s", "")
+            try:
+                cadence_s = int(cadence_str)
+                if cadence_s < 60 or cadence_s > 3600:
+                    errors[f"{adapter_name}_cadence_s"] = "Cadence must be between 60 and 3600 seconds"
+            except ValueError:
+                errors[f"{adapter_name}_cadence_s"] = "Cadence must be a valid integer"
+                cadence_s = row["cadence_s"]
+
+            # Adapter-specific validation
+            if adapter_name == "nws":
+                contact_email = form.get(f"{adapter_name}_contact_email", "").strip()
+                if enabled:
+                    if not contact_email:
+                        errors[f"{adapter_name}_contact_email"] = "Contact email is required when enabled"
+                    elif not EMAIL_REGEX.match(contact_email):
+                        errors[f"{adapter_name}_contact_email"] = "Invalid email format"
+                    else:
+                        new_settings["contact_email"] = contact_email
+                else:
+                    new_settings["contact_email"] = contact_email if contact_email else current_settings.get("contact_email")
+
+            elif adapter_name == "firms":
+                api_key_alias = form.get(f"{adapter_name}_api_key_alias", "").strip()
+                satellites = form.getlist(f"{adapter_name}_satellites")
+
+                if api_key_alias:
+                    key_exists = await conn.fetchrow(
+                        "SELECT 1 FROM config.api_keys WHERE alias = $1",
+                        api_key_alias,
+                    )
+                    if not key_exists:
+                        errors[f"{adapter_name}_api_key_alias"] = f"API key alias '{api_key_alias}' does not exist"
+                    else:
+                        new_settings["api_key_alias"] = api_key_alias
+                else:
+                    new_settings["api_key_alias"] = None
+
+                # Validate satellites
+                valid_sats = set(_get_valid_satellites())
+                invalid_sats = [s for s in satellites if s not in valid_sats]
+                if invalid_sats:
+                    errors[f"{adapter_name}_satellites"] = f"Invalid satellites: {', '.join(invalid_sats)}"
+                else:
+                    new_settings["satellites"] = satellites
+
+            elif adapter_name == "usgs_quake":
+                feed = form.get(f"{adapter_name}_feed", "").strip()
+                valid_feeds = _get_valid_feeds()
+                if feed not in valid_feeds:
+                    errors[f"{adapter_name}_feed"] = f"Invalid feed"
+                else:
+                    new_settings["feed"] = feed
+
+            # Region validation
+            region_north_str = form.get(f"{adapter_name}_region_north", "").strip()
+            region_south_str = form.get(f"{adapter_name}_region_south", "").strip()
+            region_east_str = form.get(f"{adapter_name}_region_east", "").strip()
+            region_west_str = form.get(f"{adapter_name}_region_west", "").strip()
+
+            try:
+                region_north = float(region_north_str)
+                region_south = float(region_south_str)
+                region_east = float(region_east_str)
+                region_west = float(region_west_str)
+
+                if not (-90 <= region_south < region_north <= 90):
+                    errors[f"{adapter_name}_region"] = "Invalid latitude: south must be less than north, both between -90 and 90"
+                elif not (-180 <= region_west < region_east <= 180):
+                    errors[f"{adapter_name}_region"] = "Invalid longitude: west must be less than east, both between -180 and 180"
+                else:
+                    new_settings["region"] = {
+                        "north": region_north,
+                        "south": region_south,
+                        "east": region_east,
+                        "west": region_west,
+                    }
+            except ValueError:
+                errors[f"{adapter_name}_region"] = "Region coordinates must be valid numbers"
+
+            # Store parsed data for re-render on error or update
+            if not errors.get(f"{adapter_name}_cadence_s"):
+                # Update adapter
+                await conn.execute(
+                    """
+                    UPDATE config.adapters
+                    SET enabled = $1, cadence_s = $2, settings = $3, updated_at = now()
+                    WHERE name = $4
+                    """,
+                    enabled,
+                    cadence_s,
+                    new_settings,
+                    adapter_name,
+                )
+
+        # If any errors, re-render
+        if errors:
+            adapters = []
+            rows = await conn.fetch(
+                """
+                SELECT name, enabled, cadence_s, settings
+                FROM config.adapters
+                ORDER BY name
+                """
+            )
+            for row in rows:
+                settings = row["settings"] or {}
+                adapters.append({
+                    "name": row["name"],
+                    "enabled": row["enabled"],
+                    "cadence_s": row["cadence_s"],
+                    "settings": settings,
+                })
+
+            api_keys = await conn.fetch(
+                "SELECT alias FROM config.api_keys ORDER BY alias"
+            )
+
+            sys_row = await conn.fetchrow(
+                "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
+            )
+            tile_url = sys_row["map_tile_url"] if sys_row else "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+            tile_attribution = sys_row["map_attribution"] if sys_row else "&copy; OpenStreetMap contributors"
+
+            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            response = templates.TemplateResponse(
+                request=request,
+                name="setup_adapters.html",
+                context={
+                    "csrf_token": csrf_token,
+                    "adapters": adapters,
+                    "api_keys": [{"alias": k["alias"]} for k in api_keys],
+                    "valid_satellites": _get_valid_satellites(),
+                    "valid_feeds": sorted(_get_valid_feeds()),
+                    "tile_url": tile_url,
+                    "tile_attribution": tile_attribution,
+                    "error": "Please fix the errors below.",
+                    "errors": errors,
+                    "form_data": form,
+                },
+                status_code=200,
+            )
+            csrf_protect.set_csrf_cookie(signed_token, response)
+            return response
+
+    return RedirectResponse(url="/setup/finish", status_code=302)
+
+
+@router.get("/setup/finish", response_class=HTMLResponse)
+async def setup_finish_form(
+    request: Request,
+    csrf_protect: CsrfProtect = Depends(),
+) -> HTMLResponse:
+    """Render the finish setup page (step 5)."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    templates = _get_templates()
+    pool = get_pool()
+
+    async with pool.acquire() as conn:
+        # Get counts
+        operator_count = await conn.fetchval("SELECT COUNT(*) FROM config.operators")
+        key_count = await conn.fetchval("SELECT COUNT(*) FROM config.api_keys")
+
+        # Get system settings
+        sys_row = await conn.fetchrow(
+            "SELECT map_tile_url FROM config.system WHERE id = true"
+        )
+        system = {
+            "map_tile_url": sys_row["map_tile_url"] if sys_row else "",
+        }
+
+        # Get adapters
+        rows = await conn.fetch(
+            """
+            SELECT name, enabled, cadence_s
+            FROM config.adapters
+            ORDER BY name
+            """
+        )
+        adapters = [
+            {
+                "name": row["name"],
+                "enabled": row["enabled"],
+                "cadence_s": row["cadence_s"],
+            }
+            for row in rows
+        ]
+
+    csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+    response = templates.TemplateResponse(
+        request=request,
+        name="setup_finish.html",
+        context={
+            "csrf_token": csrf_token,
+            "operator_count": operator_count,
+            "key_count": key_count,
+            "system": system,
+            "adapters": adapters,
+        },
+    )
+    csrf_protect.set_csrf_cookie(signed_token, response)
+    return response
+
+
+@router.post("/setup/finish")
+async def setup_finish_submit(
+    request: Request,
+    csrf_protect: CsrfProtect = Depends(),
+) -> Response:
+    """Complete the setup wizard."""
+    # Require authentication for this step
+    operator = getattr(request.state, "operator", None)
+    if operator is None:
+        return RedirectResponse(url="/setup/operator", status_code=302)
+
+    pool = get_pool()
+
+    await csrf_protect.validate_csrf(request)
+
+    async with pool.acquire() as conn:
         # Mark setup complete
         await conn.execute(
             "UPDATE config.system SET setup_complete = true WHERE id = true"
         )
 
-    # Redirect with session cookie
-    response = RedirectResponse(url="/", status_code=302)
-    _set_session_cookie(response, token, lifetime_days * 86400)
-    return response
+        # Write audit log
+        await write_audit(
+            conn,
+            SETUP_COMPLETE,
+            operator_id=operator.id,
+            target="system",
+        )
+
+    return RedirectResponse(url="/", status_code=302)
 
 
 @router.get("/login", response_class=HTMLResponse)
