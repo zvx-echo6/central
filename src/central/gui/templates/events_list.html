@@ -10,10 +10,15 @@
         margin-bottom: 0.5rem;
         border-radius: var(--pico-border-radius);
     }
+    .map-controls {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
     .map-legend {
         display: flex;
         gap: 1rem;
-        margin-bottom: 1rem;
         font-size: 0.85rem;
     }
     .map-legend-item {
@@ -27,18 +32,59 @@
         border-radius: 3px;
         border: 1px solid rgba(0,0,0,0.2);
     }
+    #fit-to-results {
+        padding: 0.25rem 0.75rem;
+        font-size: 0.85rem;
+    }
     .events-table {
         font-size: 0.9rem;
     }
     .events-table td {
         vertical-align: middle;
     }
-    .events-table tr:hover {
+    .events-table tr.event-row:hover {
         background-color: var(--pico-primary-focus);
         cursor: pointer;
     }
-    .events-table tr.highlighted {
+    .events-table tr.event-row.highlighted {
         background-color: var(--pico-primary-background);
+    }
+    .expand-row {
+        background: none;
+        border: none;
+        padding: 0.25rem;
+        cursor: pointer;
+        font-size: 0.9rem;
+        color: var(--pico-color);
+    }
+    .expand-row:hover {
+        color: var(--pico-primary);
+    }
+    .event-detail td {
+        background-color: var(--pico-card-background-color);
+        padding: 1rem;
+    }
+    .event-detail-list {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.5rem 1rem;
+        margin: 0;
+    }
+    .event-detail-list dt {
+        font-weight: 600;
+        color: var(--pico-muted-color);
+    }
+    .event-detail-list dd {
+        margin: 0;
+    }
+    .event-data-pre {
+        max-height: 300px;
+        overflow: auto;
+        font-size: 0.8rem;
+        background: var(--pico-code-background-color);
+        padding: 0.5rem;
+        border-radius: var(--pico-border-radius);
+        margin: 0;
     }
     .filter-form .grid {
         margin-bottom: 0.5rem;
@@ -115,19 +161,22 @@
 </details>
 
 <div id="events-map"></div>
-<div class="map-legend">
-    <div class="map-legend-item">
-        <div class="map-legend-swatch" style="background-color: #f59e0b;"></div>
-        <span>NWS (Weather)</span>
+<div class="map-controls">
+    <div class="map-legend">
+        <div class="map-legend-item">
+            <div class="map-legend-swatch" style="background-color: #f59e0b;"></div>
+            <span>NWS (Weather)</span>
+        </div>
+        <div class="map-legend-item">
+            <div class="map-legend-swatch" style="background-color: #dc2626;"></div>
+            <span>FIRMS (Fire)</span>
+        </div>
+        <div class="map-legend-item">
+            <div class="map-legend-swatch" style="background-color: #7c3aed;"></div>
+            <span>USGS (Quake)</span>
+        </div>
     </div>
-    <div class="map-legend-item">
-        <div class="map-legend-swatch" style="background-color: #dc2626;"></div>
-        <span>FIRMS (Fire)</span>
-    </div>
-    <div class="map-legend-item">
-        <div class="map-legend-swatch" style="background-color: #7c3aed;"></div>
-        <span>USGS (Quake)</span>
-    </div>
+    <button type="button" id="fit-to-results" class="outline secondary">Fit map to results</button>
 </div>
 
 <div id="events-rows">
@@ -159,10 +208,11 @@
         maxZoom: 18
     }).addTo(map);
 
-    // Layer groups for event geometries
-    var eventLayers = {};
+    // Layer group for event geometries
+    var eventLayerGroup = L.layerGroup().addTo(map);
     var highlightedRow = null;
     var highlightedLayer = null;
+    var isInitialLoad = true;
 
     // Region input elements
     var northInput = document.getElementById("region_north");
@@ -170,21 +220,10 @@
     var eastInput = document.getElementById("region_east");
     var westInput = document.getElementById("region_west");
 
-    // Flag to distinguish programmatic vs user map moves
-    var programmaticMove = false;
+    // Viewport-driven filter with debounce
     var viewportDebounceTimer = null;
-    var isInitialLoad = true;
 
-    // Viewport-driven filter
     map.on("moveend", function() {
-        if (programmaticMove) {
-            programmaticMove = false;
-            return;
-        }
-        if (isInitialLoad) {
-            isInitialLoad = false;
-            return;
-        }
         if (viewportDebounceTimer) clearTimeout(viewportDebounceTimer);
         viewportDebounceTimer = setTimeout(applyViewportFilter, 400);
     });
@@ -200,18 +239,29 @@
         );
     }
 
-    function loadEventGeometries(fitBounds) {
-        // Clear existing event layers
-        for (var key in eventLayers) {
-            map.removeLayer(eventLayers[key].layer);
-            delete eventLayers[key];
+    function buildPopup(row) {
+        var adapter = row.dataset.adapter || "";
+        var category = row.dataset.category || "";
+        var time = row.dataset.time ? new Date(row.dataset.time).toLocaleString() : "";
+        var subject = row.dataset.subject || "";
+        var eventId = row.dataset.eventId || "";
+
+        var html = "<strong>" + adapter + "</strong><br>" +
+            category + "<br>" +
+            "<small>" + time + "</small>";
+        if (subject) {
+            html += "<br><em>" + subject + "</em>";
         }
+        html += '<br><a href="#" data-show-row="' + eventId + '">View details &#9662;</a>';
+        return html;
+    }
 
-        var rows = document.querySelectorAll("#events-rows tr[data-geometry]");
-        var bounds = L.latLngBounds();
-        var hasGeometries = false;
+    function rebindEventLayers() {
+        eventLayerGroup.clearLayers();
 
-        rows.forEach(function(row, idx) {
+        var rows = document.querySelectorAll("#events-rows tr.event-row[data-geometry]");
+
+        rows.forEach(function(row) {
             var geomStr = row.dataset.geometry;
             if (!geomStr || geomStr === "") return;
 
@@ -222,15 +272,13 @@
                 var adapter = row.dataset.adapter || "";
                 var color = getAdapterColor(adapter);
 
-                var style = {
-                    color: color,
-                    weight: 2,
-                    fillColor: color,
-                    fillOpacity: 0.25
-                };
-
                 var layer = L.geoJSON(geom, {
-                    style: style,
+                    style: {
+                        color: color,
+                        weight: 2,
+                        fillColor: color,
+                        fillOpacity: 0.25
+                    },
                     pointToLayer: function(feature, latlng) {
                         return L.circleMarker(latlng, {
                             radius: 8,
@@ -242,136 +290,153 @@
                     }
                 });
 
-                // Bind popup with event details
-                var time = row.dataset.time ? new Date(row.dataset.time).toLocaleString() : "";
-                var category = row.dataset.category || "";
-                var subject = row.dataset.subject || "";
-                var popupContent = "<strong>" + adapter + "</strong><br>" +
-                    category + "<br>" +
-                    "<small>" + time + "</small>";
-                if (subject) {
-                    popupContent += "<br><em>" + subject + "</em>";
-                }
-                layer.bindPopup(popupContent);
-
-                layer.addTo(map);
-                eventLayers[idx] = { layer: layer, color: color };
-
-                try {
-                    bounds.extend(layer.getBounds());
-                    hasGeometries = true;
-                } catch (e) {
-                    if (geom.type === "Point" && geom.coordinates) {
-                        bounds.extend(L.latLng(geom.coordinates[1], geom.coordinates[0]));
-                        hasGeometries = true;
-                    }
-                }
-
-                layer.on("click", function(e) {
-                    highlightRow(row, eventLayers[idx]);
-                    L.DomEvent.stopPropagation(e);
+                layer.bindPopup(buildPopup(row));
+                layer.on("click", function() {
+                    highlightRow(row, layer, color);
                 });
+
+                layer.addTo(eventLayerGroup);
+
+                // Store reference for row highlighting
+                row._mapLayer = layer;
+                row._mapColor = color;
             } catch (e) {
                 console.error("Error parsing geometry:", e);
             }
         });
-
-        if (hasGeometries && fitBounds) {
-            programmaticMove = true;
-            map.fitBounds(bounds.pad(0.1));
-        }
     }
 
-    function highlightRow(row, entry) {
+    function highlightRow(row, layer, originalColor) {
+        // Reset previous highlight
         if (highlightedRow) {
             highlightedRow.classList.remove("highlighted");
         }
-        if (highlightedLayer) {
-            for (var key in eventLayers) {
-                if (eventLayers[key].layer === highlightedLayer) {
-                    highlightedLayer.setStyle({
-                        color: eventLayers[key].color,
-                        weight: 2,
-                        fillColor: eventLayers[key].color,
-                        fillOpacity: 0.25
-                    });
-                    break;
-                }
-            }
+        if (highlightedLayer && highlightedLayer._originalColor) {
+            highlightedLayer.setStyle({
+                color: highlightedLayer._originalColor,
+                weight: 2,
+                fillColor: highlightedLayer._originalColor,
+                fillOpacity: 0.25
+            });
         }
 
+        // Set new highlight
         row.classList.add("highlighted");
         highlightedRow = row;
 
-        if (entry && entry.layer) {
-            entry.layer.setStyle({
+        if (layer) {
+            layer._originalColor = originalColor;
+            layer.setStyle({
                 color: "#ff3333",
                 weight: 4,
                 fillColor: "#ff3333",
                 fillOpacity: 0.4
             });
-            highlightedLayer = entry.layer;
+            highlightedLayer = layer;
         }
     }
 
-    function attachRowHandlers() {
-        var rows = document.querySelectorAll("#events-rows tr[data-row-idx]");
-        rows.forEach(function(row) {
-            var idx = parseInt(row.dataset.rowIdx);
-            row.addEventListener("click", function() {
-                var entry = eventLayers[idx];
-                if (entry) {
-                    highlightRow(row, entry);
-                    try {
-                        programmaticMove = true;
-                        map.fitBounds(entry.layer.getBounds().pad(0.2));
-                    } catch (e) {
-                        var geomStr = row.dataset.geometry;
-                        if (geomStr) {
-                            var geom = JSON.parse(geomStr);
-                            if (geom && geom.type === "Point" && geom.coordinates) {
-                                programmaticMove = true;
-                                map.setView([geom.coordinates[1], geom.coordinates[0]], 10);
-                            }
-                        }
-                    }
-                }
-            });
-            row.addEventListener("mouseenter", function() {
-                var entry = eventLayers[idx];
-                if (entry && entry.layer !== highlightedLayer) {
-                    entry.layer.setStyle({
-                        color: entry.color,
-                        weight: 3,
-                        fillColor: entry.color,
-                        fillOpacity: 0.25
-                    });
-                }
-            });
-            row.addEventListener("mouseleave", function() {
-                var entry = eventLayers[idx];
-                if (entry && entry.layer !== highlightedLayer) {
-                    entry.layer.setStyle({
-                        color: entry.color,
-                        weight: 2,
-                        fillColor: entry.color,
-                        fillOpacity: 0.25
-                    });
-                }
-            });
-        });
+    function fitToAllLayers() {
+        var layers = eventLayerGroup.getLayers();
+        if (layers.length === 0) return;
+        var group = L.featureGroup(layers);
+        map.fitBounds(group.getBounds(), { padding: [20, 20] });
     }
 
-    loadEventGeometries(true);
-    attachRowHandlers();
+    // Row click handler (event delegation)
+    document.addEventListener("click", function(e) {
+        // Expand/collapse handler
+        if (e.target.classList.contains("expand-row")) {
+            var row = e.target.closest("tr");
+            var detail = row.nextElementSibling;
+            if (detail && detail.classList.contains("event-detail")) {
+                detail.hidden = !detail.hidden;
+                e.target.innerHTML = detail.hidden ? "&#9656;" : "&#9662;";
+            }
+            return;
+        }
 
-    document.body.addEventListener("htmx:afterSwap", function(evt) {
-        if (evt.detail.target.id === "events-rows") {
-            loadEventGeometries(true);
-            attachRowHandlers();
+        // Popup "View details" link handler
+        if (e.target.matches("[data-show-row]")) {
+            e.preventDefault();
+            var eventId = e.target.dataset.showRow;
+            var targetRow = document.querySelector(
+                'tr[data-event-id="' + CSS.escape(eventId) + '"]'
+            );
+            if (!targetRow) return;
+            targetRow.scrollIntoView({ behavior: "smooth", block: "center" });
+            var detail = targetRow.nextElementSibling;
+            if (detail && detail.classList.contains("event-detail")) {
+                detail.hidden = false;
+                var button = targetRow.querySelector(".expand-row");
+                if (button) button.innerHTML = "&#9662;";
+            }
+            return;
+        }
+
+        // Row click to highlight and pan
+        var row = e.target.closest("tr.event-row");
+        if (row && row._mapLayer) {
+            highlightRow(row, row._mapLayer, row._mapColor);
+            try {
+                map.fitBounds(row._mapLayer.getBounds(), { padding: [50, 50] });
+            } catch (err) {
+                // Point geometries
+                var geomStr = row.dataset.geometry;
+                if (geomStr) {
+                    var geom = JSON.parse(geomStr);
+                    if (geom && geom.type === "Point" && geom.coordinates) {
+                        map.setView([geom.coordinates[1], geom.coordinates[0]], 10);
+                    }
+                }
+            }
         }
     });
 
+    // Row hover handlers (event delegation)
+    document.addEventListener("mouseenter", function(e) {
+        var row = e.target.closest && e.target.closest("tr.event-row");
+        if (row && row._mapLayer && row._mapLayer !== highlightedLayer) {
+            row._mapLayer.setStyle({
+                color: row._mapColor,
+                weight: 3,
+                fillColor: row._mapColor,
+                fillOpacity: 0.25
+            });
+        }
+    }, true);
+
+    document.addEventListener("mouseleave", function(e) {
+        var row = e.target.closest && e.target.closest("tr.event-row");
+        if (row && row._mapLayer && row._mapLayer !== highlightedLayer) {
+            row._mapLayer.setStyle({
+                color: row._mapColor,
+                weight: 2,
+                fillColor: row._mapColor,
+                fillOpacity: 0.25
+            });
+        }
+    }, true);
+
+    // Fit to results button
+    document.getElementById("fit-to-results").addEventListener("click", fitToAllLayers);
+
+    // Initial load - bind layers and fit bounds
+    rebindEventLayers();
+    if (isInitialLoad) {
+        fitToAllLayers();
+        isInitialLoad = false;
+    }
+
+    // Re-bind layers after HTMX swap (but do NOT fit bounds)
+    document.body.addEventListener("htmx:afterSwap", function(evt) {
+        if (evt.detail.target.id === "events-rows") {
+            rebindEventLayers();
+            // Do NOT call fitToAllLayers - preserve user viewport
+        }
+    });
+
+    // Fix map rendering after container shows
     setTimeout(function() { map.invalidateSize(); }, 100);
 })();
 </script>

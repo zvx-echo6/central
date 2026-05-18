@@ -8,6 +8,7 @@
 <table class="events-table">
     <thead>
         <tr>
+            <th style="width: 2rem;"></th>
             <th>Time</th>
             <th>Adapter</th>
             <th>Category</th>
@@ -17,17 +18,35 @@
     </thead>
     <tbody>
         {% for event in events %}
-        <tr data-row-idx="{{ loop.index0 }}"
+        <tr class="event-row" data-row-idx="{{ loop.index0 }}"
+            data-event-id="{{ event.id }}"
             data-adapter="{{ event.adapter }}"
             data-category="{{ event.category }}"
             data-time="{{ event.time }}"
             data-subject="{{ event.subject or '' }}"
             {% if event.geometry %}data-geometry='{{ event.geometry | tojson }}'{% endif %}>
+            <td><button type="button" class="expand-row" aria-label="Expand">&#9656;</button></td>
             <td>{{ event.time }}</td>
             <td>{{ event.adapter }}</td>
             <td>{{ event.category }}</td>
             <td>{{ event.geometry_summary }}</td>
             <td>{{ event.subject or '—' }}</td>
+        </tr>
+        <tr class="event-detail" hidden>
+            <td colspan="6">
+                <dl class="event-detail-list">
+                    <dt>Event ID</dt>
+                    <dd><code>{{ event.id }}</code></dd>
+                    <dt>Received</dt>
+                    <dd>{{ event.received }}</dd>
+                    {% if event.regions %}
+                    <dt>Regions</dt>
+                    <dd>{{ event.regions | join(", ") }}</dd>
+                    {% endif %}
+                    <dt>Data</dt>
+                    <dd><pre class="event-data-pre">{{ event.data | tojson(indent=2) }}</pre></dd>
+                </dl>
+            </td>
         </tr>
         {% endfor %}
     </tbody>
