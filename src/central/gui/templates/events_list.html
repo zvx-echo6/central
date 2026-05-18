@@ -239,9 +239,7 @@
         southInput.value = bounds.getSouth().toFixed(4);
         eastInput.value = bounds.getEast().toFixed(4);
         westInput.value = bounds.getWest().toFixed(4);
-        document.getElementById("filter-form").dispatchEvent(
-            new Event("submit", { bubbles: true })
-        );
+        htmx.trigger(document.getElementById("filter-form"), "submit");
     }
 
     function buildPopup(row) {
@@ -417,7 +415,7 @@
     document.getElementById("fit-to-results").addEventListener("click", fitToAllLayers);
 
     // Initial load - bind layers and fit bounds
-    // rebindEventLayers(); // DISABLED: map shows all events, only table filters
+    rebindEventLayers(); // Initial load only
     if (false) { // DISABLED: map never auto-fits
         fitToAllLayers();
         isInitialLoad = false;
