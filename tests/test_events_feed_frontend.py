@@ -631,3 +631,56 @@ class TestErrorSemantics:
         assert context["filter_error"] is not None
         assert "limit" in context["filter_error"].lower()
         assert context["events"] == []
+
+
+class TestEventRowDataAttributes:
+    """Test that _events_rows.html renders required data attributes."""
+
+    @pytest.mark.asyncio
+    async def test_row_renders_data_adapter_attribute(self):
+        """Event rows include data-adapter attribute for color coding."""
+        mock_request = MagicMock()
+        mock_request.state.operator = MagicMock(id=1, username="admin")
+        mock_request.state.csrf_token = "test_csrf"
+        mock_request.query_params = {}
+
+        mock_events = [
+            {
+                "id": "test1",
+                "time": datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
+                "received": datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
+                "adapter": "usgs_quake",
+                "category": "quake.event",
+                "subject": "M4.2 Earthquake",
+                "geometry": None,
+                "data": {},
+                "regions": [],
+            },
+        ]
+
+        mock_conn = AsyncMock()
+        mock_conn.fetch.return_value = mock_events
+        mock_conn.fetchrow.return_value = {
+            "map_tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+            "map_attribution": "OpenStreetMap",
+        }
+
+        mock_pool = MagicMock()
+        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        mock_templates = MagicMock()
+        mock_templates.TemplateResponse.return_value = MagicMock(status_code=200)
+
+        with patch("central.gui.routes._get_templates", return_value=mock_templates):
+            with patch("central.gui.routes.get_pool", return_value=mock_pool):
+                result = await events_list(mock_request)
+
+        assert result.status_code == 200
+        mock_templates.TemplateResponse.assert_called_once()
+        context = mock_templates.TemplateResponse.call_args.kwargs.get("context")
+        # The template receives events with adapter field for data-adapter attribute
+        assert len(context["events"]) == 1
+        assert context["events"][0]["adapter"] == "usgs_quake"
+        assert context["events"][0]["category"] == "quake.event"
+        assert context["events"][0]["subject"] == "M4.2 Earthquake"
