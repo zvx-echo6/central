@@ -18,6 +18,14 @@ SETUP_EXEMPT_PREFIXES = ("/static/", "/setup")
 AUTH_EXEMPT_PATHS = {"/setup/operator", "/login", "/health"}
 AUTH_EXEMPT_PREFIXES = ("/static/", "/setup/")
 
+# Browser-noise paths that trigger CSRF race conditions
+BROWSER_NOISE_PATHS = {
+    "/favicon.ico",
+    "/apple-touch-icon.png",
+    "/apple-touch-icon-precomposed.png",
+    "/robots.txt",
+}
+
 
 def _is_exempt(path: str, exempt_paths: set, exempt_prefixes: tuple) -> bool:
     """Check if a path is exempt from a check."""
@@ -44,6 +52,10 @@ class SetupGateMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
+
+        # Short-circuit browser-noise requests that cause CSRF races
+        if path in BROWSER_NOISE_PATHS:
+            return Response(status_code=204)
 
         # Check setup status from database
         pool = get_pool()
@@ -101,6 +113,11 @@ class SessionMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
+
+        # Short-circuit browser-noise requests (already handled by SetupGateMiddleware,
+        # but this protects if middleware order changes)
+        if path in BROWSER_NOISE_PATHS:
+            return Response(status_code=204)
 
         # Initialize state
         request.state.operator = None
