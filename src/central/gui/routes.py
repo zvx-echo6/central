@@ -266,11 +266,27 @@ async def setup_operator_form(
 ) -> HTMLResponse:
     """Render the setup operator form (step 1)."""
     templates = _get_templates()
+    pool = get_pool()
     csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+
+    # Check if operator already exists
+    existing_operator = None
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT username FROM config.operators ORDER BY id LIMIT 1"
+        )
+        if row:
+            existing_operator = {"username": row["username"]}
+
     response = templates.TemplateResponse(
         request=request,
         name="setup_operator.html",
-        context={"csrf_token": csrf_token, "error": None, "form_data": None},
+        context={
+            "csrf_token": csrf_token,
+            "error": None,
+            "form_data": None,
+            "existing_operator": existing_operator,
+        },
     )
     csrf_protect.set_csrf_cookie(signed_token, response)
     return response
@@ -291,6 +307,28 @@ async def setup_operator_submit(
     # Validate CSRF
     await csrf_protect.validate_csrf(request)
 
+    # Check if operator already exists (single-operator-per-install design)
+    async with pool.acquire() as conn:
+        count = await conn.fetchval("SELECT count(*) FROM config.operators")
+        if count > 0:
+            # Operator already exists — render confirmation page
+            existing = await conn.fetchrow(
+                "SELECT username FROM config.operators ORDER BY id LIMIT 1"
+            )
+            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+            response = templates.TemplateResponse(
+                request=request,
+                name="setup_operator.html",
+                context={
+                    "csrf_token": csrf_token,
+                    "error": None,
+                    "form_data": None,
+                    "existing_operator": {"username": existing["username"]},
+                },
+            )
+            csrf_protect.set_csrf_cookie(signed_token, response)
+            return response
+
     # Validate input
     error = None
     if password != confirm_password:
@@ -310,6 +348,7 @@ async def setup_operator_submit(
                 "csrf_token": csrf_token,
                 "error": error,
                 "form_data": {"username": username},
+                "existing_operator": None,
             },
             status_code=200,
         )

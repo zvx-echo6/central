@@ -74,23 +74,63 @@ class TestSetupOperatorForm:
 
     @pytest.mark.asyncio
     async def test_get_returns_form(self):
-        """GET /setup/operator returns the form."""
+        """GET /setup/operator returns the form when no operator exists."""
         mock_request = MagicMock()
 
         mock_templates = MagicMock()
         mock_templates.TemplateResponse.return_value = MagicMock()
+
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow.return_value = None  # No operator exists
+
+        mock_pool = MagicMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+        mock_pool.acquire.return_value.__aexit__.return_value = None
 
         mock_csrf = MagicMock()
         mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
         mock_csrf.set_csrf_cookie = MagicMock()
 
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
-            result = await setup_operator_form(mock_request, mock_csrf)
+            with patch("central.gui.routes.get_pool", return_value=mock_pool):
+                result = await setup_operator_form(mock_request, mock_csrf)
 
         mock_templates.TemplateResponse.assert_called_once()
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
         assert context["csrf_token"] == "token"
+        assert context["error"] is None
+        assert context["existing_operator"] is None
+
+    @pytest.mark.asyncio
+    async def test_get_returns_confirmation_when_operator_exists(self):
+        """GET /setup/operator shows confirmation when operator already exists."""
+        mock_request = MagicMock()
+
+        mock_templates = MagicMock()
+        mock_response = MagicMock()
+        mock_response.body = b"Operator Already Configured"
+        mock_templates.TemplateResponse.return_value = mock_response
+
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow.return_value = {"username": "admin"}  # Operator exists
+
+        mock_pool = MagicMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+        mock_pool.acquire.return_value.__aexit__.return_value = None
+
+        mock_csrf = MagicMock()
+        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
+        mock_csrf.set_csrf_cookie = MagicMock()
+
+        with patch("central.gui.routes._get_templates", return_value=mock_templates):
+            with patch("central.gui.routes.get_pool", return_value=mock_pool):
+                result = await setup_operator_form(mock_request, mock_csrf)
+
+        mock_templates.TemplateResponse.assert_called_once()
+        call_args = mock_templates.TemplateResponse.call_args
+        context = call_args.kwargs.get("context", call_args[1].get("context"))
+        assert context["existing_operator"] == {"username": "admin"}
         assert context["error"] is None
 
 
@@ -104,7 +144,12 @@ class TestSetupOperatorSubmit:
         mock_templates = MagicMock()
         mock_templates.TemplateResponse.return_value = MagicMock()
 
+        mock_conn = AsyncMock()
+        mock_conn.fetchval.return_value = 0  # No existing operators
+
         mock_pool = MagicMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+        mock_pool.acquire.return_value.__aexit__.return_value = None
 
         mock_csrf = MagicMock()
         mock_csrf.validate_csrf = AsyncMock()
@@ -131,6 +176,7 @@ class TestSetupOperatorSubmit:
         mock_request = MagicMock()
 
         mock_conn = AsyncMock()
+        mock_conn.fetchval.return_value = 0  # No existing operators
         mock_conn.fetchrow.side_effect = [
             {"id": 1},  # INSERT RETURNING id
             {"session_lifetime_days": 90},  # system settings
@@ -158,6 +204,51 @@ class TestSetupOperatorSubmit:
 
         assert result.status_code == 302
         assert result.headers["location"] == "/setup/system"
+
+    @pytest.mark.asyncio
+    async def test_post_when_operator_exists_shows_confirmation(self):
+        """POST when operator exists returns 200 with confirmation, no insert."""
+        mock_request = MagicMock()
+
+        mock_templates = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_templates.TemplateResponse.return_value = mock_response
+
+        mock_conn = AsyncMock()
+        mock_conn.fetchval.return_value = 1  # Operator already exists
+        mock_conn.fetchrow.return_value = {"username": "existing_admin"}
+
+        mock_pool = MagicMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+        mock_pool.acquire.return_value.__aexit__.return_value = None
+
+        mock_csrf = MagicMock()
+        mock_csrf.validate_csrf = AsyncMock()
+        mock_csrf.generate_csrf_tokens.return_value = ("token", "signed")
+        mock_csrf.set_csrf_cookie = MagicMock()
+
+        with patch("central.gui.routes._get_templates", return_value=mock_templates):
+            with patch("central.gui.routes.get_pool", return_value=mock_pool):
+                with patch("central.gui.routes.write_audit", new_callable=AsyncMock) as mock_audit:
+                    result = await setup_operator_submit(
+                        mock_request,
+                        username="newadmin",
+                        password="password123",
+                        confirm_password="password123",
+                        csrf_protect=mock_csrf,
+                    )
+
+        # Should return 200, not 500 or redirect
+        assert result.status_code == 200
+
+        # Should render confirmation state
+        call_args = mock_templates.TemplateResponse.call_args
+        context = call_args.kwargs.get("context", call_args[1].get("context"))
+        assert context["existing_operator"] == {"username": "existing_admin"}
+
+        # Should NOT call write_audit (no insert happened)
+        mock_audit.assert_not_called()
 
 
 class TestSetupSystemForm:
