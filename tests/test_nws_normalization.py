@@ -16,7 +16,7 @@ from central.adapters.nws import (
     _compute_bbox,
     SEVERITY_MAP,
 )
-from central.config import NWSAdapterConfig
+from central.config_models import AdapterConfig
 from central.models import subject_for_event
 
 
@@ -51,7 +51,7 @@ SAMPLE_FEATURE_ID = {
 SAMPLE_FEATURE_OR = {
     "id": "urn:oid:2.49.0.1.840.0.x1y2z3w4",
     "type": "Feature",
-    "geometry": None,
+    "geometry": {"type": "Point", "coordinates": [-122.7, 45.5]},  # Portland, OR
     "properties": {
         "id": "urn:oid:2.49.0.1.840.0.x1y2z3w4",
         "event": "Winter Storm Warning",
@@ -181,18 +181,24 @@ class TestBuildRegions:
 
 
 class TestStateFilter:
-    """Tests for state filtering."""
+    """Tests for region-based filtering."""
 
     @pytest.fixture
     def adapter(self, tmp_path: Path) -> NWSAdapter:
-        """Create adapter with ID/OR/WA states."""
-        config = NWSAdapterConfig(
+        """Create adapter with Pacific Northwest region (excludes CA)."""
+        config = AdapterConfig(
+            name="nws",
             enabled=True,
             cadence_s=60,
-            states=["ID", "OR", "WA", "MT", "WY", "UT", "NV"],
-            contact_email="test@example.com",
+            settings={
+                "contact_email": "test@example.com",
+                # Pacific NW region: WA/OR/ID - excludes CA (LA at 34N, region starts at 42N)
+                "region": {"north": 49.0, "south": 42.0, "east": -104.0, "west": -125.0},
+            },
+            updated_at=datetime.now(timezone.utc),
         )
-        return NWSAdapter(config, tmp_path / "test.db")
+        mock_config_store = MagicMock()
+        return NWSAdapter(config, mock_config_store, tmp_path / "test.db")
 
     def test_accepts_id_feature(self, adapter: NWSAdapter) -> None:
         event = adapter._normalize_feature(SAMPLE_FEATURE_ID)
@@ -228,13 +234,18 @@ class TestSeverityMapping:
         assert SEVERITY_MAP["Unknown"] is None
 
     def test_unknown_severity_in_feature(self, tmp_path: Path) -> None:
-        config = NWSAdapterConfig(
+        config = AdapterConfig(
+            name="nws",
             enabled=True,
             cadence_s=60,
-            states=["WA"],
-            contact_email="test@example.com",
+            settings={
+                "contact_email": "test@example.com",
+                # No region = accept all features
+            },
+            updated_at=datetime.now(timezone.utc),
         )
-        adapter = NWSAdapter(config, tmp_path / "test.db")
+        mock_config_store = MagicMock()
+        adapter = NWSAdapter(config, mock_config_store, tmp_path / "test.db")
         event = adapter._normalize_feature(SAMPLE_FEATURE_UNKNOWN_SEVERITY)
         assert event is not None
         assert event.severity is None
@@ -245,13 +256,18 @@ class TestSubjectDerivation:
 
     @pytest.fixture
     def adapter(self, tmp_path: Path) -> NWSAdapter:
-        config = NWSAdapterConfig(
+        config = AdapterConfig(
+            name="nws",
             enabled=True,
             cadence_s=60,
-            states=["ID", "OR", "WA"],
-            contact_email="test@example.com",
+            settings={
+                "contact_email": "test@example.com",
+                # No region = accept all features
+            },
+            updated_at=datetime.now(timezone.utc),
         )
-        return NWSAdapter(config, tmp_path / "test.db")
+        mock_config_store = MagicMock()
+        return NWSAdapter(config, mock_config_store, tmp_path / "test.db")
 
     def test_county_subject(self, adapter: NWSAdapter) -> None:
         event = adapter._normalize_feature(SAMPLE_FEATURE_ID)
@@ -287,13 +303,18 @@ class TestRegionsSorted:
 
     @pytest.fixture
     def adapter(self, tmp_path: Path) -> NWSAdapter:
-        config = NWSAdapterConfig(
+        config = AdapterConfig(
+            name="nws",
             enabled=True,
             cadence_s=60,
-            states=["ID"],
-            contact_email="test@example.com",
+            settings={
+                "contact_email": "test@example.com",
+                # No region = accept all features
+            },
+            updated_at=datetime.now(timezone.utc),
         )
-        return NWSAdapter(config, tmp_path / "test.db")
+        mock_config_store = MagicMock()
+        return NWSAdapter(config, mock_config_store, tmp_path / "test.db")
 
     def test_regions_alphabetically_sorted(self, adapter: NWSAdapter) -> None:
         event = adapter._normalize_feature(SAMPLE_FEATURE_ID)
@@ -312,13 +333,18 @@ class TestDeduplication:
 
     @pytest.fixture
     def adapter(self, tmp_path: Path) -> NWSAdapter:
-        config = NWSAdapterConfig(
+        config = AdapterConfig(
+            name="nws",
             enabled=True,
             cadence_s=60,
-            states=["ID"],
-            contact_email="test@example.com",
+            settings={
+                "contact_email": "test@example.com",
+                # No region = accept all features
+            },
+            updated_at=datetime.now(timezone.utc),
         )
-        return NWSAdapter(config, tmp_path / "test.db")
+        mock_config_store = MagicMock()
+        return NWSAdapter(config, mock_config_store, tmp_path / "test.db")
 
     def test_same_feature_same_id(self, adapter: NWSAdapter) -> None:
         """Normalizing the same feature twice returns same Event.id."""
