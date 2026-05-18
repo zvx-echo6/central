@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Central — Add API Key{% endblock %}
+
+{% block content %}
+<h1>Add API Key</h1>
+
+<form action="/api-keys" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <label for="alias">Alias</label>
+    <input type="text" id="alias" name="alias" value="{{ alias | default('', true) }}"
+           placeholder="e.g., firms_production" required maxlength="64"
+           aria-invalid="{{ 'true' if errors and errors.alias else 'false' }}">
+    {% if errors and errors.alias %}
+    <small style="color: var(--pico-color-red-500);">{{ errors.alias }}</small>
+    {% else %}
+    <small>Letters, numbers, and underscores only. Max 64 characters.</small>
+    {% endif %}
+
+    <label for="plaintext_key">API Key</label>
+    <input type="password" id="plaintext_key" name="plaintext_key"
+           placeholder="Paste your API key here" required maxlength="4096"
+           aria-invalid="{{ 'true' if errors and errors.plaintext_key else 'false' }}">
+    {% if errors and errors.plaintext_key %}
+    <small style="color: var(--pico-color-red-500);">{{ errors.plaintext_key }}</small>
+    {% else %}
+    <small>The key will be encrypted before storage. You will not be able to view it again.</small>
+    {% endif %}
+
+    <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+        <button type="submit">Save Key</button>
+        <a href="/api-keys" role="button" class="outline">Cancel</a>
+    </div>
+</form>
+{% endblock %}

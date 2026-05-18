@@ -11,6 +11,9 @@ AUTH_PASSWORD_CHANGE = "auth.password_change"
 OPERATOR_CREATE = "operator.create"
 ADAPTER_UPDATE = "adapter.update"
 STREAM_UPDATE = "stream.update"
+API_KEY_CREATE = "api_key.create"
+API_KEY_ROTATE = "api_key.rotate"
+API_KEY_DELETE = "api_key.delete"
 
 
 async def write_audit(
