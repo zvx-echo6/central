@@ -2,9 +2,10 @@
 <article aria-label="Preview Unavailable" style="background-color: var(--pico-del-color); margin-bottom: 1rem;">
     <strong>{{ preview_error }}</strong>
 </article>
-{% elif preview_rows %}
+{% elif preview_rows is not none %}
 <fieldset>
     <legend>Preview ({{ preview_rows|length }} rows)</legend>
+    {% if preview_rows %}
     <table class="preview-table" role="grid">
         <thead>
             <tr>
@@ -19,5 +20,6 @@
             {% endfor %}
         </tbody>
     </table>
+    {% endif %}
 </fieldset>
 {% endif %}

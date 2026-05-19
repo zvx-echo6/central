@@ -106,3 +106,15 @@ def test_partial_renders_nothing_when_both_none():
     assert "Preview Unavailable" not in out
     # Either empty or only whitespace/newlines from the template.
     assert "Preview (" not in out
+
+
+def test_partial_renders_empty_list():
+    """Empty list -> legend with (0 rows), no table.
+
+    Distinct from None (which renders nothing at all). Lets adapters signal
+    'query ran, matched zero rows' separately from 'preview not meaningful'.
+    """
+    out = _render_partial(preview_rows=[], preview_error=None)
+    assert "Preview (0 rows)" in out
+    assert "<table" not in out
+    assert "<th>" not in out
