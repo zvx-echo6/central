@@ -203,9 +203,9 @@ def test_no_orphan_adapter_references_in_anti_patterns():
     quoted = set(re.findall(r'"([a-z][a-z_]*)"', section))
     # Whitelist Python-syntax tokens that incidentally appear in the section;
     # everything else in this set is asserted to be a real adapter name.
-    syntax_tokens = {
-        "CENTRAL_WX", "CENTRAL_FIRE",  # stream names quoted as examples
-    }
+    # Derived from STREAMS per §10.4 — stream names appear quoted as examples
+    # and would otherwise look like orphan adapter references.
+    syntax_tokens = {s.name for s in STREAMS}
     candidate_adapter_names = quoted - {t.lower() for t in syntax_tokens}
     known_adapters = set(discover_adapters().keys())
     orphans = {n for n in candidate_adapter_names if n not in known_adapters}
