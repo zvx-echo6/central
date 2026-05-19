@@ -238,9 +238,11 @@ class GDACSAdapter(SourceAdapter):
         return count
 
     def subject_for(self, event: Event) -> str:
+        parts = event.category.split(".")
         country_subj = subject_for_country(event.data.get("country"))
-        if event.category.startswith("disaster.removed"):
-            return f"central.disaster.removed.{country_subj}"
+        if len(parts) >= 3 and parts[-1] == "removed":
+            eventtype = parts[1]
+            return f"central.disaster.{eventtype}.removed.{country_subj}"
         eventtype = (event.data.get("eventtype") or "").lower() or "unknown"
         return f"central.disaster.{eventtype}.{country_subj}"
 
@@ -395,7 +397,7 @@ class GDACSAdapter(SourceAdapter):
                     tombstone = Event(
                         id=f"{guid}:removed",
                         adapter=self.name,
-                        category=f"disaster.removed.{eventtype.lower()}",
+                        category=f"disaster.{eventtype.lower()}.removed",
                         time=datetime.now(timezone.utc),
                         severity=0,
                         geo=geo,
@@ -449,7 +451,7 @@ class GDACSAdapter(SourceAdapter):
             tombstone = Event(
                 id=tombstone_id,
                 adapter=self.name,
-                category=f"disaster.removed.{(prior_eventtype or '').lower()}",
+                category=f"disaster.{(prior_eventtype or '').lower()}.removed",
                 time=now,
                 severity=0,
                 geo=geo,

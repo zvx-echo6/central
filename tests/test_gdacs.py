@@ -308,14 +308,14 @@ class TestGDACSAdapter:
         second_pass = [e async for e in adapter.poll()]
         await adapter.shutdown()
 
-        tombstones = [e for e in second_pass if e.category.startswith("disaster.removed")]
+        tombstones = [e for e in second_pass if e.category.endswith(".removed")]
         assert len(tombstones) == 1
         ts = tombstones[0]
         assert ts.id == "WF2002001:removed"
-        assert ts.category == "disaster.removed.wf"
+        assert ts.category == "disaster.wf.removed"
         assert ts.data["reason"] == "iscurrent_false"
-        # Subject form: central.disaster.removed.<country>
-        assert adapter.subject_for(ts) == "central.disaster.removed.greece"
+        # Subject form: central.disaster.<eventtype>.removed.<country>
+        assert adapter.subject_for(ts) == "central.disaster.wf.removed.greece"
 
     @pytest.mark.asyncio
     async def test_fall_off_missing_from_feed(self, tmp_path: Path):
@@ -332,9 +332,10 @@ class TestGDACSAdapter:
         second_pass = [e async for e in adapter.poll()]
         await adapter.shutdown()
 
-        tombstones = [e for e in second_pass if e.category.startswith("disaster.removed")]
+        tombstones = [e for e in second_pass if e.category.endswith(".removed")]
         assert len(tombstones) == 1
         assert tombstones[0].id == "WF2002001:removed"
+        assert tombstones[0].category == "disaster.wf.removed"
         assert tombstones[0].data["reason"] == "missing_from_feed"
 
     @pytest.mark.asyncio
