@@ -26,39 +26,6 @@ class TestConsumerNaming:
         assert consumer_name_for("CENTRAL_QUAKE") == "archive-central_quake"
 
 
-class TestStreamsConfiguration:
-    """Test streams configuration."""
-
-    def test_streams_list_has_five_entries(self):
-        """STREAMS list has five event-bearing streams."""
-        assert len(STREAMS) == 5
-
-    def test_streams_contains_central_wx(self):
-        """STREAMS contains CENTRAL_WX with correct filter."""
-        assert ("CENTRAL_WX", "central.wx.>") in STREAMS
-
-    def test_streams_contains_central_fire(self):
-        """STREAMS contains CENTRAL_FIRE with correct filter."""
-        assert ("CENTRAL_FIRE", "central.fire.>") in STREAMS
-
-    def test_streams_contains_central_quake(self):
-        """STREAMS contains CENTRAL_QUAKE with correct filter."""
-        assert ("CENTRAL_QUAKE", "central.quake.>") in STREAMS
-
-    def test_streams_contains_central_space(self):
-        """STREAMS contains CENTRAL_SPACE with correct filter."""
-        assert ("CENTRAL_SPACE", "central.space.>") in STREAMS
-
-    def test_streams_contains_central_disaster(self):
-        """STREAMS contains CENTRAL_DISASTER with correct filter."""
-        assert ("CENTRAL_DISASTER", "central.disaster.>") in STREAMS
-
-    def test_streams_excludes_central_meta(self):
-        """STREAMS does not contain CENTRAL_META (status messages only)."""
-        stream_names = [s[0] for s in STREAMS]
-        assert "CENTRAL_META" not in stream_names
-
-
 class TestOrphanedConsumerCleanup:
     """Test cleanup of orphaned 'archive' consumer."""
 

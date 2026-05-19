@@ -19,15 +19,11 @@ from nats.js.api import ConsumerConfig, DeliverPolicy, AckPolicy
 from nats.js.errors import NotFoundError
 
 from central.bootstrap_config import get_settings
+from central.streams import STREAMS as STREAM_REGISTRY
 
-# Event-bearing streams to consume (skip CENTRAL_META - status messages only)
-STREAMS = [
-    ("CENTRAL_WX", "central.wx.>"),
-    ("CENTRAL_FIRE", "central.fire.>"),
-    ("CENTRAL_QUAKE", "central.quake.>"),
-    ("CENTRAL_SPACE", "central.space.>"),
-    ("CENTRAL_DISASTER", "central.disaster.>"),
-]
+# Event-bearing streams to consume -- derived from the registry's event_bearing flag.
+# CENTRAL_META is excluded because it carries status messages, not events.
+STREAMS = [(s.name, s.subject_filter) for s in STREAM_REGISTRY if s.event_bearing]
 
 BATCH_SIZE = 100
 FETCH_TIMEOUT = 5.0
