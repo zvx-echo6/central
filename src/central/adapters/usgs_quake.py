@@ -5,7 +5,7 @@ import sqlite3
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import aiohttp
 from shapely.geometry import Point, box as shapely_box
@@ -64,7 +64,7 @@ def magnitude_to_severity(mag: float) -> int:
 
 class USGSQuakeSettings(BaseModel):
     """Settings schema for USGS quake adapter."""
-    feed: str = "all_hour"
+    feed: Literal["all_hour", "all_day", "all_week", "all_month"] = "all_hour"
     region: RegionConfig | None = None
 
 

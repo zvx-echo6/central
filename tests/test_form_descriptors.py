@@ -4,7 +4,7 @@ import pytest
 from pydantic import BaseModel
 from typing import Optional
 
-from central.gui.form_descriptors import describe_fields, FieldDescriptor, _type_to_widget
+from central.gui.form_descriptors import describe_fields, FieldDescriptor, _type_to_widget_and_options
 from central.config_models import RegionConfig
 
 
@@ -33,39 +33,39 @@ class SettingsWithRegion(BaseModel):
 
 
 class TestTypeToWidget:
-    """Tests for _type_to_widget function."""
+    """Tests for _type_to_widget_and_options function."""
 
     def test_str_maps_to_text(self):
-        assert _type_to_widget("field", str) == "text"
+        assert _type_to_widget_and_options("field", str) == ("text", None)
 
     def test_int_maps_to_number(self):
-        assert _type_to_widget("field", int) == "number"
+        assert _type_to_widget_and_options("field", int) == ("number", None)
 
     def test_bool_maps_to_checkbox(self):
-        assert _type_to_widget("field", bool) == "checkbox"
+        assert _type_to_widget_and_options("field", bool) == ("checkbox", None)
 
     def test_list_str_maps_to_csv(self):
-        assert _type_to_widget("field", list[str]) == "csv"
+        assert _type_to_widget_and_options("field", list[str]) == ("csv", None)
 
     def test_region_config_maps_to_region(self):
-        assert _type_to_widget("field", RegionConfig) == "region"
+        assert _type_to_widget_and_options("field", RegionConfig) == ("region", None)
 
     def test_optional_region_maps_to_region(self):
-        assert _type_to_widget("field", Optional[RegionConfig]) == "region"
+        assert _type_to_widget_and_options("field", Optional[RegionConfig]) == ("region", None)
 
     def test_optional_str_maps_to_text(self):
         """Optional[str] should map to text widget."""
-        assert _type_to_widget("field", Optional[str]) == "text"
+        assert _type_to_widget_and_options("field", Optional[str]) == ("text", None)
 
     def test_optional_int_maps_to_number(self):
         """Optional[int] should map to number widget."""
-        assert _type_to_widget("field", Optional[int]) == "number"
+        assert _type_to_widget_and_options("field", Optional[int]) == ("number", None)
 
     def test_unsupported_type_raises(self):
         class CustomType:
             pass
         with pytest.raises(NotImplementedError):
-            _type_to_widget("field", CustomType)
+            _type_to_widget_and_options("field", CustomType)
 
 
 class TestDescribeFields:
@@ -172,15 +172,17 @@ class TestRealAdapterSchemas:
 
         fields = describe_fields(FIRMSSettings, {
             "api_key_alias": "firms_key",
-            "satellites": ["VIIRS_SNPP"]
+            "satellites": ["VIIRS_SNPP_NRT"]
         })
 
         key_field = next(f for f in fields if f.name == "api_key_alias")
         assert key_field.widget == "text"
 
         sat_field = next(f for f in fields if f.name == "satellites")
-        assert sat_field.widget == "csv"
-        assert sat_field.current_value == ["VIIRS_SNPP"]
+        assert sat_field.widget == "checkboxes"
+        assert sat_field.current_value == ["VIIRS_SNPP_NRT"]
+        assert sat_field.options is not None
+        assert "VIIRS_SNPP_NRT" in sat_field.options
 
     def test_usgs_quake_settings(self):
         """USGSQuakeSettings generates correct field descriptors."""
@@ -189,8 +191,11 @@ class TestRealAdapterSchemas:
         fields = describe_fields(USGSQuakeSettings, {"feed": "all_hour"})
 
         feed_field = next(f for f in fields if f.name == "feed")
-        assert feed_field.widget == "text"
+        assert feed_field.widget == "select"
         assert feed_field.current_value == "all_hour"
+        assert feed_field.options is not None
+        assert "all_hour" in feed_field.options
+        assert "all_day" in feed_field.options
 
     def test_all_adapters_have_region_field(self):
         """All adapter settings schemas include region field."""
@@ -203,3 +208,31 @@ class TestRealAdapterSchemas:
             region_field = next((f for f in fields if f.name == "region"), None)
             assert region_field is not None, f"{schema.__name__} should have region field"
             assert region_field.widget == "region"
+
+class TestLiteralTypes:
+    """Tests for Literal type support."""
+
+    def test_literal_maps_to_select(self):
+        """Literal type maps to select widget with options."""
+        from typing import Literal
+
+        widget, options = _type_to_widget_and_options("field", Literal["a", "b", "c"])
+        assert widget == "select"
+        assert options == ["a", "b", "c"]
+
+    def test_list_literal_maps_to_checkboxes(self):
+        """list[Literal] maps to checkboxes widget with options."""
+        from typing import Literal
+
+        widget, options = _type_to_widget_and_options("field", list[Literal["x", "y", "z"]])
+        assert widget == "checkboxes"
+        assert options == ["x", "y", "z"]
+
+    def test_optional_literal_maps_to_select(self):
+        """Optional[Literal] maps to select widget."""
+        from typing import Literal, Optional
+
+        widget, options = _type_to_widget_and_options("field", Optional[Literal["one", "two"]])
+        assert widget == "select"
+        assert options == ["one", "two"]
+

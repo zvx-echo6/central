@@ -73,18 +73,6 @@ ALIAS_REGEX = re.compile(r"^[a-zA-Z0-9_]+$")
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
 
-def _get_valid_satellites() -> list[str]:
-    """Get valid satellite identifiers from firms adapter."""
-    from central.adapters.firms import SATELLITE_SHORT
-    return list(SATELLITE_SHORT.keys())
-
-
-def _get_valid_feeds() -> set[str]:
-    """Get valid feed values from usgs_quake adapter."""
-    from central.adapters.usgs_quake import VALID_FEEDS
-    return VALID_FEEDS
-
-
 def _get_templates():
     """Get templates instance (deferred import to avoid circular)."""
     from central.gui import templates
@@ -647,18 +635,31 @@ async def setup_adapters_form(request: Request) -> HTMLResponse:
     templates = _get_templates()
     pool = get_pool()
 
+    # Get wizard adapters (filtered by wizard_order)
+    adapter_classes = _adapter_classes()
+    wizard_adapters = sorted(
+        [(name, cls) for name, cls in adapter_classes.items() if cls.wizard_order is not None],
+        key=lambda nc: nc[1].wizard_order
+    )
+
     # Pre-fill from cookie state or DB defaults
     if state.adapters:
         adapters = []
-        for name in ["firms", "nws", "usgs_quake"]:
+        for name, cls in wizard_adapters:
             if name in state.adapters:
                 a = state.adapters[name]
-                adapters.append({
-                    "name": name,
-                    "enabled": a["enabled"],
-                    "cadence_s": a["cadence_s"],
-                    "settings": a["settings"],
-                })
+                settings_dict = a["settings"]
+            else:
+                settings_dict = {}
+            fields = describe_fields(cls.settings_schema, settings_dict)
+            adapters.append({
+                "name": name,
+                "display_name": cls.display_name,
+                "enabled": a["enabled"] if name in state.adapters else False,
+                "cadence_s": a["cadence_s"] if name in state.adapters else 300,
+                "settings": settings_dict,
+                "fields": fields,
+            })
     else:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
@@ -668,15 +669,28 @@ async def setup_adapters_form(request: Request) -> HTMLResponse:
                 ORDER BY name
                 """
             )
-            adapters = []
-            for row in rows:
-                settings_data = row["settings"] or {}
-                adapters.append({
-                    "name": row["name"],
-                    "enabled": row["enabled"],
-                    "cadence_s": row["cadence_s"],
-                    "settings": settings_data,
-                })
+            db_adapters = {row["name"]: row for row in rows}
+
+        adapters = []
+        for name, cls in wizard_adapters:
+            if name in db_adapters:
+                row = db_adapters[name]
+                settings_dict = row["settings"] or {}
+                enabled = row["enabled"]
+                cadence_s = row["cadence_s"]
+            else:
+                settings_dict = {}
+                enabled = False
+                cadence_s = 300
+            fields = describe_fields(cls.settings_schema, settings_dict)
+            adapters.append({
+                "name": name,
+                "display_name": cls.display_name,
+                "enabled": enabled,
+                "cadence_s": cadence_s,
+                "settings": settings_dict,
+                "fields": fields,
+            })
 
     # Get API keys from wizard state (not DB)
     api_keys = [{"alias": k["alias"]} for k in state.api_keys]
@@ -701,8 +715,6 @@ async def setup_adapters_form(request: Request) -> HTMLResponse:
             "csrf_token": csrf_token,
             "adapters": adapters,
             "api_keys": api_keys,
-            "valid_satellites": _get_valid_satellites(),
-            "valid_feeds": sorted(_get_valid_feeds()),
             "tile_url": tile_url,
             "tile_attribution": tile_attribution,
             "error": None,
@@ -755,7 +767,14 @@ async def setup_adapters_submit(request: Request) -> Response:
                     "settings": row["settings"] or {},
                 }
 
-    for adapter_name in ["firms", "nws", "usgs_quake"]:
+    # Get wizard adapters (filtered by wizard_order)
+    adapter_classes = _adapter_classes()
+    wizard_adapters = sorted(
+        [(name, cls) for name, cls in adapter_classes.items() if cls.wizard_order is not None],
+        key=lambda nc: nc[1].wizard_order
+    )
+
+    for adapter_name, adapter_cls in wizard_adapters:
         current = current_adapters.get(adapter_name, {"enabled": False, "cadence_s": 300, "settings": {}})
         current_settings = current.get("settings", {})
         new_settings = dict(current_settings)
@@ -777,73 +796,101 @@ async def setup_adapters_submit(request: Request) -> Response:
             errors[f"{adapter_name}_cadence_s"] = "Cadence must be a valid integer"
             cadence_s = current.get("cadence_s", 300)
 
-        # Adapter-specific validation
-        if adapter_name == "nws":
-            contact_email = form.get(f"{adapter_name}_contact_email", "").strip()
-            if enabled:
-                if not contact_email:
-                    errors[f"{adapter_name}_contact_email"] = "Contact email is required when enabled"
-                elif not EMAIL_REGEX.match(contact_email):
-                    errors[f"{adapter_name}_contact_email"] = "Invalid email format"
+        # Generic field parsing using describe_fields
+        fields = describe_fields(adapter_cls.settings_schema, current_settings)
+        for field in fields:
+            form_key = f"{adapter_name}_{field.name}"
+
+            if field.widget == "text":
+                value = form.get(form_key, "").strip()
+                # Special validation for contact_email
+                if field.name == "contact_email":
+                    if enabled:
+                        if not value:
+                            errors[form_key] = "Contact email is required when enabled"
+                        elif not EMAIL_REGEX.match(value):
+                            errors[form_key] = "Invalid email format"
+                        else:
+                            new_settings[field.name] = value
+                    else:
+                        new_settings[field.name] = value if value else current_settings.get(field.name)
+                # Special validation for api_key_alias
+                elif field.name == "api_key_alias":
+                    if value:
+                        if not any(k["alias"] == value for k in state.api_keys):
+                            errors[form_key] = "API key alias does not exist"
+                        else:
+                            new_settings[field.name] = value
+                    else:
+                        new_settings[field.name] = None
                 else:
-                    new_settings["contact_email"] = contact_email
-            else:
-                new_settings["contact_email"] = contact_email if contact_email else current_settings.get("contact_email")
+                    new_settings[field.name] = value if value else current_settings.get(field.name)
 
-        elif adapter_name == "firms":
-            api_key_alias = form.get(f"{adapter_name}_api_key_alias", "").strip()
-            satellites = form.getlist(f"{adapter_name}_satellites")
-
-            if api_key_alias:
-                # Validate against wizard state keys
-                if not any(k["alias"] == api_key_alias for k in state.api_keys):
-                    errors[f"{adapter_name}_api_key_alias"] = f"API key alias does not exist"
+            elif field.widget == "number":
+                value_str = form.get(form_key, "").strip()
+                if value_str:
+                    try:
+                        new_settings[field.name] = int(value_str)
+                    except ValueError:
+                        errors[form_key] = f"{field.label} must be a valid number"
                 else:
-                    new_settings["api_key_alias"] = api_key_alias
-            else:
-                new_settings["api_key_alias"] = None
+                    new_settings[field.name] = current_settings.get(field.name)
 
-            # Validate satellites
-            valid_sats = set(_get_valid_satellites())
-            invalid_sats = [s for s in satellites if s not in valid_sats]
-            if invalid_sats:
-                errors[f"{adapter_name}_satellites"] = f"Invalid satellites: " + ", ".join(invalid_sats)
-            else:
-                new_settings["satellites"] = satellites
+            elif field.widget == "checkbox":
+                new_settings[field.name] = form_key in form
 
-        elif adapter_name == "usgs_quake":
-            feed = form.get(f"{adapter_name}_feed", "").strip()
-            valid_feeds = _get_valid_feeds()
-            if feed not in valid_feeds:
-                errors[f"{adapter_name}_feed"] = "Invalid feed"
-            else:
-                new_settings["feed"] = feed
+            elif field.widget == "csv":
+                value = form.get(form_key, "").strip()
+                if value:
+                    new_settings[field.name] = [v.strip() for v in value.split(",") if v.strip()]
+                else:
+                    new_settings[field.name] = []
 
-        # Region validation (all adapters)
-        region_north_str = form.get(f"{adapter_name}_region_north", "").strip()
-        region_south_str = form.get(f"{adapter_name}_region_south", "").strip()
-        region_east_str = form.get(f"{adapter_name}_region_east", "").strip()
-        region_west_str = form.get(f"{adapter_name}_region_west", "").strip()
+            elif field.widget == "select":
+                value = form.get(form_key, "").strip()
+                if value and field.options and value not in field.options:
+                    errors[form_key] = f"Invalid {field.label.lower()}"
+                else:
+                    new_settings[field.name] = value
 
-        try:
-            region_north = float(region_north_str)
-            region_south = float(region_south_str)
-            region_east = float(region_east_str)
-            region_west = float(region_west_str)
+            elif field.widget == "checkboxes":
+                # Use getlist for checkbox groups - absence means empty list
+                values = form.getlist(form_key)
+                if field.options:
+                    invalid = [v for v in values if v not in field.options]
+                    if invalid:
+                        errors[form_key] = f"Invalid values: {', '.join(invalid)}"
+                    else:
+                        new_settings[field.name] = values
+                else:
+                    new_settings[field.name] = values
 
-            if not (-90 <= region_south < region_north <= 90):
-                errors[f"{adapter_name}_region"] = "Invalid latitude: south < north, both -90 to 90"
-            elif not (-180 <= region_west < region_east <= 180):
-                errors[f"{adapter_name}_region"] = "Invalid longitude: west < east, both -180 to 180"
-            else:
-                new_settings["region"] = {
-                    "north": region_north,
-                    "south": region_south,
-                    "east": region_east,
-                    "west": region_west,
-                }
-        except ValueError:
-            errors[f"{adapter_name}_region"] = "Region coordinates must be valid numbers"
+            elif field.widget == "region":
+                # Region validation
+                region_north_str = form.get(f"{adapter_name}_{field.name}_north", "").strip()
+                region_south_str = form.get(f"{adapter_name}_{field.name}_south", "").strip()
+                region_east_str = form.get(f"{adapter_name}_{field.name}_east", "").strip()
+                region_west_str = form.get(f"{adapter_name}_{field.name}_west", "").strip()
+
+                try:
+                    region_north = float(region_north_str)
+                    region_south = float(region_south_str)
+                    region_east = float(region_east_str)
+                    region_west = float(region_west_str)
+
+                    if not (-90 <= region_south < region_north <= 90):
+                        errors[f"{adapter_name}_{field.name}"] = "Invalid latitude: south < north, both -90 to 90"
+                    elif not (-180 <= region_west < region_east <= 180):
+                        errors[f"{adapter_name}_{field.name}"] = "Invalid longitude: west < east, both -180 to 180"
+                    else:
+                        new_settings[field.name] = {
+                            "north": region_north,
+                            "south": region_south,
+                            "east": region_east,
+                            "west": region_west,
+                        }
+                except ValueError:
+                    errors[f"{adapter_name}_{field.name}"] = "Region coordinates must be valid numbers"
 
         new_adapters[adapter_name] = {
             "enabled": enabled,
@@ -918,10 +965,20 @@ async def setup_finish_form(request: Request) -> HTMLResponse:
 
     adapters = []
     if state.adapters:
-        for name in ["firms", "nws", "usgs_quake"]:
+        adapter_classes = _adapter_classes()
+        wizard_adapters = sorted(
+            [(name, cls) for name, cls in adapter_classes.items() if cls.wizard_order is not None],
+            key=lambda nc: nc[1].wizard_order
+        )
+        for name, cls in wizard_adapters:
             if name in state.adapters:
                 a = state.adapters[name]
-                adapters.append({"name": name, "enabled": a["enabled"], "cadence_s": a["cadence_s"]})
+                adapters.append({
+                    "name": name,
+                    "display_name": cls.display_name,
+                    "enabled": a["enabled"],
+                    "cadence_s": a["cadence_s"],
+                })
 
     csrf_token, signed_token = reuse_or_generate_pre_auth_csrf(request, settings.csrf_secret)
     response = templates.TemplateResponse(
@@ -1441,6 +1498,24 @@ async def adapters_edit_submit(
                         parsed_values[field.name] = [v.strip() for v in raw.split(",") if v.strip()]
                     else:
                         parsed_values[field.name] = []
+                elif field.widget == "select":
+                    value = raw.strip() if raw else None
+                    if value and field.options and value not in field.options:
+                        errors[field.name] = f"Invalid {field.label.lower()}"
+                    else:
+                        parsed_values[field.name] = value
+                elif field.widget == "checkboxes":
+                    # Use getlist for checkbox groups
+                    values = form.getlist(field.name)
+                    form_data[field.name] = values  # Override raw value
+                    if field.options:
+                        invalid = [v for v in values if v not in field.options]
+                        if invalid:
+                            errors[field.name] = f"Invalid values: {', '.join(invalid)}"
+                        else:
+                            parsed_values[field.name] = values
+                    else:
+                        parsed_values[field.name] = values
                 elif field.widget == "region":
                     # Region handled separately below
                     pass
