@@ -49,6 +49,7 @@ from functools import cache
 from central.gui.db import get_pool
 from central.gui.form_descriptors import describe_fields, FieldDescriptor
 from central.adapter_discovery import discover_adapters
+from central.streams import STREAMS as STREAM_REGISTRY
 from pydantic import ValidationError
 
 @cache
@@ -63,8 +64,8 @@ def _adapter_classes() -> dict:
 
 router = APIRouter()
 
-# Streams to display on dashboard
-DASHBOARD_STREAMS = ["CENTRAL_WX", "CENTRAL_FIRE", "CENTRAL_QUAKE", "CENTRAL_SPACE", "CENTRAL_DISASTER", "CENTRAL_META"]
+# Streams to display on dashboard -- derived from the registry's dashboard flag.
+DASHBOARD_STREAMS = [s.name for s in STREAM_REGISTRY if s.dashboard]
 
 # Email validation regex (simple but effective)
 ALIAS_REGEX = re.compile(r"^[a-zA-Z0-9_]+$")

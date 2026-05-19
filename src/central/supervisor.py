@@ -21,17 +21,12 @@ from central.config_source import ConfigSource, DbConfigSource
 from central.config_store import ConfigStore
 from central.bootstrap_config import get_settings
 from central.stream_manager import StreamManager
+from central.streams import STREAMS as STREAM_REGISTRY
 CURSOR_DB_PATH = Path("/var/lib/central/cursors.db")
 
-# Stream subject mappings
-STREAM_SUBJECTS = {
-    "CENTRAL_WX": ["central.wx.>"],
-    "CENTRAL_META": ["central.meta.>"],
-    "CENTRAL_FIRE": ["central.fire.>"],
-    "CENTRAL_QUAKE": ["central.quake.>"],
-    "CENTRAL_SPACE": ["central.space.>"],
-    "CENTRAL_DISASTER": ["central.disaster.>"],
-}
+# Stream subject mappings -- derived from the registry; every stream is included
+# (META too: supervisor must create it in JetStream even though archive skips it).
+STREAM_SUBJECTS = {s.name: [s.subject_filter] for s in STREAM_REGISTRY}
 
 # Recompute interval for stream max_bytes (1 hour)
 STREAM_RECOMPUTE_INTERVAL_S = 3600
