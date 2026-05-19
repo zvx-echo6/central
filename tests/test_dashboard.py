@@ -205,7 +205,7 @@ class TestDashboardStreamsIsolation:
         call_args = mock_templates.TemplateResponse.call_args
         context = call_args.kwargs.get("context", call_args[1].get("context"))
         streams = context["streams"]
-        assert len(streams) == 4
+        assert len(streams) == 5
         fire_stream = next(s for s in streams if s["name"] == "CENTRAL_FIRE")
         assert fire_stream.get("error") == "unavailable"
         wx_stream = next(s for s in streams if s["name"] == "CENTRAL_WX")

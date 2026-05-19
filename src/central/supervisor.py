@@ -29,6 +29,7 @@ STREAM_SUBJECTS = {
     "CENTRAL_META": ["central.meta.>"],
     "CENTRAL_FIRE": ["central.fire.>"],
     "CENTRAL_QUAKE": ["central.quake.>"],
+    "CENTRAL_SPACE": ["central.space.>"],
 }
 
 # Recompute interval for stream max_bytes (1 hour)
