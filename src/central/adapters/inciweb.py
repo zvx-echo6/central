@@ -101,6 +101,12 @@ def parse_state_from_description(description: str) -> str | None:
 
     Format: "State: Minnesota" or "State: New Mexico"
     Returns 2-letter state code or None if not found.
+
+    Design note: State is parsed from the description rather than the title
+    because InciWeb titles use unit code prefixes (e.g., "MNMNS Stewart Trail",
+    "CACNP Santa Rosa Island Fire") which are not reliable state indicators.
+    The description has a structured "State: <name>" field that reliably
+    identifies the state for all incidents.
     """
     pattern = r"State:\s*([A-Za-z\s]+?)(?:\n|---|$)"
     match = re.search(pattern, description)
@@ -175,6 +181,10 @@ class InciWebAdapter(SourceAdapter):
         self._cursor_db_path = cursor_db_path
         self._session: aiohttp.ClientSession | None = None
         self._db: sqlite3.Connection | None = None
+
+        # Conditional fetch state
+        self._last_modified: str | None = None
+        self._etag: str | None = None
 
         # Parse region from settings
         region_dict = config.settings.get("region")
@@ -300,10 +310,25 @@ class InciWebAdapter(SourceAdapter):
         if not self._session:
             raise RuntimeError("Session not initialized")
 
+        # Build request headers with conditional fetch support
         headers = {"User-Agent": "Central/0.4"}
+        if self._last_modified:
+            headers["If-Modified-Since"] = self._last_modified
+        if self._etag:
+            headers["If-None-Match"] = self._etag
 
         async with self._session.get(INCIWEB_RSS_URL, headers=headers) as resp:
+            # Handle 304 Not Modified
+            if resp.status == 304:
+                logger.info("InciWeb not modified")
+                return []
+
             resp.raise_for_status()
+
+            # Capture conditional fetch headers for next request
+            self._last_modified = resp.headers.get("Last-Modified")
+            self._etag = resp.headers.get("ETag")
+
             content = await resp.text()
 
         # Parse RSS XML
@@ -365,6 +390,11 @@ class InciWebAdapter(SourceAdapter):
         for item in items:
             guid = item.get("guid", "")
             if not guid:
+                continue
+
+            # Dedup: skip if already published
+            if self.is_published(guid):
+                self.bump_last_seen(guid)
                 continue
 
             description_html = item.get("description", "")
@@ -435,6 +465,7 @@ class InciWebAdapter(SourceAdapter):
             )
 
             yield event
+            self.mark_published(guid)
             events_yielded += 1
 
         # Periodic cleanup of old entries

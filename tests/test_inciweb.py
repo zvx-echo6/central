@@ -448,3 +448,152 @@ class TestInciWebAdapter:
 
         assert adapter.region.north == 50.0
         assert adapter.region.south == 35.0
+
+    @pytest.mark.asyncio
+    async def test_dedup_in_poll_loop(
+        self, mock_config_no_region: AdapterConfig, mock_config_store: MagicMock, cursor_db_path: Path
+    ):
+        """Dedup integration: second poll with same items yields zero events."""
+        from central.adapters.inciweb import InciWebAdapter
+
+        adapter = InciWebAdapter(mock_config_no_region, mock_config_store, cursor_db_path)
+        await adapter.startup()
+
+        # Single-item RSS for clarity
+        single_item_rss = """<?xml version="1.0" encoding="utf-8"?>
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
+  <channel>
+    <title>InciWeb</title>
+    <item>
+      <title>Test Fire</title>
+      <link>http://inciweb.wildfire.gov/test</link>
+      <description>State: California</description>
+      <pubDate>Mon, 18 May 2026 09:00:00 EDT</pubDate>
+      <guid isPermaLink="false">DEDUP-TEST-001</guid>
+    </item>
+  </channel>
+</rss>"""
+
+        def make_mock_response():
+            mock_response = AsyncMock()
+            mock_response.status = 200
+            mock_response.raise_for_status = MagicMock()
+            mock_response.text = AsyncMock(return_value=single_item_rss)
+            mock_response.headers = {"Last-Modified": None, "ETag": None}
+            return mock_response
+
+        # First poll: should yield 1 event
+        with patch.object(
+            adapter._session, "get",
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=make_mock_response()),
+                __aexit__=AsyncMock()
+            )
+        ):
+            events_first = [e async for e in adapter.poll()]
+
+        assert len(events_first) == 1
+        assert events_first[0].data["guid"] == "DEDUP-TEST-001"
+
+        # Verify mark_published was called
+        assert adapter.is_published("DEDUP-TEST-001") is True
+
+        # Second poll: same item should be skipped (dedup)
+        with patch.object(
+            adapter._session, "get",
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=make_mock_response()),
+                __aexit__=AsyncMock()
+            )
+        ):
+            events_second = [e async for e in adapter.poll()]
+
+        assert len(events_second) == 0  # Dedup prevents re-yield
+
+        await adapter.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_conditional_304_yields_zero(
+        self, mock_config_no_region: AdapterConfig, mock_config_store: MagicMock, cursor_db_path: Path
+    ):
+        """HTTP 304 Not Modified returns empty list and yields zero events."""
+        from central.adapters.inciweb import InciWebAdapter
+
+        adapter = InciWebAdapter(mock_config_no_region, mock_config_store, cursor_db_path)
+        await adapter.startup()
+
+        # Mock 304 response
+        mock_response = AsyncMock()
+        mock_response.status = 304
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(
+            adapter._session, "get",
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response),
+                __aexit__=AsyncMock()
+            )
+        ):
+            events = [e async for e in adapter.poll()]
+
+        assert len(events) == 0
+
+        await adapter.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_conditional_headers_sent_after_first_poll(
+        self, mock_config_no_region: AdapterConfig, mock_config_store: MagicMock, cursor_db_path: Path
+    ):
+        """Conditional fetch headers sent on second poll after first captures them."""
+        from central.adapters.inciweb import InciWebAdapter
+
+        adapter = InciWebAdapter(mock_config_no_region, mock_config_store, cursor_db_path)
+        await adapter.startup()
+
+        # First response with Last-Modified and ETag
+        first_response = AsyncMock()
+        first_response.status = 200
+        first_response.raise_for_status = MagicMock()
+        first_response.text = AsyncMock(return_value="""<?xml version="1.0"?>
+<rss version="2.0"><channel><title>Test</title></channel></rss>""")
+        first_response.headers = {
+            "Last-Modified": "Tue, 19 May 2026 03:00:00 GMT",
+            "ETag": "\"abc123\"",
+        }
+
+        # Track headers sent on second request
+        captured_headers = {}
+
+        def capture_get(*args, **kwargs):
+            captured_headers.update(kwargs.get("headers", {}))
+            second_response = AsyncMock()
+            second_response.status = 304
+            second_response.raise_for_status = MagicMock()
+            return AsyncMock(
+                __aenter__=AsyncMock(return_value=second_response),
+                __aexit__=AsyncMock()
+            )
+
+        # First poll
+        with patch.object(
+            adapter._session, "get",
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=first_response),
+                __aexit__=AsyncMock()
+            )
+        ):
+            [e async for e in adapter.poll()]
+
+        # Verify adapter captured the headers
+        assert adapter._last_modified == "Tue, 19 May 2026 03:00:00 GMT"
+        assert adapter._etag == "\"abc123\""
+
+        # Second poll with header capture
+        with patch.object(adapter._session, "get", side_effect=capture_get):
+            [e async for e in adapter.poll()]
+
+        # Verify conditional headers were sent
+        assert captured_headers.get("If-Modified-Since") == "Tue, 19 May 2026 03:00:00 GMT"
+        assert captured_headers.get("If-None-Match") == "\"abc123\""
+
+        await adapter.shutdown()
