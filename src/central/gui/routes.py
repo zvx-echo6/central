@@ -652,6 +652,11 @@ async def setup_adapters_form(request: Request) -> HTMLResponse:
             else:
                 settings_dict = {}
             fields = describe_fields(cls.settings_schema, settings_dict)
+            # Swap widget for api_key_field to api_key_select
+            if cls.api_key_field is not None:
+                for f in fields:
+                    if f.name == cls.api_key_field:
+                        f.widget = "api_key_select"
             adapters.append({
                 "name": name,
                 "display_name": cls.display_name,
@@ -683,6 +688,11 @@ async def setup_adapters_form(request: Request) -> HTMLResponse:
                 enabled = False
                 cadence_s = 300
             fields = describe_fields(cls.settings_schema, settings_dict)
+            # Swap widget for api_key_field to api_key_select
+            if cls.api_key_field is not None:
+                for f in fields:
+                    if f.name == cls.api_key_field:
+                        f.widget = "api_key_select"
             adapters.append({
                 "name": name,
                 "display_name": cls.display_name,
@@ -803,28 +813,12 @@ async def setup_adapters_submit(request: Request) -> Response:
 
             if field.widget == "text":
                 value = form.get(form_key, "").strip()
-                # Special validation for contact_email
-                if field.name == "contact_email":
-                    if enabled:
-                        if not value:
-                            errors[form_key] = "Contact email is required when enabled"
-                        elif not EMAIL_REGEX.match(value):
-                            errors[form_key] = "Invalid email format"
-                        else:
-                            new_settings[field.name] = value
-                    else:
-                        new_settings[field.name] = value if value else current_settings.get(field.name)
-                # Special validation for api_key_alias
-                elif field.name == "api_key_alias":
-                    if value:
-                        if not any(k["alias"] == value for k in state.api_keys):
-                            errors[form_key] = "API key alias does not exist"
-                        else:
-                            new_settings[field.name] = value
-                    else:
-                        new_settings[field.name] = None
-                else:
-                    new_settings[field.name] = value if value else current_settings.get(field.name)
+                new_settings[field.name] = value if value else current_settings.get(field.name)
+
+            elif field.widget == "api_key_select":
+                # API key alias field - stored as text, validated post-loop
+                value = form.get(form_key, "").strip()
+                new_settings[field.name] = value if value else None
 
             elif field.widget == "number":
                 value_str = form.get(form_key, "").strip()
@@ -892,6 +886,15 @@ async def setup_adapters_submit(request: Request) -> Response:
                 loc = err["loc"][0] if err["loc"] else "unknown"
                 errors[f"{adapter_name}_{loc}"] = err["msg"]
 
+        # Generic api_key_field validation against wizard state
+        if adapter_cls.api_key_field is not None:
+            field_value = new_settings.get(adapter_cls.api_key_field)
+            if field_value:
+                if not any(k["alias"] == field_value for k in state.api_keys):
+                    errors[f"{adapter_name}_{adapter_cls.api_key_field}"] = (
+                        "API key alias does not exist"
+                    )
+
         new_adapters[adapter_name] = {
             "enabled": enabled,
             "cadence_s": cadence_s,
@@ -904,6 +907,11 @@ async def setup_adapters_submit(request: Request) -> Response:
         for name, cls in wizard_adapters:
             settings_dict = new_adapters[name]["settings"]
             fields = describe_fields(cls.settings_schema, settings_dict)
+            # Swap widget for api_key_field to api_key_select
+            if cls.api_key_field is not None:
+                for f in fields:
+                    if f.name == cls.api_key_field:
+                        f.widget = "api_key_select"
             adapters.append({
                 "name": name,
                 "display_name": cls.display_name,
@@ -1399,6 +1407,17 @@ async def adapters_edit_form(
     fields = []
     if adapter_cls and hasattr(adapter_cls, "settings_schema"):
         fields = describe_fields(adapter_cls.settings_schema, settings)
+        # Swap widget for api_key_field to api_key_select
+        if adapter_cls.api_key_field is not None:
+            for f in fields:
+                if f.name == adapter_cls.api_key_field:
+                    f.widget = "api_key_select"
+
+    # Fetch API keys for api_key_select widget
+    api_keys = []
+    async with pool.acquire() as conn:
+        api_key_rows = await conn.fetch("SELECT alias FROM config.api_keys ORDER BY alias")
+        api_keys = [{"alias": r["alias"]} for r in api_key_rows]
 
     csrf_token = request.state.csrf_token
     response = templates.TemplateResponse(
@@ -1409,6 +1428,7 @@ async def adapters_edit_form(
             "csrf_token": csrf_token,
             "adapter": adapter,
             "fields": fields,
+            "api_keys": api_keys,
             "errors": None,
             "form_data": None,
             "tile_url": tile_url,
@@ -1520,6 +1540,10 @@ async def adapters_edit_submit(
                             parsed_values[field.name] = values
                     else:
                         parsed_values[field.name] = values
+                elif field.widget == "api_key_select":
+                    # API key select - validate against existing keys
+                    value = raw.strip() if raw else None
+                    parsed_values[field.name] = value
                 elif field.widget == "region":
                     # Region handled separately below
                     pass
@@ -1600,6 +1624,15 @@ async def adapters_edit_submit(
             fields = []
             if adapter_cls and hasattr(adapter_cls, "settings_schema"):
                 fields = describe_fields(adapter_cls.settings_schema, current_settings)
+                # Swap widget for api_key_field to api_key_select
+                if adapter_cls.api_key_field is not None:
+                    for f in fields:
+                        if f.name == adapter_cls.api_key_field:
+                            f.widget = "api_key_select"
+
+            # Fetch API keys for api_key_select widget
+            api_key_rows = await conn.fetch("SELECT alias FROM config.api_keys ORDER BY alias")
+            api_keys = [{"alias": r["alias"]} for r in api_key_rows]
 
             csrf_token = request.state.csrf_token
             response = templates.TemplateResponse(
@@ -1610,6 +1643,7 @@ async def adapters_edit_submit(
                     "csrf_token": csrf_token,
                     "adapter": adapter,
                     "fields": fields,
+                    "api_keys": api_keys,
                     "errors": errors,
                     "form_data": form_data,
                     "tile_url": tile_url,

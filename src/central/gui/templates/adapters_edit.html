@@ -134,6 +134,24 @@
                 {% if errors and errors[field.name] %}
                 <small style="color: var(--pico-color-red-500); display: block;">{{ errors[field.name] }}</small>
                 {% endif %}
+
+            {% elif field.widget == "api_key_select" %}
+                <label for="{{ field.name }}">{{ field.label }}</label>
+                <select id="{{ field.name }}" name="{{ field.name }}">
+                    <option value="">(none)</option>
+                    {% for key in api_keys %}
+                    <option value="{{ key.alias }}"
+                            {% if (form_data[field.name] if form_data and field.name in form_data else field.current_value) == key.alias %}selected{% endif %}>
+                        {{ key.alias }}
+                    </option>
+                    {% endfor %}
+                </select>
+                {% if field.description %}
+                <small>{{ field.description }}</small>
+                {% endif %}
+                {% if errors and errors[field.name] %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                {% endif %}
             {% endif %}
         {% endfor %}
     </fieldset>

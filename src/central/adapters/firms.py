@@ -66,6 +66,7 @@ class FIRMSAdapter(SourceAdapter):
     description = "Near-real-time satellite-detected fire hotspots from NASA FIRMS."
     settings_schema = FIRMSSettings
     requires_api_key = "firms"
+    api_key_field = "api_key_alias"
     wizard_order = 2
     default_cadence_s = 300
 

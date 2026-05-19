@@ -34,6 +34,10 @@ class SourceAdapter(ABC):
     description: str
     settings_schema: type[BaseModel]
     requires_api_key: str | None = None
+    api_key_field: str | None = None
+    """Names the settings_schema field that holds an api_key alias reference, if any.
+    The GUI renders this field as a select populated from config.api_keys;
+    the wizard validates it against staged api_keys state."""
     wizard_order: int | None = None
     default_cadence_s: int
     

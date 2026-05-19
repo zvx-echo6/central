@@ -53,8 +53,18 @@
                     {% set form_key = adapter.name + '_' + field.name %}
 
                     {% if field.widget == "text" %}
-                        {# Special handling for api_key_alias - render as select from wizard API keys #}
-                        {% if field.name == "api_key_alias" %}
+                        <label for="{{ form_key }}">{{ field.label }}</label>
+                        <input type="text" id="{{ form_key }}" name="{{ form_key }}"
+                               value="{{ form_data.get(form_key) if form_data else field.current_value or '' }}"
+                               {% if field.required %}required{% endif %}>
+                        {% if field.description %}
+                        <small>{{ field.description }}</small>
+                        {% endif %}
+                        {% if errors and errors.get(form_key) %}
+                        <small style="color: var(--pico-color-red-500);">{{ errors[form_key] }}</small>
+                        {% endif %}
+
+                    {% elif field.widget == "api_key_select" %}
                         <label for="{{ form_key }}">{{ field.label }}</label>
                         <select id="{{ form_key }}" name="{{ form_key }}">
                             <option value="">(none)</option>
@@ -65,12 +75,6 @@
                             </option>
                             {% endfor %}
                         </select>
-                        {% else %}
-                        <label for="{{ form_key }}">{{ field.label }}</label>
-                        <input type="text" id="{{ form_key }}" name="{{ form_key }}"
-                               value="{{ form_data.get(form_key) if form_data else field.current_value or '' }}"
-                               {% if field.required %}required{% endif %}>
-                        {% endif %}
                         {% if field.description %}
                         <small>{{ field.description }}</small>
                         {% endif %}

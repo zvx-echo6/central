@@ -380,3 +380,176 @@ class TestSetupAdaptersErrorRerender:
         # Error should come from RegionConfig validator, mentioning bounds
         assert "north" in context["errors"]["nws_region"].lower() or "south" in context["errors"]["nws_region"].lower()
 
+    @pytest.mark.asyncio
+    async def test_invalid_contact_email_via_pydantic_pattern(self):
+        """POST /setup/adapters with NWS contact_email='not-an-email' shows Pydantic pattern error."""
+        from central.gui.routes import setup_adapters_submit
+
+        mock_request = MagicMock()
+        mock_request.cookies = {}
+        mock_request.state = MagicMock()
+
+        mock_form = MagicMock()
+        mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
+            "nws_enabled": "on",
+            "nws_cadence_s": "300",
+            "nws_contact_email": "not-an-email",  # Invalid email format
+            "nws_region_north": "49.0",
+            "nws_region_south": "31.0",
+            "nws_region_east": "-102.0",
+            "nws_region_west": "-124.0",
+            "firms_cadence_s": "300",
+            "firms_region_north": "49.0",
+            "firms_region_south": "31.0",
+            "firms_region_east": "-102.0",
+            "firms_region_west": "-124.0",
+            "usgs_quake_cadence_s": "300",
+            "usgs_quake_feed": "all_hour",
+            "usgs_quake_region_north": "49.0",
+            "usgs_quake_region_south": "31.0",
+            "usgs_quake_region_east": "-102.0",
+            "usgs_quake_region_west": "-124.0",
+        }.get(k, d)
+        mock_form.getlist.side_effect = lambda k: {
+            "firms_satellites": ["VIIRS_SNPP_NRT"],
+        }.get(k, [])
+        mock_form.__contains__ = lambda self, k: k in ["nws_enabled"]
+
+        mock_request.form = AsyncMock(return_value=mock_form)
+
+        mock_state = MagicMock()
+        mock_state.operator = {"username": "test", "password_hash": "hash"}
+        mock_state.api_keys = []
+        mock_state.adapters = None
+        mock_state.system = None
+
+        mock_pool = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.fetch = AsyncMock(return_value=[
+            {"name": "nws", "enabled": False, "cadence_s": 300, "settings": {}},
+            {"name": "firms", "enabled": False, "cadence_s": 300, "settings": {}},
+            {"name": "usgs_quake", "enabled": False, "cadence_s": 300, "settings": {}},
+        ])
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock()
+        mock_pool.acquire = MagicMock(return_value=mock_conn)
+
+        mock_templates = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_templates.TemplateResponse.return_value = mock_response
+
+        with patch("central.gui.routes._get_templates", return_value=mock_templates):
+            with patch("central.gui.routes.get_pool", return_value=mock_pool):
+                with patch("central.gui.routes.get_settings") as mock_settings:
+                    mock_settings.return_value.csrf_secret = "testsecret12345678901234567890ab"
+                    with patch("central.gui.routes.validate_pre_auth_csrf", return_value=True):
+                        with patch("central.gui.wizard.get_wizard_state", return_value=mock_state):
+                            with patch("central.gui.routes.reuse_or_generate_pre_auth_csrf", return_value=("csrf", None)):
+                                result = await setup_adapters_submit(mock_request)
+
+        assert result.status_code == 200
+
+        call_args = mock_templates.TemplateResponse.call_args
+        context = call_args.kwargs.get("context", call_args[1].get("context"))
+
+        assert context["errors"] is not None
+        assert "nws_contact_email" in context["errors"]
+        # Error should be from Pydantic pattern validation
+        error_msg = context["errors"]["nws_contact_email"].lower()
+        assert "pattern" in error_msg or "string" in error_msg or "match" in error_msg
+
+    @pytest.mark.asyncio
+    async def test_invalid_api_key_alias_generic(self):
+        """POST /setup/adapters with FIRMS api_key_alias='bogus' shows generic error."""
+        from central.gui.routes import setup_adapters_submit
+
+        mock_request = MagicMock()
+        mock_request.cookies = {}
+        mock_request.state = MagicMock()
+
+        mock_form = MagicMock()
+        mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
+            "nws_cadence_s": "300",
+            "nws_contact_email": "test@example.com",
+            "nws_region_north": "49.0",
+            "nws_region_south": "31.0",
+            "nws_region_east": "-102.0",
+            "nws_region_west": "-124.0",
+            "firms_cadence_s": "300",
+            "firms_api_key_alias": "bogus-alias-not-in-state",  # Invalid alias
+            "firms_region_north": "49.0",
+            "firms_region_south": "31.0",
+            "firms_region_east": "-102.0",
+            "firms_region_west": "-124.0",
+            "usgs_quake_cadence_s": "300",
+            "usgs_quake_feed": "all_hour",
+            "usgs_quake_region_north": "49.0",
+            "usgs_quake_region_south": "31.0",
+            "usgs_quake_region_east": "-102.0",
+            "usgs_quake_region_west": "-124.0",
+        }.get(k, d)
+        mock_form.getlist.side_effect = lambda k: {
+            "firms_satellites": ["VIIRS_SNPP_NRT"],
+        }.get(k, [])
+        mock_form.__contains__ = lambda self, k: False
+
+        mock_request.form = AsyncMock(return_value=mock_form)
+
+        mock_state = MagicMock()
+        mock_state.operator = {"username": "test", "password_hash": "hash"}
+        mock_state.api_keys = [{"alias": "valid_key"}]  # Only valid_key exists
+        mock_state.adapters = None
+        mock_state.system = None
+
+        mock_pool = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.fetch = AsyncMock(return_value=[
+            {"name": "nws", "enabled": False, "cadence_s": 300, "settings": {}},
+            {"name": "firms", "enabled": False, "cadence_s": 300, "settings": {}},
+            {"name": "usgs_quake", "enabled": False, "cadence_s": 300, "settings": {}},
+        ])
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock()
+        mock_pool.acquire = MagicMock(return_value=mock_conn)
+
+        mock_templates = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_templates.TemplateResponse.return_value = mock_response
+
+        with patch("central.gui.routes._get_templates", return_value=mock_templates):
+            with patch("central.gui.routes.get_pool", return_value=mock_pool):
+                with patch("central.gui.routes.get_settings") as mock_settings:
+                    mock_settings.return_value.csrf_secret = "testsecret12345678901234567890ab"
+                    with patch("central.gui.routes.validate_pre_auth_csrf", return_value=True):
+                        with patch("central.gui.wizard.get_wizard_state", return_value=mock_state):
+                            with patch("central.gui.routes.reuse_or_generate_pre_auth_csrf", return_value=("csrf", None)):
+                                result = await setup_adapters_submit(mock_request)
+
+        assert result.status_code == 200
+
+        call_args = mock_templates.TemplateResponse.call_args
+        context = call_args.kwargs.get("context", call_args[1].get("context"))
+
+        assert context["errors"] is not None
+        assert "firms_api_key_alias" in context["errors"]
+        assert "API key alias does not exist" in context["errors"]["firms_api_key_alias"]
+
+    @pytest.mark.asyncio
+    async def test_api_key_field_none_no_check(self):
+        """Adapters with api_key_field=None do not trigger the api_key check."""
+        # Verify that NWSAdapter has api_key_field=None
+        from central.adapters.nws import NWSAdapter
+        from central.adapters.firms import FIRMSAdapter
+        from central.adapters.usgs_quake import USGSQuakeAdapter
+
+        # NWS and USGS should have api_key_field=None
+        assert NWSAdapter.api_key_field is None
+        assert USGSQuakeAdapter.api_key_field is None
+
+        # FIRMS should have api_key_field set
+        assert FIRMSAdapter.api_key_field == "api_key_alias"
+

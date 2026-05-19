@@ -19,7 +19,7 @@ from tenacity import (
 
 from central import __version__
 from central.adapter import SourceAdapter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from central.config_models import AdapterConfig, RegionConfig
 from central.config_store import ConfigStore
@@ -193,7 +193,11 @@ def _build_regions(same_codes: list[str], ugc_codes: list[str]) -> list[str]:
 
 class NWSSettings(BaseModel):
     """Settings schema for NWS adapter."""
-    contact_email: str = ""
+    contact_email: str = Field(
+        default="",
+        pattern=r"^$|^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
+        description="Contact email for NWS API User-Agent header",
+    )
     region: RegionConfig | None = None
 
 
