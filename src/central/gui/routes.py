@@ -763,12 +763,16 @@ async def setup_adapters_submit(request: Request) -> Response:
         # Parse enabled
         enabled = f"{adapter_name}_enabled" in form
 
-        # Parse cadence
+        # Parse cadence using AdapterConfig field constraint
         cadence_str = form.get(f"{adapter_name}_cadence_s", "")
         try:
             cadence_s = int(cadence_str)
-            if cadence_s < 60 or cadence_s > 3600:
-                errors[f"{adapter_name}_cadence_s"] = "Cadence must be between 60 and 3600 seconds"
+            from central.config_models import AdapterConfig
+            min_cadence = AdapterConfig.model_fields["cadence_s"].metadata[0].ge
+            if cadence_s < min_cadence:
+                errors[f"{adapter_name}_cadence_s"] = (
+                    f"Input should be greater than or equal to {min_cadence}"
+                )
         except ValueError:
             errors[f"{adapter_name}_cadence_s"] = "Cadence must be a valid integer"
             cadence_s = current.get("cadence_s", 300)
