@@ -1318,27 +1318,45 @@ async def adapters_list(
     templates = _get_templates()
     pool = get_pool()
     operator = request.state.operator
+    adapter_classes = _adapter_classes()
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT name, enabled, cadence_s, settings, paused_at, updated_at
+            SELECT name, enabled, cadence_s, settings, paused_at, updated_at, last_error
             FROM config.adapters
             ORDER BY name
             """
         )
 
-    adapters = []
-    for row in rows:
-        settings = row["settings"] or {}
-        adapters.append({
-            "name": row["name"],
-            "enabled": row["enabled"],
-            "cadence_s": row["cadence_s"],
-            "settings": settings,
-            "paused_at": row["paused_at"],
-            "updated_at": row["updated_at"],
-        })
+        adapters = []
+        for row in rows:
+            settings = row["settings"] or {}
+            adapter_cls = adapter_classes.get(row["name"])
+
+            # Check if required API key is missing
+            api_key_missing = False
+            requires_api_key_alias = None
+            if adapter_cls and adapter_cls.requires_api_key is not None:
+                requires_api_key_alias = adapter_cls.requires_api_key
+                has_key = await conn.fetchval(
+                    "SELECT 1 FROM config.api_keys WHERE alias = $1",
+                    requires_api_key_alias,
+                )
+                api_key_missing = not has_key
+
+            adapters.append({
+                "name": row["name"],
+                "display_name": getattr(adapter_cls, "display_name", row["name"]) if adapter_cls else row["name"],
+                "enabled": row["enabled"],
+                "cadence_s": row["cadence_s"],
+                "settings": settings,
+                "paused_at": row["paused_at"],
+                "updated_at": row["updated_at"],
+                "last_error": row["last_error"],
+                "api_key_missing": api_key_missing,
+                "requires_api_key_alias": requires_api_key_alias,
+            })
 
     csrf_token = request.state.csrf_token
     response = templates.TemplateResponse(
@@ -1419,6 +1437,18 @@ async def adapters_edit_form(
         api_key_rows = await conn.fetch("SELECT alias FROM config.api_keys ORDER BY alias")
         api_keys = [{"alias": r["alias"]} for r in api_key_rows]
 
+    # Check if required API key is missing
+    api_key_missing = False
+    requires_api_key_alias = None
+    if adapter_cls and adapter_cls.requires_api_key is not None:
+        requires_api_key_alias = adapter_cls.requires_api_key
+        async with pool.acquire() as conn:
+            has_key = await conn.fetchval(
+                "SELECT 1 FROM config.api_keys WHERE alias = $1",
+                requires_api_key_alias,
+            )
+            api_key_missing = not has_key
+
     csrf_token = request.state.csrf_token
     response = templates.TemplateResponse(
         request=request,
@@ -1433,6 +1463,8 @@ async def adapters_edit_form(
             "form_data": None,
             "tile_url": tile_url,
             "tile_attribution": tile_attribution,
+            "api_key_missing": api_key_missing,
+            "requires_api_key_alias": requires_api_key_alias,
         },
     )
     return response

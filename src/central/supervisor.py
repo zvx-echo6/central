@@ -266,6 +266,23 @@ class Supervisor:
         If the adapter was previously stopped (state exists but task is not running),
         reuses the existing state to preserve last_completed_poll for rate limiting.
         """
+        # API key precondition
+        adapter_cls = self._adapters.get(config.name)
+        if adapter_cls is not None and adapter_cls.requires_api_key is not None:
+            alias = adapter_cls.requires_api_key
+            key_value = await self._config_store.get_api_key(alias)
+            if not key_value:
+                error_msg = f"missing api key: {alias}"
+                logger.warning(
+                    "Adapter cannot start - api key missing",
+                    extra={"adapter": config.name, "alias": alias},
+                )
+                await self._config_store.set_adapter_last_error(config.name, error_msg)
+                return
+
+        # Clear any stale last_error before proceeding
+        await self._config_store.set_adapter_last_error(config.name, None)
+
         existing_state = self._adapter_states.get(config.name)
 
         if existing_state is not None:

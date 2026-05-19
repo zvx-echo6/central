@@ -241,6 +241,14 @@ class ConfigStore:
             )
         return result == "DELETE 1"
 
+    async def set_adapter_last_error(self, name: str, error: str | None) -> None:
+        """Set or clear the last_error field on an adapter row."""
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE config.adapters SET last_error = $1 WHERE name = $2",
+                error, name,
+            )
+
     # -------------------------------------------------------------------------
     # Change notifications
     # -------------------------------------------------------------------------
