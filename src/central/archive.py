@@ -25,6 +25,7 @@ STREAMS = [
     ("CENTRAL_WX", "central.wx.>"),
     ("CENTRAL_FIRE", "central.fire.>"),
     ("CENTRAL_QUAKE", "central.quake.>"),
+    ("CENTRAL_SPACE", "central.space.>"),
 ]
 
 BATCH_SIZE = 100

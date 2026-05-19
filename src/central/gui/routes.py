@@ -64,7 +64,7 @@ def _adapter_classes() -> dict:
 router = APIRouter()
 
 # Streams to display on dashboard
-DASHBOARD_STREAMS = ["CENTRAL_WX", "CENTRAL_FIRE", "CENTRAL_QUAKE", "CENTRAL_META"]
+DASHBOARD_STREAMS = ["CENTRAL_WX", "CENTRAL_FIRE", "CENTRAL_QUAKE", "CENTRAL_SPACE", "CENTRAL_META"]
 
 # Email validation regex (simple but effective)
 ALIAS_REGEX = re.compile(r"^[a-zA-Z0-9_]+$")
