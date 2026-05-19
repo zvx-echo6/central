@@ -29,9 +29,9 @@ class TestConsumerNaming:
 class TestStreamsConfiguration:
     """Test streams configuration."""
 
-    def test_streams_list_has_four_entries(self):
-        """STREAMS list has four event-bearing streams."""
-        assert len(STREAMS) == 4
+    def test_streams_list_has_five_entries(self):
+        """STREAMS list has five event-bearing streams."""
+        assert len(STREAMS) == 5
 
     def test_streams_contains_central_wx(self):
         """STREAMS contains CENTRAL_WX with correct filter."""
@@ -48,6 +48,10 @@ class TestStreamsConfiguration:
     def test_streams_contains_central_space(self):
         """STREAMS contains CENTRAL_SPACE with correct filter."""
         assert ("CENTRAL_SPACE", "central.space.>") in STREAMS
+
+    def test_streams_contains_central_disaster(self):
+        """STREAMS contains CENTRAL_DISASTER with correct filter."""
+        assert ("CENTRAL_DISASTER", "central.disaster.>") in STREAMS
 
     def test_streams_excludes_central_meta(self):
         """STREAMS does not contain CENTRAL_META (status messages only)."""
