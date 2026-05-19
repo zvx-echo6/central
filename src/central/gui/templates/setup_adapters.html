@@ -45,7 +45,7 @@
                 <label for="{{ adapter.name }}_cadence_s">Cadence (seconds)</label>
                 <input type="number" id="{{ adapter.name }}_cadence_s" name="{{ adapter.name }}_cadence_s"
                        value="{{ form_data.get(adapter.name + '_cadence_s') if form_data else adapter.cadence_s }}"
-                       min="60" max="3600">
+                       >
                 {% if errors and errors.get(adapter.name + '_cadence_s') %}
                 <small style="color: var(--pico-color-red-500);">{{ errors[adapter.name + '_cadence_s'] }}</small>
                 {% endif %}

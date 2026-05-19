@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Central — Edit {{ adapter.name }}{% endblock %}
+{% block title %}Central — Edit {{ adapter.display_name }}{% endblock %}
 
 {% block head %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
@@ -10,35 +10,114 @@
 {% endblock %}
 
 {% block content %}
-<h1>Edit Adapter: {{ adapter.name }}</h1>
+<h1>{{ adapter.display_name }}</h1>
+<p class="secondary">{{ adapter.description }}</p>
+
+{% if adapter.paused_at %}
+<article aria-label="Adapter Paused" style="background-color: var(--pico-mark-background-color); margin-bottom: 1rem;">
+    <strong>⏸️ Paused</strong> since {{ adapter.paused_at }}
+</article>
+{% endif %}
+
+{% if adapter.last_error %}
+<article aria-label="Last Error" style="background-color: var(--pico-del-color); margin-bottom: 1rem;">
+    <strong>Last Error:</strong> {{ adapter.last_error }}
+</article>
+{% endif %}
 
 <form method="post" action="/adapters/{{ adapter.name }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
     <fieldset>
-        <legend>Universal Settings</legend>
+        <legend>Core Settings</legend>
 
         <label>
-            <input type="checkbox" name="enabled" {% if adapter.enabled %}checked{% endif %}>
+            <input type="checkbox" name="enabled" {% if form_data %}{% if form_data.enabled %}checked{% endif %}{% elif adapter.enabled %}checked{% endif %}>
             Enabled
         </label>
 
         <label for="cadence_s">Cadence (seconds)</label>
-        <input type="number" id="cadence_s" name="cadence_s" value="{{ form_data.cadence_s if form_data else adapter.cadence_s }}" min="60" max="3600" required>
+        <input type="number" id="cadence_s" name="cadence_s"
+               value="{{ form_data.cadence_s if form_data else adapter.cadence_s }}"
+               required>
         {% if errors and errors.cadence_s %}
         <small style="color: var(--pico-color-red-500);">{{ errors.cadence_s }}</small>
         {% endif %}
     </fieldset>
 
+    {% if fields %}
     <fieldset>
-        <legend>Adapter-Specific Settings</legend>
-        {% include "adapters_edit_" + adapter.name + ".html" %}
-    </fieldset>
+        <legend>Adapter Settings</legend>
 
+        {% for field in fields %}
+            {% if field.widget == "region" %}
+                {# Region is rendered in a separate fieldset below #}
+            {% elif field.widget == "text" %}
+                <label for="{{ field.name }}">{{ field.label }}</label>
+                <input type="text" id="{{ field.name }}" name="{{ field.name }}"
+                       value="{{ form_data[field.name] if form_data and field.name in form_data else field.current_value or '' }}"
+                       {% if field.required %}required{% endif %}>
+                {% if field.description %}
+                <small>{{ field.description }}</small>
+                {% endif %}
+                {% if errors and errors[field.name] %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                {% endif %}
+
+            {% elif field.widget == "number" %}
+                <label for="{{ field.name }}">{{ field.label }}</label>
+                <input type="number" id="{{ field.name }}" name="{{ field.name }}"
+                       value="{{ form_data[field.name] if form_data and field.name in form_data else field.current_value or '' }}"
+                       {% if field.required %}required{% endif %}>
+                {% if field.description %}
+                <small>{{ field.description }}</small>
+                {% endif %}
+                {% if errors and errors[field.name] %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                {% endif %}
+
+            {% elif field.widget == "checkbox" %}
+                <label>
+                    <input type="checkbox" name="{{ field.name }}"
+                           {% if form_data and field.name in form_data %}
+                               {% if form_data[field.name] %}checked{% endif %}
+                           {% elif field.current_value %}checked{% endif %}>
+                    {{ field.label }}
+                </label>
+                {% if field.description %}
+                <small>{{ field.description }}</small>
+                {% endif %}
+                {% if errors and errors[field.name] %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                {% endif %}
+
+            {% elif field.widget == "csv" %}
+                <label for="{{ field.name }}">{{ field.label }}</label>
+                <input type="text" id="{{ field.name }}" name="{{ field.name }}"
+                       value="{{ form_data[field.name] if form_data and field.name in form_data else (field.current_value | join(',') if field.current_value else '') }}"
+                       {% if field.required %}required{% endif %}>
+                <small>Comma-separated values{% if field.description %} — {{ field.description }}{% endif %}</small>
+                {% if errors and errors[field.name] %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                {% endif %}
+            {% endif %}
+        {% endfor %}
+    </fieldset>
+    {% endif %}
+
+    {% set has_region = namespace(value=false) %}
+    {% for field in fields %}
+        {% if field.widget == "region" %}
+            {% set has_region.value = true %}
+        {% endif %}
+    {% endfor %}
+
+    {% if has_region.value %}
     <fieldset>
         <legend>Region</legend>
         {% include "_region_picker.html" %}
     </fieldset>
+    {% endif %}
 
     <button type="submit">Save Changes</button>
     <a href="/adapters" role="button" class="outline">Cancel</a>

@@ -21,6 +21,7 @@ class TestRegionPickerInTemplate:
 
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="testop")
+        mock_request.state.csrf_token = "test_csrf"
 
         mock_conn = AsyncMock()
         mock_conn.fetchrow.side_effect = [
@@ -35,13 +36,13 @@ class TestRegionPickerInTemplate:
                 },
                 "paused_at": None,
                 "updated_at": None,
+                "last_error": None,
             },
             {  # System settings row
                 "map_tile_url": "https://tile.example.com/{z}/{x}/{y}.png",
                 "map_attribution": "Test Attribution",
             },
         ]
-        mock_conn.fetch.return_value = [{"alias": "firms"}]
 
         mock_pool = MagicMock()
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -80,27 +81,26 @@ class TestRegionValidation:
             "csrf_token": "test_csrf_token",
             "cadence_s": "300",
             "api_key_alias": "firms",
+            "satellites": "VIIRS_SNPP_NRT",
             "region_north": "45.0",
             "region_south": "35.0",
             "region_east": "-100.0",
             "region_west": "-120.0",
         }.get(k, d)
-        mock_form.getlist.return_value = ["VIIRS_SNPP_NRT"]
+        mock_form.getlist.return_value = []
         mock_form.__contains__ = lambda self, k: k == "enabled"
         mock_request.form = AsyncMock(return_value=mock_form)
 
         mock_conn = AsyncMock()
-        mock_conn.fetchrow.side_effect = [
-            {  # Adapter row
-                "name": "firms",
-                "enabled": True,
-                "cadence_s": 300,
-                "settings": {"api_key_alias": "firms", "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}},
-                "paused_at": None,
-                "updated_at": None,
-            },
-            {"id": 1},  # api_key exists check
-        ]
+        mock_conn.fetchrow.return_value = {
+            "name": "firms",
+            "enabled": True,
+            "cadence_s": 300,
+            "settings": {"api_key_alias": "firms", "satellites": ["VIIRS_SNPP_NRT"], "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}},
+            "paused_at": None,
+            "updated_at": None,
+            "last_error": None,
+        }
         mock_conn.execute = AsyncMock()
 
         mock_pool = MagicMock()
@@ -139,12 +139,13 @@ class TestRegionValidation:
             "csrf_token": "test_csrf_token",
             "cadence_s": "300",
             "api_key_alias": "firms",
+            "satellites": "VIIRS_SNPP_NRT",
             "region_north": "30.0",  # Less than south!
             "region_south": "35.0",
             "region_east": "-100.0",
             "region_west": "-120.0",
         }.get(k, d)
-        mock_form.getlist.return_value = ["VIIRS_SNPP_NRT"]
+        mock_form.getlist.return_value = []
         mock_form.__contains__ = lambda self, k: k == "enabled"
         mock_request.form = AsyncMock(return_value=mock_form)
 
@@ -154,14 +155,13 @@ class TestRegionValidation:
                 "name": "firms",
                 "enabled": True,
                 "cadence_s": 300,
-                "settings": {"api_key_alias": "firms", "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}},
+                "settings": {"api_key_alias": "firms", "satellites": ["VIIRS_SNPP_NRT"], "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}},
                 "paused_at": None,
                 "updated_at": None,
+                "last_error": None,
             },
-            {"id": 1},  # api_key exists
             {"map_tile_url": None, "map_attribution": None},  # system settings for re-render
         ]
-        mock_conn.fetch.return_value = [{"alias": "firms"}]
 
         mock_pool = MagicMock()
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -195,12 +195,13 @@ class TestRegionValidation:
             "csrf_token": "test_csrf_token",
             "cadence_s": "300",
             "api_key_alias": "firms",
+            "satellites": "VIIRS_SNPP_NRT",
             "region_north": "45.0",
             "region_south": "35.0",
             "region_east": "-130.0",  # Less than west!
             "region_west": "-120.0",
         }.get(k, d)
-        mock_form.getlist.return_value = ["VIIRS_SNPP_NRT"]
+        mock_form.getlist.return_value = []
         mock_form.__contains__ = lambda self, k: k == "enabled"
         mock_request.form = AsyncMock(return_value=mock_form)
 
@@ -210,14 +211,13 @@ class TestRegionValidation:
                 "name": "firms",
                 "enabled": True,
                 "cadence_s": 300,
-                "settings": {"api_key_alias": "firms", "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}},
+                "settings": {"api_key_alias": "firms", "satellites": ["VIIRS_SNPP_NRT"], "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}},
                 "paused_at": None,
                 "updated_at": None,
+                "last_error": None,
             },
-            {"id": 1},
             {"map_tile_url": None, "map_attribution": None},
         ]
-        mock_conn.fetch.return_value = [{"alias": "firms"}]
 
         mock_pool = MagicMock()
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -251,12 +251,13 @@ class TestRegionValidation:
             "csrf_token": "test_csrf_token",
             "cadence_s": "300",
             "api_key_alias": "firms",
+            "satellites": "VIIRS_SNPP_NRT",
             "region_north": "95.0",  # > 90!
             "region_south": "35.0",
             "region_east": "-100.0",
             "region_west": "-120.0",
         }.get(k, d)
-        mock_form.getlist.return_value = ["VIIRS_SNPP_NRT"]
+        mock_form.getlist.return_value = []
         mock_form.__contains__ = lambda self, k: k == "enabled"
         mock_request.form = AsyncMock(return_value=mock_form)
 
@@ -266,14 +267,13 @@ class TestRegionValidation:
                 "name": "firms",
                 "enabled": True,
                 "cadence_s": 300,
-                "settings": {"api_key_alias": "firms", "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}},
+                "settings": {"api_key_alias": "firms", "satellites": ["VIIRS_SNPP_NRT"], "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}},
                 "paused_at": None,
                 "updated_at": None,
+                "last_error": None,
             },
-            {"id": 1},
             {"map_tile_url": None, "map_attribution": None},
         ]
-        mock_conn.fetch.return_value = [{"alias": "firms"}]
 
         mock_pool = MagicMock()
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -310,30 +310,30 @@ class TestRegionAuditLog:
             "csrf_token": "test_csrf_token",
             "cadence_s": "300",
             "api_key_alias": "firms",
+            "satellites": "VIIRS_SNPP_NRT",
             "region_north": "45.0",
             "region_south": "35.0",
             "region_east": "-100.0",
             "region_west": "-120.0",
         }.get(k, d)
-        mock_form.getlist.return_value = ["VIIRS_SNPP_NRT"]
+        mock_form.getlist.return_value = []
         mock_form.__contains__ = lambda self, k: k == "enabled"
         mock_request.form = AsyncMock(return_value=mock_form)
 
         mock_conn = AsyncMock()
-        mock_conn.fetchrow.side_effect = [
-            {
-                "name": "firms",
-                "enabled": True,
-                "cadence_s": 300,
-                "settings": {
-                    "api_key_alias": "firms",
-                    "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}
-                },
-                "paused_at": None,
-                "updated_at": None,
+        mock_conn.fetchrow.return_value = {
+            "name": "firms",
+            "enabled": True,
+            "cadence_s": 300,
+            "settings": {
+                "api_key_alias": "firms",
+                "satellites": ["VIIRS_SNPP_NRT"],
+                "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}
             },
-            {"id": 1},
-        ]
+            "paused_at": None,
+            "updated_at": None,
+            "last_error": None,
+        }
         mock_conn.execute = AsyncMock()
 
         mock_pool = MagicMock()

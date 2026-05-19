@@ -9,6 +9,7 @@ from typing import Any
 
 logger = logging.getLogger("central.gui.routes")
 
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from central.bootstrap_config import get_settings
@@ -43,7 +44,22 @@ from central.gui.audit import (
     SYSTEM_UPDATE,
     write_audit,
 )
+from functools import cache
+
 from central.gui.db import get_pool
+from central.gui.form_descriptors import describe_fields, FieldDescriptor
+from central.adapter_discovery import discover_adapters
+from pydantic import ValidationError
+
+@cache
+def _adapter_classes() -> dict:
+    """Cached adapter class discovery.
+    
+    GUI is a separate process from supervisor; walks pkgutil itself.
+    Python's import cache makes subsequent calls free.
+    """
+    return discover_adapters()
+
 
 router = APIRouter()
 
@@ -747,12 +763,16 @@ async def setup_adapters_submit(request: Request) -> Response:
         # Parse enabled
         enabled = f"{adapter_name}_enabled" in form
 
-        # Parse cadence
+        # Parse cadence using AdapterConfig field constraint
         cadence_str = form.get(f"{adapter_name}_cadence_s", "")
         try:
             cadence_s = int(cadence_str)
-            if cadence_s < 60 or cadence_s > 3600:
-                errors[f"{adapter_name}_cadence_s"] = "Cadence must be between 60 and 3600 seconds"
+            from central.config_models import AdapterConfig
+            min_cadence = AdapterConfig.model_fields["cadence_s"].metadata[0].ge
+            if cadence_s < min_cadence:
+                errors[f"{adapter_name}_cadence_s"] = (
+                    f"Input should be greater than or equal to {min_cadence}"
+                )
         except ValueError:
             errors[f"{adapter_name}_cadence_s"] = "Cadence must be a valid integer"
             cadence_s = current.get("cadence_s", 300)
@@ -1275,10 +1295,14 @@ async def adapters_edit_form(
     pool = get_pool()
     operator = request.state.operator
 
+    # Look up the adapter class
+    adapter_classes = _adapter_classes()
+    adapter_cls = adapter_classes.get(name)
+
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT name, enabled, cadence_s, settings, paused_at, updated_at
+            SELECT name, enabled, cadence_s, settings, paused_at, updated_at, last_error
             FROM config.adapters
             WHERE name = $1
             """,
@@ -1288,11 +1312,6 @@ async def adapters_edit_form(
         if row is None:
             return Response(status_code=404, content="Adapter not found")
 
-        # Get API keys for firms dropdown
-        api_keys = await conn.fetch(
-            "SELECT alias FROM config.api_keys ORDER BY alias"
-        )
-
         # Get map tile settings from config.system
         sys_row = await conn.fetchrow(
             "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
@@ -1301,14 +1320,24 @@ async def adapters_edit_form(
         tile_attribution = sys_row["map_attribution"] if sys_row else "&copy; OpenStreetMap contributors"
 
     settings = row["settings"] or {}
+
+    # Build adapter dict with class metadata
     adapter = {
         "name": row["name"],
+        "display_name": getattr(adapter_cls, "display_name", row["name"]) if adapter_cls else row["name"],
+        "description": getattr(adapter_cls, "description", "") if adapter_cls else "",
         "enabled": row["enabled"],
         "cadence_s": row["cadence_s"],
         "settings": settings,
         "paused_at": row["paused_at"],
         "updated_at": row["updated_at"],
+        "last_error": row["last_error"],
     }
+
+    # Generate field descriptors if we have the adapter class
+    fields = []
+    if adapter_cls and hasattr(adapter_cls, "settings_schema"):
+        fields = describe_fields(adapter_cls.settings_schema, settings)
 
     csrf_token = request.state.csrf_token
     response = templates.TemplateResponse(
@@ -1318,11 +1347,9 @@ async def adapters_edit_form(
             "operator": operator,
             "csrf_token": csrf_token,
             "adapter": adapter,
+            "fields": fields,
             "errors": None,
             "form_data": None,
-            "api_keys": [{"alias": k["alias"]} for k in api_keys],
-            "valid_satellites": _get_valid_satellites(),
-            "valid_feeds": sorted(_get_valid_feeds()),
             "tile_url": tile_url,
             "tile_attribution": tile_attribution,
         },
@@ -1347,24 +1374,27 @@ async def adapters_edit_submit(
     if not form_csrf or form_csrf != request.state.csrf_token:
         raise CsrfValidationError("Invalid CSRF token")
 
-    # Parse form data
-    form = await request.form()
+    # Look up the adapter class
+    adapter_classes = _adapter_classes()
+    adapter_cls = adapter_classes.get(name)
+
+    # Parse common form fields
     enabled = "enabled" in form
     cadence_s_str = form.get("cadence_s", "")
 
-    # Build form_data for re-render on error
+    errors: dict[str, str] = {}
     form_data: dict[str, Any] = {
         "enabled": enabled,
         "cadence_s": cadence_s_str,
     }
 
-    errors: dict[str, str] = {}
-
-    # Validate cadence_s
+    # Validate cadence_s using AdapterConfig field constraint (ge=10)
     try:
         cadence_s = int(cadence_s_str)
-        if cadence_s < 60 or cadence_s > 3600:
-            errors["cadence_s"] = "Cadence must be between 60 and 3600 seconds"
+        from central.config_models import AdapterConfig
+        min_cadence = AdapterConfig.model_fields["cadence_s"].metadata[0].ge
+        if cadence_s < min_cadence:
+            errors["cadence_s"] = f"Input should be greater than or equal to {min_cadence}"
     except ValueError:
         errors["cadence_s"] = "Cadence must be a valid integer"
         cadence_s = 0
@@ -1373,7 +1403,7 @@ async def adapters_edit_submit(
         # Get current adapter state
         row = await conn.fetchrow(
             """
-            SELECT name, enabled, cadence_s, settings, paused_at, updated_at
+            SELECT name, enabled, cadence_s, settings, paused_at, updated_at, last_error
             FROM config.adapters
             WHERE name = $1
             """,
@@ -1384,109 +1414,113 @@ async def adapters_edit_submit(
             return Response(status_code=404, content="Adapter not found")
 
         current_settings = row["settings"] or {}
-        new_settings = dict(current_settings)
 
-        # Adapter-specific validation and settings update
-        if name == "nws":
-            contact_email = form.get("contact_email", "").strip()
-            form_data["contact_email"] = contact_email
-            if not contact_email:
-                errors["contact_email"] = "Contact email is required"
-            elif not EMAIL_REGEX.match(contact_email):
-                errors["contact_email"] = "Invalid email format"
+        # Parse and validate settings via Pydantic if we have the adapter class
+        new_settings = {}
+        if adapter_cls and hasattr(adapter_cls, "settings_schema"):
+            schema = adapter_cls.settings_schema
+            fields = describe_fields(schema, current_settings)
+
+            # Parse form values based on widget type
+            parsed_values = {}
+            for field in fields:
+                raw = form.get(field.name, "")
+                form_data[field.name] = raw
+
+                if field.widget == "text":
+                    parsed_values[field.name] = raw.strip() if raw else None
+                elif field.widget == "number":
+                    try:
+                        parsed_values[field.name] = int(raw) if raw else None
+                    except ValueError:
+                        errors[field.name] = f"{field.label} must be a number"
+                elif field.widget == "checkbox":
+                    parsed_values[field.name] = field.name in form
+                elif field.widget == "csv":
+                    if raw.strip():
+                        parsed_values[field.name] = [v.strip() for v in raw.split(",") if v.strip()]
+                    else:
+                        parsed_values[field.name] = []
+                elif field.widget == "region":
+                    # Region handled separately below
+                    pass
+
+            # Handle region fields (common pattern)
+            region_north_str = form.get("region_north", "").strip()
+            region_south_str = form.get("region_south", "").strip()
+            region_east_str = form.get("region_east", "").strip()
+            region_west_str = form.get("region_west", "").strip()
+
+            form_data["region_north"] = region_north_str
+            form_data["region_south"] = region_south_str
+            form_data["region_east"] = region_east_str
+            form_data["region_west"] = region_west_str
+
+            # Check if any region field has a value
+            has_region = any([region_north_str, region_south_str, region_east_str, region_west_str])
+
+            if has_region:
+                try:
+                    region_north = float(region_north_str)
+                    region_south = float(region_south_str)
+                    region_east = float(region_east_str)
+                    region_west = float(region_west_str)
+
+                    if not (-90 <= region_south < region_north <= 90):
+                        errors["region"] = "Invalid latitude: south must be less than north, both between -90 and 90"
+                    elif not (-180 <= region_west < region_east <= 180):
+                        errors["region"] = "Invalid longitude: west must be less than east, both between -180 and 180"
+                    else:
+                        parsed_values["region"] = {
+                            "north": region_north,
+                            "south": region_south,
+                            "east": region_east,
+                            "west": region_west,
+                        }
+                except ValueError:
+                    errors["region"] = "Region coordinates must be valid numbers"
             else:
-                new_settings["contact_email"] = contact_email
+                parsed_values["region"] = None
 
-        elif name == "firms":
-            api_key_alias = form.get("api_key_alias", "").strip()
-            satellites = form.getlist("satellites")
-            form_data["api_key_alias"] = api_key_alias
-            form_data["satellites"] = satellites
-
-            # Validate api_key_alias if set
-            if api_key_alias:
-                key_exists = await conn.fetchrow(
-                    "SELECT 1 FROM config.api_keys WHERE alias = $1",
-                    api_key_alias,
-                )
-                if not key_exists:
-                    errors["api_key_alias"] = f"API key alias '{api_key_alias}' does not exist"
-                else:
-                    new_settings["api_key_alias"] = api_key_alias
-            else:
-                new_settings["api_key_alias"] = None
-
-            # Validate satellites
-            valid_sats = set(_get_valid_satellites())
-            invalid_sats = [s for s in satellites if s not in valid_sats]
-            if invalid_sats:
-                errors["satellites"] = f"Invalid satellites: {', '.join(invalid_sats)}"
-            else:
-                new_settings["satellites"] = satellites
-
-        elif name == "usgs_quake":
-            feed = form.get("feed", "").strip()
-            form_data["feed"] = feed
-            valid_feeds = _get_valid_feeds()
-            if feed not in valid_feeds:
-                errors["feed"] = f"Invalid feed. Must be one of: {', '.join(sorted(valid_feeds))}"
-            else:
-                new_settings["feed"] = feed
-
-        # Region validation (applies to all adapters)
-        region_north_str = form.get("region_north", "").strip()
-        region_south_str = form.get("region_south", "").strip()
-        region_east_str = form.get("region_east", "").strip()
-        region_west_str = form.get("region_west", "").strip()
-
-        form_data["region_north"] = region_north_str
-        form_data["region_south"] = region_south_str
-        form_data["region_east"] = region_east_str
-        form_data["region_west"] = region_west_str
-
-        try:
-            region_north = float(region_north_str)
-            region_south = float(region_south_str)
-            region_east = float(region_east_str)
-            region_west = float(region_west_str)
-
-            # Validate latitude bounds
-            if not (-90 <= region_south < region_north <= 90):
-                errors["region"] = "Invalid latitude: south must be less than north, both between -90 and 90"
-            # Validate longitude bounds
-            elif not (-180 <= region_west < region_east <= 180):
-                errors["region"] = "Invalid longitude: west must be less than east, both between -180 and 180"
-            else:
-                new_settings["region"] = {
-                    "north": region_north,
-                    "south": region_south,
-                    "east": region_east,
-                    "west": region_west,
-                }
-        except ValueError:
-            errors["region"] = "Region coordinates must be valid numbers"
+            # Only validate with Pydantic if no parse errors
+            if not errors:
+                try:
+                    # Filter out None values for optional fields without defaults
+                    validated_data = {k: v for k, v in parsed_values.items() if v is not None}
+                    validated = schema(**validated_data)
+                    new_settings = validated.model_dump(mode="json")
+                except ValidationError as e:
+                    for err in e.errors():
+                        field_name = err["loc"][0] if err["loc"] else "unknown"
+                        errors[str(field_name)] = err["msg"]
+        else:
+            # No schema - just preserve existing settings
+            new_settings = dict(current_settings)
 
         # If there are errors, re-render the form
         if errors:
-            adapter = {
-                "name": row["name"],
-                "enabled": row["enabled"],
-                "cadence_s": row["cadence_s"],
-                "settings": current_settings,
-                "paused_at": row["paused_at"],
-                "updated_at": row["updated_at"],
-            }
-
-            api_keys = await conn.fetch(
-                "SELECT alias FROM config.api_keys ORDER BY alias"
-            )
-
             # Get map tile settings for re-render
             sys_row = await conn.fetchrow(
                 "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
             )
             tile_url = sys_row["map_tile_url"] if sys_row else "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             tile_attribution = sys_row["map_attribution"] if sys_row else "&copy; OpenStreetMap contributors"
+
+            adapter = {
+                "name": row["name"],
+                "display_name": getattr(adapter_cls, "display_name", row["name"]) if adapter_cls else row["name"],
+                "description": getattr(adapter_cls, "description", "") if adapter_cls else "",
+                "enabled": row["enabled"],
+                "cadence_s": row["cadence_s"],
+                "settings": current_settings,
+                "paused_at": row["paused_at"],
+                "updated_at": row["updated_at"],
+                "last_error": row["last_error"],
+            }
+
+            fields = []
+            if adapter_cls and hasattr(adapter_cls, "settings_schema"):
+                fields = describe_fields(adapter_cls.settings_schema, current_settings)
 
             csrf_token = request.state.csrf_token
             response = templates.TemplateResponse(
@@ -1496,11 +1530,9 @@ async def adapters_edit_submit(
                     "operator": operator,
                     "csrf_token": csrf_token,
                     "adapter": adapter,
+                    "fields": fields,
                     "errors": errors,
                     "form_data": form_data,
-                    "api_keys": [{"alias": k["alias"]} for k in api_keys],
-                    "valid_satellites": _get_valid_satellites(),
-                    "valid_feeds": sorted(_get_valid_feeds()),
                     "tile_url": tile_url,
                     "tile_attribution": tile_attribution,
                 },
