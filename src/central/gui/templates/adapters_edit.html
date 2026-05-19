@@ -100,6 +100,58 @@
                 {% if errors and errors[field.name] %}
                 <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
                 {% endif %}
+
+            {% elif field.widget == "select" %}
+                <label for="{{ field.name }}">{{ field.label }}</label>
+                <select id="{{ field.name }}" name="{{ field.name }}">
+                    {% for opt in field.options %}
+                    <option value="{{ opt }}"
+                            {% if (form_data[field.name] if form_data and field.name in form_data else field.current_value) == opt %}selected{% endif %}>
+                        {{ opt }}
+                    </option>
+                    {% endfor %}
+                </select>
+                {% if field.description %}
+                <small>{{ field.description }}</small>
+                {% endif %}
+                {% if errors and errors[field.name] %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                {% endif %}
+
+            {% elif field.widget == "checkboxes" %}
+                <label>{{ field.label }}</label>
+                {% set current_values = form_data.getlist(field.name) if form_data and form_data.getlist else (field.current_value or []) %}
+                {% for opt in field.options %}
+                <label style="display: inline-block; margin-right: 1rem;">
+                    <input type="checkbox" name="{{ field.name }}" value="{{ opt }}"
+                           {% if opt in current_values %}checked{% endif %}>
+                    {{ opt }}
+                </label>
+                {% endfor %}
+                {% if field.description %}
+                <small style="display: block;">{{ field.description }}</small>
+                {% endif %}
+                {% if errors and errors[field.name] %}
+                <small style="color: var(--pico-color-red-500); display: block;">{{ errors[field.name] }}</small>
+                {% endif %}
+
+            {% elif field.widget == "api_key_select" %}
+                <label for="{{ field.name }}">{{ field.label }}</label>
+                <select id="{{ field.name }}" name="{{ field.name }}">
+                    <option value="">(none)</option>
+                    {% for key in api_keys %}
+                    <option value="{{ key.alias }}"
+                            {% if (form_data[field.name] if form_data and field.name in form_data else field.current_value) == key.alias %}selected{% endif %}>
+                        {{ key.alias }}
+                    </option>
+                    {% endfor %}
+                </select>
+                {% if field.description %}
+                <small>{{ field.description }}</small>
+                {% endif %}
+                {% if errors and errors[field.name] %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                {% endif %}
             {% endif %}
         {% endfor %}
     </fieldset>

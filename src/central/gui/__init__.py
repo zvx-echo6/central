@@ -247,18 +247,37 @@ def _create_app() -> FastAPI:
                 except Exception:
                     pass
 
-            # Import helper functions for valid values
-            from central.gui.routes import _get_valid_satellites, _get_valid_feeds
+            # Add field descriptors to adapters
+            from central.gui.routes import _adapter_classes
+            from central.gui.form_descriptors import describe_fields
+            adapter_classes = _adapter_classes()
+            wizard_adapters = sorted(
+                [(name, cls) for name, cls in adapter_classes.items() if cls.wizard_order is not None],
+                key=lambda nc: nc[1].wizard_order
+            )
+            # Rebuild adapters with fields
+            enriched_adapters = []
+            for name, cls in wizard_adapters:
+                adapter_data = next((a for a in adapters if a["name"] == name), None)
+                if adapter_data:
+                    settings_dict = adapter_data.get("settings", {})
+                    fields = describe_fields(cls.settings_schema, settings_dict)
+                    enriched_adapters.append({
+                        "name": name,
+                        "display_name": cls.display_name,
+                        "enabled": adapter_data.get("enabled", False),
+                        "cadence_s": adapter_data.get("cadence_s", 300),
+                        "settings": settings_dict,
+                        "fields": fields,
+                    })
 
             response = templates.TemplateResponse(
                 request=request,
                 name="setup_adapters.html",
                 context={
                     "csrf_token": csrf_token,
-                    "adapters": adapters,
+                    "adapters": enriched_adapters,
                     "api_keys": api_keys,
-                    "valid_satellites": _get_valid_satellites(),
-                    "valid_feeds": sorted(_get_valid_feeds()),
                     "tile_url": tile_url,
                     "tile_attribution": tile_attribution,
                     "error": error_msg,

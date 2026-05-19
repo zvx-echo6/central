@@ -29,7 +29,7 @@
 
         {% for adapter in adapters %}
         <details open style="margin-bottom: 2rem;">
-            <summary><strong>{{ adapter.name }}</strong></summary>
+            <summary><strong>{{ adapter.display_name or adapter.name }}</strong></summary>
 
             <div style="padding: 1rem; border-left: 3px solid var(--pico-primary);">
                 <label>
@@ -44,100 +44,158 @@
 
                 <label for="{{ adapter.name }}_cadence_s">Cadence (seconds)</label>
                 <input type="number" id="{{ adapter.name }}_cadence_s" name="{{ adapter.name }}_cadence_s"
-                       value="{{ form_data.get(adapter.name + '_cadence_s') if form_data else adapter.cadence_s }}"
-                       >
+                       value="{{ form_data.get(adapter.name + '_cadence_s') if form_data else adapter.cadence_s }}">
                 {% if errors and errors.get(adapter.name + '_cadence_s') %}
                 <small style="color: var(--pico-color-red-500);">{{ errors[adapter.name + '_cadence_s'] }}</small>
                 {% endif %}
 
-                {% if adapter.name == 'nws' %}
-                <label for="{{ adapter.name }}_contact_email">Contact Email</label>
-                <input type="email" id="{{ adapter.name }}_contact_email" name="{{ adapter.name }}_contact_email"
-                       value="{{ form_data.get(adapter.name + '_contact_email') if form_data else adapter.settings.contact_email }}">
-                {% if errors and errors.get(adapter.name + '_contact_email') %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[adapter.name + '_contact_email'] }}</small>
-                {% endif %}
-                {% endif %}
+                {% for field in adapter.fields %}
+                    {% set form_key = adapter.name + '_' + field.name %}
 
-                {% if adapter.name == 'firms' %}
-                <label for="{{ adapter.name }}_api_key_alias">API Key Alias</label>
-                <select id="{{ adapter.name }}_api_key_alias" name="{{ adapter.name }}_api_key_alias">
-                    <option value="">(none)</option>
-                    {% for key in api_keys %}
-                    <option value="{{ key.alias }}"
-                            {% if (form_data.get(adapter.name + '_api_key_alias') if form_data else adapter.settings.api_key_alias) == key.alias %}selected{% endif %}>
-                        {{ key.alias }}
-                    </option>
-                    {% endfor %}
-                </select>
-                {% if errors and errors.get(adapter.name + '_api_key_alias') %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[adapter.name + '_api_key_alias'] }}</small>
-                {% endif %}
+                    {% if field.widget == "text" %}
+                        <label for="{{ form_key }}">{{ field.label }}</label>
+                        <input type="text" id="{{ form_key }}" name="{{ form_key }}"
+                               value="{{ form_data.get(form_key) if form_data else field.current_value or '' }}"
+                               {% if field.required %}required{% endif %}>
+                        {% if field.description %}
+                        <small>{{ field.description }}</small>
+                        {% endif %}
+                        {% if errors and errors.get(form_key) %}
+                        <small style="color: var(--pico-color-red-500);">{{ errors[form_key] }}</small>
+                        {% endif %}
 
-                <label>Satellites</label>
-                {% for sat in valid_satellites %}
-                <label style="display: inline-block; margin-right: 1rem;">
-                    <input type="checkbox" name="{{ adapter.name }}_satellites" value="{{ sat }}"
-                           {% if sat in (form_data.getlist(adapter.name + '_satellites') if form_data else adapter.settings.satellites or []) %}checked{% endif %}>
-                    {{ sat }}
-                </label>
-                {% endfor %}
-                {% endif %}
+                    {% elif field.widget == "api_key_select" %}
+                        <label for="{{ form_key }}">{{ field.label }}</label>
+                        <select id="{{ form_key }}" name="{{ form_key }}">
+                            <option value="">(none)</option>
+                            {% for key in api_keys %}
+                            <option value="{{ key.alias }}"
+                                    {% if (form_data.get(form_key) if form_data else field.current_value) == key.alias %}selected{% endif %}>
+                                {{ key.alias }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        {% if field.description %}
+                        <small>{{ field.description }}</small>
+                        {% endif %}
+                        {% if errors and errors.get(form_key) %}
+                        <small style="color: var(--pico-color-red-500);">{{ errors[form_key] }}</small>
+                        {% endif %}
 
-                {% if adapter.name == 'usgs_quake' %}
-                <label for="{{ adapter.name }}_feed">Feed</label>
-                <select id="{{ adapter.name }}_feed" name="{{ adapter.name }}_feed">
-                    {% for f in valid_feeds %}
-                    <option value="{{ f }}"
-                            {% if (form_data.get(adapter.name + '_feed') if form_data else adapter.settings.feed) == f %}selected{% endif %}>
-                        {{ f }}
-                    </option>
-                    {% endfor %}
-                </select>
-                {% if errors and errors.get(adapter.name + '_feed') %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[adapter.name + '_feed'] }}</small>
-                {% endif %}
-                {% endif %}
+                    {% elif field.widget == "number" %}
+                        <label for="{{ form_key }}">{{ field.label }}</label>
+                        <input type="number" id="{{ form_key }}" name="{{ form_key }}"
+                               value="{{ form_data.get(form_key) if form_data else field.current_value or '' }}"
+                               {% if field.required %}required{% endif %}>
+                        {% if field.description %}
+                        <small>{{ field.description }}</small>
+                        {% endif %}
+                        {% if errors and errors.get(form_key) %}
+                        <small style="color: var(--pico-color-red-500);">{{ errors[form_key] }}</small>
+                        {% endif %}
 
-                <h4>Region</h4>
-                {% set region = form_data if form_data else adapter.settings.region %}
-                <div id="region-picker-{{ adapter.name }}"
-                     data-adapter="{{ adapter.name }}"
-                     data-north="{{ form_data.get(adapter.name + '_region_north') if form_data else (adapter.settings.region.north if adapter.settings.region else 49.5) }}"
-                     data-south="{{ form_data.get(adapter.name + '_region_south') if form_data else (adapter.settings.region.south if adapter.settings.region else 31.0) }}"
-                     data-east="{{ form_data.get(adapter.name + '_region_east') if form_data else (adapter.settings.region.east if adapter.settings.region else -102.0) }}"
-                     data-west="{{ form_data.get(adapter.name + '_region_west') if form_data else (adapter.settings.region.west if adapter.settings.region else -124.5) }}"
-                     data-tile-url="{{ tile_url }}"
-                     data-tile-attr="{{ tile_attribution }}">
+                    {% elif field.widget == "checkbox" %}
+                        <label>
+                            <input type="checkbox" name="{{ form_key }}"
+                                   {% if form_data and form_data.get(form_key) %}checked
+                                   {% elif not form_data and field.current_value %}checked{% endif %}>
+                            {{ field.label }}
+                        </label>
+                        {% if field.description %}
+                        <small>{{ field.description }}</small>
+                        {% endif %}
+                        {% if errors and errors.get(form_key) %}
+                        <small style="color: var(--pico-color-red-500);">{{ errors[form_key] }}</small>
+                        {% endif %}
 
-                    <div id="region-map-{{ adapter.name }}" style="height: 300px; margin-bottom: 1rem;"></div>
+                    {% elif field.widget == "csv" %}
+                        <label for="{{ form_key }}">{{ field.label }}</label>
+                        <input type="text" id="{{ form_key }}" name="{{ form_key }}"
+                               value="{{ form_data.get(form_key) if form_data else (field.current_value | join(',') if field.current_value else '') }}"
+                               {% if field.required %}required{% endif %}>
+                        <small>Comma-separated values{% if field.description %} — {{ field.description }}{% endif %}</small>
+                        {% if errors and errors.get(form_key) %}
+                        <small style="color: var(--pico-color-red-500);">{{ errors[form_key] }}</small>
+                        {% endif %}
 
-                    <div class="grid">
-                        <div>
-                            <label>North</label>
-                            <input type="number" name="{{ adapter.name }}_region_north" step="0.0001" min="-90" max="90" readonly
-                                   value="{{ form_data.get(adapter.name + '_region_north') if form_data else (adapter.settings.region.north if adapter.settings.region else 49.5) }}">
+                    {% elif field.widget == "select" %}
+                        <label for="{{ form_key }}">{{ field.label }}</label>
+                        <select id="{{ form_key }}" name="{{ form_key }}">
+                            {% for opt in field.options %}
+                            <option value="{{ opt }}"
+                                    {% if (form_data.get(form_key) if form_data else field.current_value) == opt %}selected{% endif %}>
+                                {{ opt }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        {% if field.description %}
+                        <small>{{ field.description }}</small>
+                        {% endif %}
+                        {% if errors and errors.get(form_key) %}
+                        <small style="color: var(--pico-color-red-500);">{{ errors[form_key] }}</small>
+                        {% endif %}
+
+                    {% elif field.widget == "checkboxes" %}
+                        <label>{{ field.label }}</label>
+                        {% set current_values = form_data.getlist(form_key) if form_data else (field.current_value or []) %}
+                        {% for opt in field.options %}
+                        <label style="display: inline-block; margin-right: 1rem;">
+                            <input type="checkbox" name="{{ form_key }}" value="{{ opt }}"
+                                   {% if opt in current_values %}checked{% endif %}>
+                            {{ opt }}
+                        </label>
+                        {% endfor %}
+                        {% if field.description %}
+                        <small style="display: block;">{{ field.description }}</small>
+                        {% endif %}
+                        {% if errors and errors.get(form_key) %}
+                        <small style="color: var(--pico-color-red-500); display: block;">{{ errors[form_key] }}</small>
+                        {% endif %}
+
+                    {% elif field.widget == "region" %}
+                        <h4>Region</h4>
+                        {% set region_key = adapter.name + '_' + field.name %}
+                        {% set region = field.current_value or {} %}
+                        <div id="region-picker-{{ adapter.name }}"
+                             data-adapter="{{ adapter.name }}"
+                             data-field="{{ field.name }}"
+                             data-north="{{ form_data.get(region_key + '_north') if form_data else (region.north if region else 49.5) }}"
+                             data-south="{{ form_data.get(region_key + '_south') if form_data else (region.south if region else 31.0) }}"
+                             data-east="{{ form_data.get(region_key + '_east') if form_data else (region.east if region else -102.0) }}"
+                             data-west="{{ form_data.get(region_key + '_west') if form_data else (region.west if region else -124.5) }}"
+                             data-tile-url="{{ tile_url }}"
+                             data-tile-attr="{{ tile_attribution }}">
+
+                            <div id="region-map-{{ adapter.name }}" style="height: 300px; margin-bottom: 1rem;"></div>
+
+                            <div class="grid">
+                                <div>
+                                    <label>North</label>
+                                    <input type="number" name="{{ region_key }}_north" step="0.0001" min="-90" max="90" readonly
+                                           value="{{ form_data.get(region_key + '_north') if form_data else (region.north if region else 49.5) }}">
+                                </div>
+                                <div>
+                                    <label>South</label>
+                                    <input type="number" name="{{ region_key }}_south" step="0.0001" min="-90" max="90" readonly
+                                           value="{{ form_data.get(region_key + '_south') if form_data else (region.south if region else 31.0) }}">
+                                </div>
+                                <div>
+                                    <label>East</label>
+                                    <input type="number" name="{{ region_key }}_east" step="0.0001" min="-180" max="180" readonly
+                                           value="{{ form_data.get(region_key + '_east') if form_data else (region.east if region else -102.0) }}">
+                                </div>
+                                <div>
+                                    <label>West</label>
+                                    <input type="number" name="{{ region_key }}_west" step="0.0001" min="-180" max="180" readonly
+                                           value="{{ form_data.get(region_key + '_west') if form_data else (region.west if region else -124.5) }}">
+                                </div>
+                            </div>
+                            {% if errors and errors.get(region_key) %}
+                            <small style="color: var(--pico-color-red-500);">{{ errors[region_key] }}</small>
+                            {% endif %}
                         </div>
-                        <div>
-                            <label>South</label>
-                            <input type="number" name="{{ adapter.name }}_region_south" step="0.0001" min="-90" max="90" readonly
-                                   value="{{ form_data.get(adapter.name + '_region_south') if form_data else (adapter.settings.region.south if adapter.settings.region else 31.0) }}">
-                        </div>
-                        <div>
-                            <label>East</label>
-                            <input type="number" name="{{ adapter.name }}_region_east" step="0.0001" min="-180" max="180" readonly
-                                   value="{{ form_data.get(adapter.name + '_region_east') if form_data else (adapter.settings.region.east if adapter.settings.region else -102.0) }}">
-                        </div>
-                        <div>
-                            <label>West</label>
-                            <input type="number" name="{{ adapter.name }}_region_west" step="0.0001" min="-180" max="180" readonly
-                                   value="{{ form_data.get(adapter.name + '_region_west') if form_data else (adapter.settings.region.west if adapter.settings.region else -124.5) }}">
-                        </div>
-                    </div>
-                    {% if errors and errors.get(adapter.name + '_region') %}
-                    <small style="color: var(--pico-color-red-500);">{{ errors[adapter.name + '_region'] }}</small>
                     {% endif %}
-                </div>
+                {% endfor %}
             </div>
         </details>
         {% endfor %}
@@ -151,11 +209,12 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    const adapters = ['nws', 'firms', 'usgs_quake'];
+    // Find all region pickers dynamically
+    const regionPickers = document.querySelectorAll('[id^="region-picker-"]');
 
-    adapters.forEach(function(adapterName) {
-        const container = document.getElementById('region-picker-' + adapterName);
-        if (!container) return;
+    regionPickers.forEach(function(container) {
+        const adapterName = container.dataset.adapter;
+        const fieldName = container.dataset.field || 'region';
 
         const savedNorth = parseFloat(container.dataset.north);
         const savedSouth = parseFloat(container.dataset.south);
@@ -215,10 +274,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
         rectangle.editing.enable();
 
-        const northInput = container.querySelector('input[name="' + adapterName + '_region_north"]');
-        const southInput = container.querySelector('input[name="' + adapterName + '_region_south"]');
-        const eastInput = container.querySelector('input[name="' + adapterName + '_region_east"]');
-        const westInput = container.querySelector('input[name="' + adapterName + '_region_west"]');
+        const inputPrefix = adapterName + '_' + fieldName;
+        const northInput = container.querySelector('input[name="' + inputPrefix + '_north"]');
+        const southInput = container.querySelector('input[name="' + inputPrefix + '_south"]');
+        const eastInput = container.querySelector('input[name="' + inputPrefix + '_east"]');
+        const westInput = container.querySelector('input[name="' + inputPrefix + '_west"]');
 
         function updateInputs() {
             const b = rectangle.getBounds();

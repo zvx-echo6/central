@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import aiohttp
 from tenacity import (
@@ -54,7 +54,7 @@ SEVERITY_MAP = {
 class FIRMSSettings(BaseModel):
     """Settings schema for FIRMS adapter."""
     api_key_alias: str = "firms"
-    satellites: list[str] = ["VIIRS_SNPP_NRT", "VIIRS_NOAA20_NRT"]
+    satellites: list[Literal["VIIRS_SNPP_NRT", "VIIRS_NOAA20_NRT", "VIIRS_NOAA21_NRT"]] = ["VIIRS_SNPP_NRT", "VIIRS_NOAA20_NRT"]
     region: RegionConfig | None = None
 
 
@@ -66,6 +66,7 @@ class FIRMSAdapter(SourceAdapter):
     description = "Near-real-time satellite-detected fire hotspots from NASA FIRMS."
     settings_schema = FIRMSSettings
     requires_api_key = "firms"
+    api_key_field = "api_key_alias"
     wizard_order = 2
     default_cadence_s = 300
 

@@ -417,3 +417,47 @@ class TestAdaptersJsonbRegression:
         assert isinstance(captured_audit["after"], dict), f"after should be dict, got {type(captured_audit['after'])}"
         assert isinstance(captured_audit["before"]["settings"], dict), "before.settings should be dict"
         assert isinstance(captured_audit["after"]["settings"], dict), "after.settings should be dict"
+
+    @pytest.mark.asyncio
+    async def test_adapters_edit_fetches_api_keys_into_context(self):
+        """GET /adapters/firms includes api_keys from database in context."""
+        from central.gui.routes import adapters_edit_form
+
+        mock_request = MagicMock()
+        mock_request.state.operator = MagicMock(id=1, username="testop")
+        mock_request.state.csrf_token = "test_csrf_token"
+
+        mock_conn = MagicMock()
+        mock_conn.fetchrow = AsyncMock(side_effect=[
+            # Adapter row
+            {"name": "firms", "enabled": True, "cadence_s": 300, "settings": {},
+             "paused_at": None, "updated_at": None, "last_error": None},
+            # System row
+            {"map_tile_url": "https://tile.example.com", "map_attribution": "Test"},
+        ])
+        mock_conn.fetch = AsyncMock(return_value=[
+            {"alias": "firms_key"},
+            {"alias": "other_key"},
+        ])
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock()
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = MagicMock(return_value=mock_conn)
+
+        mock_templates = MagicMock()
+        mock_response = MagicMock()
+        mock_templates.TemplateResponse.return_value = mock_response
+
+        with patch("central.gui.routes._get_templates", return_value=mock_templates):
+            with patch("central.gui.routes.get_pool", return_value=mock_pool):
+                result = await adapters_edit_form(mock_request, "firms")
+
+        call_args = mock_templates.TemplateResponse.call_args
+        context = call_args.kwargs.get("context", call_args[1].get("context"))
+
+        assert "api_keys" in context
+        assert len(context["api_keys"]) == 2
+        assert context["api_keys"][0]["alias"] == "firms_key"
+        assert context["api_keys"][1]["alias"] == "other_key"
+

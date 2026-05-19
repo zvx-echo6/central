@@ -4,8 +4,8 @@ If a second nested settings type beyond RegionConfig appears,
 refactor this helper to recurse over nested models.
 """
 
-from dataclasses import dataclass
-from typing import Any, Union, get_args, get_origin
+from dataclasses import dataclass, field
+from typing import Any, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
@@ -19,15 +19,30 @@ class FieldDescriptor:
     """Describes a form field for rendering."""
     name: str
     label: str
-    widget: str  # "text", "number", "checkbox", "csv", "region"
+    widget: str  # "text", "number", "checkbox", "csv", "select", "checkboxes", "region"
     current_value: Any
     default: Any
     description: str
     required: bool
+    options: list[str] | None = None  # For select/checkboxes widgets
 
 
-def _type_to_widget(field_name: str, field_type: type) -> str:
-    """Map a Python type to a widget type."""
+def _is_literal(tp: type) -> bool:
+    """Check if a type is a Literal type."""
+    return get_origin(tp) is Literal
+
+
+def _get_literal_values(tp: type) -> list[str]:
+    """Extract the literal values from a Literal type."""
+    return list(get_args(tp))
+
+
+def _type_to_widget_and_options(field_name: str, field_type: type) -> tuple[str, list[str] | None]:
+    """Map a Python type to a widget type and optional options list.
+
+    Returns:
+        Tuple of (widget_type, options_list_or_none)
+    """
     # Handle Optional/Union types
     origin = get_origin(field_type)
     args = get_args(field_type)
@@ -39,24 +54,38 @@ def _type_to_widget(field_name: str, field_type: type) -> str:
         if non_none_args:
             inner_type = non_none_args[0]
             # Recursively determine widget for the inner type
-            return _type_to_widget(field_name, inner_type)
+            return _type_to_widget_and_options(field_name, inner_type)
+
+    # Check for Literal type (single select)
+    if _is_literal(field_type):
+        options = _get_literal_values(field_type)
+        return "select", [str(o) for o in options]
 
     # Direct type checks
     if field_type is str:
-        return "text"
+        return "text", None
     if field_type is int:
-        return "number"
+        return "number", None
     if field_type is bool:
-        return "checkbox"
+        return "checkbox", None
     if field_type is RegionConfig:
-        return "region"
+        return "region", None
 
-    # Check for list[str]
+    # Check for list types
     if origin is list:
-        if args and args[0] is str:
-            return "csv"
+        inner_type = args[0] if args else None
+
+        # list[Literal[...]] -> checkboxes
+        if inner_type is not None and _is_literal(inner_type):
+            options = _get_literal_values(inner_type)
+            return "checkboxes", [str(o) for o in options]
+
+        # list[str] -> csv
+        if inner_type is str:
+            return "csv", None
+
         raise NotImplementedError(
-            f"Field '{field_name}' has unsupported list type: list[{args[0].__name__ if args else '?'}]"
+            f"Field '{field_name}' has unsupported list type: list[{inner_type.__name__ if inner_type else '?'}]"
         )
 
     # Check if it's a BaseModel subclass (nested model other than RegionConfig)
@@ -98,8 +127,8 @@ def describe_fields(model_cls: type[BaseModel], current: dict) -> list[FieldDesc
         # Get the field type
         field_type = field_info.annotation
 
-        # Determine widget
-        widget = _type_to_widget(field_name, field_type)
+        # Determine widget and options
+        widget, options = _type_to_widget_and_options(field_name, field_type)
 
         # Get current value, falling back to default
         if field_name in current:
@@ -128,6 +157,7 @@ def describe_fields(model_cls: type[BaseModel], current: dict) -> list[FieldDesc
             default=default,
             description=description,
             required=required,
+            options=options,
         ))
 
     return descriptors
