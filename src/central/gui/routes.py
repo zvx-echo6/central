@@ -866,31 +866,31 @@ async def setup_adapters_submit(request: Request) -> Response:
                     new_settings[field.name] = values
 
             elif field.widget == "region":
-                # Region validation
+                # Region validation via RegionConfig model
+                from central.config_models import RegionConfig
                 region_north_str = form.get(f"{adapter_name}_{field.name}_north", "").strip()
                 region_south_str = form.get(f"{adapter_name}_{field.name}_south", "").strip()
                 region_east_str = form.get(f"{adapter_name}_{field.name}_east", "").strip()
                 region_west_str = form.get(f"{adapter_name}_{field.name}_west", "").strip()
 
                 try:
-                    region_north = float(region_north_str)
-                    region_south = float(region_south_str)
-                    region_east = float(region_east_str)
-                    region_west = float(region_west_str)
+                    region_model = RegionConfig(
+                        north=float(region_north_str),
+                        south=float(region_south_str),
+                        east=float(region_east_str),
+                        west=float(region_west_str),
+                    )
+                    new_settings[field.name] = region_model.model_dump()
+                except (ValueError, ValidationError) as e:
+                    errors[f"{adapter_name}_{field.name}"] = str(e)
 
-                    if not (-90 <= region_south < region_north <= 90):
-                        errors[f"{adapter_name}_{field.name}"] = "Invalid latitude: south < north, both -90 to 90"
-                    elif not (-180 <= region_west < region_east <= 180):
-                        errors[f"{adapter_name}_{field.name}"] = "Invalid longitude: west < east, both -180 to 180"
-                    else:
-                        new_settings[field.name] = {
-                            "north": region_north,
-                            "south": region_south,
-                            "east": region_east,
-                            "west": region_west,
-                        }
-                except ValueError:
-                    errors[f"{adapter_name}_{field.name}"] = "Region coordinates must be valid numbers"
+        # Run Pydantic validation on assembled settings to catch Literal violations etc.
+        try:
+            adapter_cls.settings_schema(**new_settings)
+        except ValidationError as e:
+            for err in e.errors():
+                loc = err["loc"][0] if err["loc"] else "unknown"
+                errors[f"{adapter_name}_{loc}"] = err["msg"]
 
         new_adapters[adapter_name] = {
             "enabled": enabled,
@@ -900,12 +900,18 @@ async def setup_adapters_submit(request: Request) -> Response:
 
     # If errors, re-render
     if errors:
-        adapters = [
-            {"name": name, "enabled": new_adapters[name]["enabled"],
-             "cadence_s": new_adapters[name]["cadence_s"],
-             "settings": new_adapters[name]["settings"]}
-            for name in ["firms", "nws", "usgs_quake"]
-        ]
+        adapters = []
+        for name, cls in wizard_adapters:
+            settings_dict = new_adapters[name]["settings"]
+            fields = describe_fields(cls.settings_schema, settings_dict)
+            adapters.append({
+                "name": name,
+                "display_name": cls.display_name,
+                "enabled": new_adapters[name]["enabled"],
+                "cadence_s": new_adapters[name]["cadence_s"],
+                "settings": settings_dict,
+                "fields": fields,
+            })
         api_keys = [{"alias": k["alias"]} for k in state.api_keys]
         
         if state.system:
@@ -923,8 +929,6 @@ async def setup_adapters_submit(request: Request) -> Response:
                 "csrf_token": csrf_token,
                 "adapters": adapters,
                 "api_keys": api_keys,
-                "valid_satellites": _get_valid_satellites(),
-                "valid_feeds": sorted(_get_valid_feeds()),
                 "tile_url": tile_url,
                 "tile_attribution": tile_attribution,
                 "error": "Please fix the errors below.",

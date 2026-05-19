@@ -199,3 +199,184 @@ class TestSetupGateMiddlewareWizard:
             response = client.get("/setup/operator")
             assert response.status_code == 302
             assert response.headers["location"] == "/"
+
+class TestSetupAdaptersErrorRerender:
+    """Test wizard adapters form error re-render path."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_cadence_rerenders_with_error(self):
+        """POST /setup/adapters with cadence_s=5 re-renders form with error, no DB write."""
+        from central.gui.routes import setup_adapters_submit
+
+        mock_request = MagicMock()
+        mock_request.cookies = {}
+        mock_request.state = MagicMock()
+
+        # Mock form data with invalid cadence
+        mock_form = MagicMock()
+        mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
+            "nws_enabled": "on",
+            "nws_cadence_s": "5",  # Invalid: below ge=10
+            "nws_contact_email": "test@example.com",
+            "nws_region_north": "49.0",
+            "nws_region_south": "31.0",
+            "nws_region_east": "-102.0",
+            "nws_region_west": "-124.0",
+            "firms_cadence_s": "300",
+            "firms_region_north": "49.0",
+            "firms_region_south": "31.0",
+            "firms_region_east": "-102.0",
+            "firms_region_west": "-124.0",
+            "usgs_quake_cadence_s": "300",
+            "usgs_quake_feed": "all_hour",
+            "usgs_quake_region_north": "49.0",
+            "usgs_quake_region_south": "31.0",
+            "usgs_quake_region_east": "-102.0",
+            "usgs_quake_region_west": "-124.0",
+        }.get(k, d)
+        mock_form.getlist.side_effect = lambda k: {
+            "firms_satellites": ["VIIRS_SNPP_NRT"],
+        }.get(k, [])
+        mock_form.__contains__ = lambda self, k: k in ["nws_enabled"]
+
+        mock_request.form = AsyncMock(return_value=mock_form)
+
+        # Mock wizard state
+        mock_state = MagicMock()
+        mock_state.operator = {"username": "test", "password_hash": "hash"}
+        mock_state.api_keys = []
+        mock_state.adapters = None
+        mock_state.system = None
+
+        # Mock pool with no actual DB access (should not be called for writes)
+        mock_pool = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.fetch = AsyncMock(return_value=[
+            {"name": "nws", "enabled": False, "cadence_s": 300, "settings": {}},
+            {"name": "firms", "enabled": False, "cadence_s": 300, "settings": {}},
+            {"name": "usgs_quake", "enabled": False, "cadence_s": 300, "settings": {}},
+        ])
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock()
+        mock_pool.acquire = MagicMock(return_value=mock_conn)
+
+        mock_templates = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_templates.TemplateResponse.return_value = mock_response
+
+        with patch("central.gui.routes._get_templates", return_value=mock_templates):
+            with patch("central.gui.routes.get_pool", return_value=mock_pool):
+                with patch("central.gui.routes.get_settings") as mock_settings:
+                    mock_settings.return_value.csrf_secret = "testsecret12345678901234567890ab"
+                    with patch("central.gui.routes.validate_pre_auth_csrf", return_value=True):
+                        with patch("central.gui.wizard.get_wizard_state", return_value=mock_state):
+                            with patch("central.gui.routes.reuse_or_generate_pre_auth_csrf", return_value=("csrf", None)):
+                                result = await setup_adapters_submit(mock_request)
+
+        # Should return 200 (re-render), not 302 (redirect)
+        assert result.status_code == 200
+
+        # Check that template was called with errors
+        call_args = mock_templates.TemplateResponse.call_args
+        context = call_args.kwargs.get("context", call_args[1].get("context"))
+
+        assert context["error"] == "Please fix the errors below."
+        assert "errors" in context
+        assert context["errors"] is not None
+        assert "nws_cadence_s" in context["errors"]
+        assert "10" in context["errors"]["nws_cadence_s"]  # Should mention min value
+
+        # Verify adapters have correct shape (with fields)
+        assert "adapters" in context
+        for adapter in context["adapters"]:
+            assert "name" in adapter
+            assert "display_name" in adapter
+            assert "enabled" in adapter
+            assert "cadence_s" in adapter
+            assert "settings" in adapter
+            assert "fields" in adapter
+
+        # Verify no DB execute was called (no writes)
+        mock_conn.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invalid_region_bounds_shows_pydantic_error(self):
+        """POST /setup/adapters with inverted region bounds shows RegionConfig error."""
+        from central.gui.routes import setup_adapters_submit
+
+        mock_request = MagicMock()
+        mock_request.cookies = {}
+        mock_request.state = MagicMock()
+
+        # Mock form data with inverted region (south > north)
+        mock_form = MagicMock()
+        mock_form.get.side_effect = lambda k, d="": {
+            "csrf_token": "test_csrf_token",
+            "nws_cadence_s": "300",
+            "nws_contact_email": "test@example.com",
+            "nws_region_north": "10.0",   # Invalid: north < south
+            "nws_region_south": "20.0",
+            "nws_region_east": "-102.0",
+            "nws_region_west": "-124.0",
+            "firms_cadence_s": "300",
+            "firms_region_north": "49.0",
+            "firms_region_south": "31.0",
+            "firms_region_east": "-102.0",
+            "firms_region_west": "-124.0",
+            "usgs_quake_cadence_s": "300",
+            "usgs_quake_feed": "all_hour",
+            "usgs_quake_region_north": "49.0",
+            "usgs_quake_region_south": "31.0",
+            "usgs_quake_region_east": "-102.0",
+            "usgs_quake_region_west": "-124.0",
+        }.get(k, d)
+        mock_form.getlist.side_effect = lambda k: {
+            "firms_satellites": ["VIIRS_SNPP_NRT"],
+        }.get(k, [])
+        mock_form.__contains__ = lambda self, k: False
+
+        mock_request.form = AsyncMock(return_value=mock_form)
+
+        mock_state = MagicMock()
+        mock_state.operator = {"username": "test", "password_hash": "hash"}
+        mock_state.api_keys = []
+        mock_state.adapters = None
+        mock_state.system = None
+
+        mock_pool = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.fetch = AsyncMock(return_value=[
+            {"name": "nws", "enabled": False, "cadence_s": 300, "settings": {}},
+            {"name": "firms", "enabled": False, "cadence_s": 300, "settings": {}},
+            {"name": "usgs_quake", "enabled": False, "cadence_s": 300, "settings": {}},
+        ])
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock()
+        mock_pool.acquire = MagicMock(return_value=mock_conn)
+
+        mock_templates = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_templates.TemplateResponse.return_value = mock_response
+
+        with patch("central.gui.routes._get_templates", return_value=mock_templates):
+            with patch("central.gui.routes.get_pool", return_value=mock_pool):
+                with patch("central.gui.routes.get_settings") as mock_settings:
+                    mock_settings.return_value.csrf_secret = "testsecret12345678901234567890ab"
+                    with patch("central.gui.routes.validate_pre_auth_csrf", return_value=True):
+                        with patch("central.gui.wizard.get_wizard_state", return_value=mock_state):
+                            with patch("central.gui.routes.reuse_or_generate_pre_auth_csrf", return_value=("csrf", None)):
+                                result = await setup_adapters_submit(mock_request)
+
+        assert result.status_code == 200
+
+        call_args = mock_templates.TemplateResponse.call_args
+        context = call_args.kwargs.get("context", call_args[1].get("context"))
+
+        assert context["errors"] is not None
+        assert "nws_region" in context["errors"]
+        # Error should come from RegionConfig validator, mentioning bounds
+        assert "north" in context["errors"]["nws_region"].lower() or "south" in context["errors"]["nws_region"].lower()
+
