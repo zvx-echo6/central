@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 NWIS_LATEST_CONTINUOUS_URL = (
     "https://api.waterdata.usgs.gov/ogcapi/v0/collections/latest-continuous/items"
 )
+NWIS_MONITORING_LOCATIONS_URL = (
+    "https://api.waterdata.usgs.gov/ogcapi/v0/collections/monitoring-locations/items"
+)
+# Per-render cap for the settings-driven preview (PR G.5). Keep small so the
+# /adapters/<name> edit page renders quickly.
+_PREVIEW_LIMIT = 50
 
 # Single source of truth for the parameter-code default. Operators tune via
 # NWISSettings.parameter_codes; do NOT duplicate this list elsewhere
@@ -375,3 +381,55 @@ class NWISAdapter(SourceAdapter):
             geo=Geo(centroid=centroid),
             data=data,
         )
+
+    async def _fetch_preview_text(self, url: str) -> str:
+        """One-shot GET for the preview render.
+
+        Uses a fresh aiohttp session — preview must work even when the adapter
+        isn't started (the GUI process never calls startup()). Factored out so
+        tests can mock the HTTP call without touching aiohttp internals.
+        """
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as session:
+            async with session.get(
+                url, headers={"User-Agent": "Central/0.4"}
+            ) as resp:
+                resp.raise_for_status()
+                return await resp.text()
+
+    async def preview_for_settings(self, settings: NWISSettings) -> list[dict] | None:
+        """Surface monitoring-locations inside the configured bbox.
+
+        Returns up to _PREVIEW_LIMIT rows from the monitoring-locations
+        collection. Returns None if region is unset (no useful preview).
+        Raises on HTTP / JSON / shape failure — framework catches at the route.
+        """
+        if settings.region is None:
+            return None
+
+        params = {
+            "bbox": (
+                f"{settings.region.west},{settings.region.south},"
+                f"{settings.region.east},{settings.region.north}"
+            ),
+            "limit": str(_PREVIEW_LIMIT),
+        }
+        url = f"{NWIS_MONITORING_LOCATIONS_URL}?{urlencode(params)}"
+
+        text = await self._fetch_preview_text(url)
+        page = json.loads(text)
+        features = page.get("features") or []
+
+        rows: list[dict] = []
+        for feat in features:
+            props = feat.get("properties") or {}
+            rows.append(
+                {
+                    "site_id": feat.get("id"),
+                    "name": props.get("monitoring_location_name"),
+                    "site_type": props.get("site_type_code"),
+                    "state": props.get("state_name"),
+                }
+            )
+        return rows

@@ -1,0 +1,23 @@
+{% if preview_error %}
+<article aria-label="Preview Unavailable" style="background-color: var(--pico-del-color); margin-bottom: 1rem;">
+    <strong>{{ preview_error }}</strong>
+</article>
+{% elif preview_rows %}
+<fieldset>
+    <legend>Preview ({{ preview_rows|length }} rows)</legend>
+    <table class="preview-table" role="grid">
+        <thead>
+            <tr>
+                {% for col in preview_rows[0].keys() %}<th>{{ col }}</th>{% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in preview_rows %}
+            <tr>
+                {% for col in preview_rows[0].keys() %}<td>{{ row[col] }}</td>{% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</fieldset>
+{% endif %}
