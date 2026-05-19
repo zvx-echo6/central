@@ -46,6 +46,9 @@ from central.gui.audit import (
 )
 from functools import cache
 
+from pathlib import Path
+
+from central.config_models import AdapterConfig
 from central.gui.db import get_pool
 from central.gui.form_descriptors import describe_fields, FieldDescriptor
 from central.adapter_discovery import discover_adapters
@@ -55,11 +58,21 @@ from pydantic import ValidationError
 @cache
 def _adapter_classes() -> dict:
     """Cached adapter class discovery.
-    
+
     GUI is a separate process from supervisor; walks pkgutil itself.
     Python's import cache makes subsequent calls free.
     """
     return discover_adapters()
+
+
+class _PreviewConfigStore:
+    """No-op stand-in passed to adapter __init__ when calling preview_for_settings.
+
+    preview_for_settings implementations must create their own one-shot HTTP
+    session and must not depend on config_store / cursor_db state — the GUI
+    process has no live ConfigStore (the supervisor owns the real one)."""
+
+    pass
 
 
 router = APIRouter()
@@ -1450,6 +1463,28 @@ async def adapters_edit_form(
             )
             api_key_missing = not has_key
 
+    # Generic settings-driven preview. Adapters opt in by overriding
+    # SourceAdapter.preview_for_settings; the framework is duck-typed on the
+    # returned list[dict] shape and never branches on adapter name.
+    preview_rows: list[dict] | None = None
+    preview_error: str | None = None
+    if adapter_cls is not None and hasattr(adapter_cls, "settings_schema"):
+        try:
+            settings_obj = adapter_cls.settings_schema(**settings)
+            preview_cfg = AdapterConfig(
+                name=row["name"],
+                enabled=row["enabled"],
+                cadence_s=row["cadence_s"],
+                settings=settings,
+                updated_at=row["updated_at"],
+            )
+            preview_adapter = adapter_cls(
+                preview_cfg, _PreviewConfigStore(), Path("/dev/null")
+            )
+            preview_rows = await preview_adapter.preview_for_settings(settings_obj)
+        except Exception as exc:
+            preview_error = f"Preview unavailable: {exc}"
+
     csrf_token = request.state.csrf_token
     response = templates.TemplateResponse(
         request=request,
@@ -1466,6 +1501,8 @@ async def adapters_edit_form(
             "tile_attribution": tile_attribution,
             "api_key_missing": api_key_missing,
             "requires_api_key_alias": requires_api_key_alias,
+            "preview_rows": preview_rows,
+            "preview_error": preview_error,
         },
     )
     return response

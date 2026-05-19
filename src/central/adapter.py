@@ -78,3 +78,23 @@ class SourceAdapter(ABC):
     async def shutdown(self) -> None:
         """Optional lifecycle hook called on graceful shutdown."""
         pass
+
+    async def preview_for_settings(self, settings: BaseModel) -> list[dict] | None:
+        """Optional. Override to surface a settings-driven preview on the edit page.
+
+        Return list[dict] (framework renders as a generic table; columns come from
+        the first dict's keys, in insertion order). Return None to skip preview.
+        Raise to surface an error banner — framework catches at the route boundary.
+
+        Contract:
+        - Preview is a pure function of `settings`. Do NOT access
+          self._config_store or cursor_db state — the framework may instantiate
+          adapters with a stub config_store solely to call this method.
+        - Network preview implementations must open their own short-lived
+          aiohttp session (the adapter's polling session may not exist; the GUI
+          process never calls startup()).
+        - Return None when preview is not meaningful (e.g., required settings
+          like region are unset). Return [] explicitly if the query ran and
+          matched zero rows — the framework renders that distinctly from None.
+        """
+        return None

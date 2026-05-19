@@ -276,3 +276,84 @@ class TestNWISAdapter:
 
         assert first_pass
         assert second_pass == []
+
+
+class TestNWISPreview:
+    """Preview hook (PR G.5) — exercised without starting the adapter."""
+
+    @pytest.mark.asyncio
+    async def test_preview_returns_none_without_region(self, tmp_path: Path):
+        from central.adapters.nwis import NWISAdapter, NWISSettings
+
+        adapter = NWISAdapter(_config({}), MagicMock(), tmp_path / "cursors.db")
+        result = await adapter.preview_for_settings(NWISSettings())
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_preview_returns_rows_with_region(self, tmp_path: Path):
+        """Given a bbox, preview returns one dict per monitoring-locations feature
+        with the contract column order: site_id, name, site_type, state."""
+        from central.adapters.nwis import NWISAdapter, NWISSettings
+
+        sample_response = json.dumps({
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "id": "USGS-05420500",
+                    "geometry": {"type": "Point", "coordinates": [-90.25, 41.78]},
+                    "properties": {
+                        "monitoring_location_name": "MISSISSIPPI RIVER AT CLINTON, IA",
+                        "site_type_code": "ST",
+                        "state_name": "Iowa",
+                    },
+                },
+                {
+                    "type": "Feature",
+                    "id": "USGS-05454500",
+                    "geometry": {"type": "Point", "coordinates": [-91.65, 41.66]},
+                    "properties": {
+                        "monitoring_location_name": "IOWA RIVER AT IOWA CITY, IA",
+                        "site_type_code": "ST",
+                        "state_name": "Iowa",
+                    },
+                },
+            ],
+        })
+
+        adapter = NWISAdapter(
+            _config({"region": {"west": -94.0, "south": 40.0, "east": -93.0, "north": 41.0}}),
+            MagicMock(),
+            tmp_path / "cursors.db",
+        )
+        adapter._fetch_preview_text = AsyncMock(return_value=sample_response)
+        settings = NWISSettings(region=adapter.region)
+        rows = await adapter.preview_for_settings(settings)
+
+        assert rows is not None
+        assert len(rows) == 2
+        # Column order is part of the contract — first row's keys must match exactly.
+        expected_keys = ["site_id", "name", "site_type", "state"]
+        assert list(rows[0].keys()) == expected_keys
+        # Row content reflects fixture data.
+        assert rows[0]["site_id"] == "USGS-05420500"
+        assert rows[0]["name"] == "MISSISSIPPI RIVER AT CLINTON, IA"
+        assert rows[0]["site_type"] == "ST"
+        assert rows[0]["state"] == "Iowa"
+        assert rows[1]["site_id"] == "USGS-05454500"
+
+    @pytest.mark.asyncio
+    async def test_preview_propagates_http_error(self, tmp_path: Path):
+        """Preview must not swallow upstream errors — the framework needs them
+        to render the operator-visible 'Preview unavailable: …' banner."""
+        from central.adapters.nwis import NWISAdapter, NWISSettings
+
+        adapter = NWISAdapter(
+            _config({"region": {"west": -94.0, "south": 40.0, "east": -93.0, "north": 41.0}}),
+            MagicMock(),
+            tmp_path / "cursors.db",
+        )
+        adapter._fetch_preview_text = AsyncMock(side_effect=RuntimeError("upstream 503"))
+        settings = NWISSettings(region=adapter.region)
+        with pytest.raises(RuntimeError, match="upstream 503"):
+            await adapter.preview_for_settings(settings)
