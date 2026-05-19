@@ -51,6 +51,7 @@ from pathlib import Path
 from central.config_models import AdapterConfig
 from central.gui.db import get_pool
 from central.gui.form_descriptors import describe_fields, FieldDescriptor
+from central.api_key_resolver import adapter_has_resolved_api_key
 from central.adapter_discovery import discover_adapters
 from central.streams import STREAMS as STREAM_REGISTRY
 from pydantic import ValidationError
@@ -1348,16 +1349,13 @@ async def adapters_list(
             settings = row["settings"] or {}
             adapter_cls = adapter_classes.get(row["name"])
 
-            # Check if required API key is missing
-            api_key_missing = False
-            requires_api_key_alias = None
-            if adapter_cls and adapter_cls.requires_api_key is not None:
-                requires_api_key_alias = adapter_cls.requires_api_key
-                has_key = await conn.fetchval(
-                    "SELECT 1 FROM config.api_keys WHERE alias = $1",
-                    requires_api_key_alias,
-                )
-                api_key_missing = not has_key
+            # Check if required API key is missing — resolve via the per-row
+            # settings[api_key_field] (operator-selected alias), falling back
+            # to the class-attribute default when settings hasn't been set.
+            has_key, requires_api_key_alias = await adapter_has_resolved_api_key(
+                conn, adapter_cls, settings,
+            )
+            api_key_missing = not has_key
 
             adapters.append({
                 "name": row["name"],
@@ -1445,23 +1443,15 @@ async def adapters_edit_form(
                 if f.name == adapter_cls.api_key_field:
                     f.widget = "api_key_select"
 
-    # Fetch API keys for api_key_select widget
-    api_keys = []
+    # Fetch API keys for api_key_select widget + resolve the per-adapter
+    # alias against the operator-set settings, not the class-attr default.
     async with pool.acquire() as conn:
         api_key_rows = await conn.fetch("SELECT alias FROM config.api_keys ORDER BY alias")
         api_keys = [{"alias": r["alias"]} for r in api_key_rows]
-
-    # Check if required API key is missing
-    api_key_missing = False
-    requires_api_key_alias = None
-    if adapter_cls and adapter_cls.requires_api_key is not None:
-        requires_api_key_alias = adapter_cls.requires_api_key
-        async with pool.acquire() as conn:
-            has_key = await conn.fetchval(
-                "SELECT 1 FROM config.api_keys WHERE alias = $1",
-                requires_api_key_alias,
-            )
-            api_key_missing = not has_key
+        has_key, requires_api_key_alias = await adapter_has_resolved_api_key(
+            conn, adapter_cls, settings,
+        )
+        api_key_missing = not has_key
 
     # Generic settings-driven preview. Adapters opt in by overriding
     # SourceAdapter.preview_for_settings; the framework is duck-typed on the
@@ -1700,20 +1690,15 @@ async def adapters_edit_submit(
                         if f.name == adapter_cls.api_key_field:
                             f.widget = "api_key_select"
 
-            # Fetch API keys for api_key_select widget
+            # Fetch API keys for api_key_select widget + resolve the per-adapter
+            # alias against the pre-edit settings (form validation failed, so
+            # the stored settings haven't been replaced).
             api_key_rows = await conn.fetch("SELECT alias FROM config.api_keys ORDER BY alias")
             api_keys = [{"alias": r["alias"]} for r in api_key_rows]
-
-            # Check if required API key is missing
-            api_key_missing = False
-            requires_api_key_alias = None
-            if adapter_cls and adapter_cls.requires_api_key is not None:
-                requires_api_key_alias = adapter_cls.requires_api_key
-                has_key = await conn.fetchval(
-                    "SELECT 1 FROM config.api_keys WHERE alias = $1",
-                    requires_api_key_alias,
-                )
-                api_key_missing = not has_key
+            has_key, requires_api_key_alias = await adapter_has_resolved_api_key(
+                conn, adapter_cls, current_settings,
+            )
+            api_key_missing = not has_key
 
             csrf_token = request.state.csrf_token
             response = templates.TemplateResponse(
