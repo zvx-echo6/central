@@ -1666,6 +1666,17 @@ async def adapters_edit_submit(
             api_key_rows = await conn.fetch("SELECT alias FROM config.api_keys ORDER BY alias")
             api_keys = [{"alias": r["alias"]} for r in api_key_rows]
 
+            # Check if required API key is missing
+            api_key_missing = False
+            requires_api_key_alias = None
+            if adapter_cls and adapter_cls.requires_api_key is not None:
+                requires_api_key_alias = adapter_cls.requires_api_key
+                has_key = await conn.fetchval(
+                    "SELECT 1 FROM config.api_keys WHERE alias = $1",
+                    requires_api_key_alias,
+                )
+                api_key_missing = not has_key
+
             csrf_token = request.state.csrf_token
             response = templates.TemplateResponse(
                 request=request,
@@ -1680,6 +1691,8 @@ async def adapters_edit_submit(
                     "form_data": form_data,
                     "tile_url": tile_url,
                     "tile_attribution": tile_attribution,
+                    "api_key_missing": api_key_missing,
+                    "requires_api_key_alias": requires_api_key_alias,
                 },
                 status_code=200,
             )
