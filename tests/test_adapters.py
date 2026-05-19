@@ -42,9 +42,9 @@ class TestAdaptersListAuthenticated:
 
         mock_conn = AsyncMock()
         mock_conn.fetch.return_value = [
-            {"name": "firms", "enabled": True, "cadence_s": 300, "settings": {"api_key_alias": "firms"}, "paused_at": None, "updated_at": None},
-            {"name": "nws", "enabled": True, "cadence_s": 60, "settings": {"contact_email": "test@test.com"}, "paused_at": None, "updated_at": None},
-            {"name": "usgs_quake", "enabled": True, "cadence_s": 120, "settings": {"feed": "all_hour"}, "paused_at": None, "updated_at": None},
+            {"name": "firms", "enabled": True, "cadence_s": 300, "settings": {"api_key_alias": "firms"}, "paused_at": None, "updated_at": None, "last_error": None},
+            {"name": "nws", "enabled": True, "cadence_s": 60, "settings": {"contact_email": "test@test.com"}, "paused_at": None, "updated_at": None, "last_error": None},
+            {"name": "usgs_quake", "enabled": True, "cadence_s": 120, "settings": {"feed": "all_hour"}, "paused_at": None, "updated_at": None, "last_error": None},
         ]
 
         mock_pool = MagicMock()
@@ -55,9 +55,22 @@ class TestAdaptersListAuthenticated:
         mock_response = MagicMock()
         mock_templates.TemplateResponse.return_value = mock_response
 
+        # Mock adapter classes
+        mock_firms_cls = MagicMock()
+        mock_firms_cls.requires_api_key = "firms"
+        mock_firms_cls.display_name = "FIRMS"
+        mock_nws_cls = MagicMock()
+        mock_nws_cls.requires_api_key = None
+        mock_nws_cls.display_name = "NWS"
+        mock_usgs_cls = MagicMock()
+        mock_usgs_cls.requires_api_key = None
+        mock_usgs_cls.display_name = "USGS Quake"
+        mock_adapter_classes = {"firms": mock_firms_cls, "nws": mock_nws_cls, "usgs_quake": mock_usgs_cls}
+
         with patch("central.gui.routes._get_templates", return_value=mock_templates):
             with patch("central.gui.routes.get_pool", return_value=mock_pool):
-                result = await adapters_list(mock_request)
+                with patch("central.gui.routes._adapter_classes", return_value=mock_adapter_classes):
+                    result = await adapters_list(mock_request)
 
         # Verify template was called with adapters
         call_args = mock_templates.TemplateResponse.call_args

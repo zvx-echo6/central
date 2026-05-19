@@ -25,6 +25,13 @@
 </article>
 {% endif %}
 
+{% if api_key_missing %}
+<article aria-label="API Key Required" style="background-color: var(--pico-mark-background-color); margin-bottom: 1rem;">
+    <strong>⚠️ API Key Required:</strong> This adapter requires the <code>{{ requires_api_key_alias }}</code> API key to be configured before it can be enabled.
+    <a href="/api-keys">Configure API Keys</a>
+</article>
+{% endif %}
+
 <form method="post" action="/adapters/{{ adapter.name }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
@@ -32,8 +39,8 @@
         <legend>Core Settings</legend>
 
         <label>
-            <input type="checkbox" name="enabled" {% if form_data %}{% if form_data.enabled %}checked{% endif %}{% elif adapter.enabled %}checked{% endif %}>
-            Enabled
+            <input type="checkbox" name="enabled" {% if form_data %}{% if form_data.enabled %}checked{% endif %}{% elif adapter.enabled %}checked{% endif %}{% if api_key_missing %} disabled{% endif %}>
+            Enabled{% if api_key_missing %} <small>(requires API key)</small>{% endif %}
         </label>
 
         <label for="cadence_s">Cadence (seconds)</label>

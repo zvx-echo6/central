@@ -94,6 +94,8 @@ class MockConfigSource:
 class MockNWSAdapter:
     """Mock NWSAdapter that tracks poll calls and allows control."""
 
+    requires_api_key = None  # Mock adapters don't require API keys
+
     def __init__(self, config, config_store, cursor_db_path) -> None:
         self.config = config
         self._config_store = config_store
@@ -152,6 +154,8 @@ def mock_config_store():
     store = MagicMock()
     store.list_streams = AsyncMock(return_value=[])
     store.get_stream = AsyncMock(return_value=None)
+    store.set_adapter_last_error = AsyncMock()
+    store.get_api_key = AsyncMock(return_value=None)
     return store
 
 
