@@ -25,6 +25,8 @@ from central.adapters.wfigs_common import (
     extract_centroid,
     get_observed_guids,
     init_observed_table,
+    normalize_incident_type,
+    normalize_state,
     parse_wfigs_timestamp,
     point_in_bbox,
     severity_from_acres,
@@ -185,6 +187,7 @@ class WFIGSIncidentsAdapter(SourceAdapter):
             return f"central.fire.incident.removed.{state}"
 
         # Regular incidents: central.fire.incident.<state>.<county>
+        # POOState is already normalized (2-letter code)
         state = event.data.get("POOState")
         county = event.data.get("POOCounty")
         suffix = subject_suffix(state, county)
@@ -273,17 +276,22 @@ class WFIGSIncidentsAdapter(SourceAdapter):
                 ):
                     continue
 
-            # Track this GUID as observed (for fall-off detection)
-            state = props.get("POOState")
+            # Normalize at parse boundary
+            state_raw = props.get("POOState")
+            state = normalize_state(state_raw)
             county = props.get("POOCounty")
+            incident_type_raw = props.get("IncidentTypeCategory")
+            incident_type = normalize_incident_type(incident_type_raw)
+
+            # Track this GUID as observed (for fall-off detection)
+            # Store normalized state for consistency
             current_guids[irwin_id] = (state, county)
 
             # Parse fields
-            incident_type = props.get("IncidentTypeCategory", "unknown").lower()
             discovery_time = parse_wfigs_timestamp(props.get("FireDiscoveryDateTime"))
             daily_acres = props.get("DailyAcres")
 
-            # Build regions
+            # Build regions (expects normalized 2-letter state code)
             regions, primary_region = build_regions(state, county)
 
             # Build geo
@@ -297,7 +305,7 @@ class WFIGSIncidentsAdapter(SourceAdapter):
             else:
                 geo = Geo(regions=regions, primary_region=primary_region)
 
-            # Build event
+            # Build event with normalized values in data
             event = Event(
                 id=irwin_id,
                 adapter=self.name,
@@ -308,12 +316,14 @@ class WFIGSIncidentsAdapter(SourceAdapter):
                 data={
                     "IrwinID": irwin_id,
                     "IncidentName": props.get("IncidentName"),
-                    "IncidentTypeCategory": props.get("IncidentTypeCategory"),
+                    "IncidentTypeCategory": incident_type,
+                    "IncidentTypeCategory_raw": incident_type_raw,
                     "DailyAcres": daily_acres,
                     "PercentContained": props.get("PercentContained"),
                     "FireDiscoveryDateTime": props.get("FireDiscoveryDateTime"),
                     "ModifiedOnDateTime": props.get("ModifiedOnDateTime"),
                     "POOState": state,
+                    "POOState_raw": state_raw,
                     "POOCounty": county,
                     "raw": props,
                 },

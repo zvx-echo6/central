@@ -11,38 +11,39 @@ from central.config_models import AdapterConfig, RegionConfig
 from central.models import Event, Geo
 
 
-# Sample GeoJSON response with incidents
+# Sample GeoJSON response with incidents using real WFIGS format
+# Note: POOState comes as ISO 3166-2 ("US-MT"), IncidentTypeCategory as codes ("WF")
 SAMPLE_INCIDENTS_RESPONSE = {
     "type": "FeatureCollection",
     "features": [
         {
             "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [-116.5, 43.5]},
+            "geometry": {"type": "Point", "coordinates": [-113.5, 48.5]},
             "properties": {
-                "IrwinID": "GUID-001-BOISE",
-                "IncidentName": "Test Fire 1",
-                "IncidentTypeCategory": "Wildfire",
+                "IrwinID": "GUID-001-GLACIER",
+                "IncidentName": "Glacier Fire",
+                "IncidentTypeCategory": "WF",  # Real format: 2-letter code
                 "DailyAcres": 150,
                 "PercentContained": 25,
                 "FireDiscoveryDateTime": 1716000000000,
                 "ModifiedOnDateTime": 1716100000000,
-                "POOState": "ID",
-                "POOCounty": "Ada",
+                "POOState": "US-MT",  # Real format: ISO 3166-2
+                "POOCounty": "Glacier",
             },
         },
         {
             "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [-117.0, 44.0]},
+            "geometry": {"type": "Point", "coordinates": [-116.5, 43.5]},
             "properties": {
-                "IrwinID": "GUID-002-CANYON",
-                "IncidentName": "Test Fire 2",
-                "IncidentTypeCategory": "PrescribedFire",
+                "IrwinID": "GUID-002-OWYHEE",
+                "IncidentName": "Owyhee Rx",
+                "IncidentTypeCategory": "RX",  # Prescribed fire
                 "DailyAcres": 5,
                 "PercentContained": 100,
                 "FireDiscoveryDateTime": 1716200000000,
                 "ModifiedOnDateTime": 1716300000000,
-                "POOState": "ID",
-                "POOCounty": "Canyon",
+                "POOState": "US-ID",
+                "POOCounty": "Owyhee",
             },
         },
         {
@@ -51,12 +52,12 @@ SAMPLE_INCIDENTS_RESPONSE = {
             "properties": {
                 "IrwinID": "GUID-003-FLORIDA",
                 "IncidentName": "Florida Fire",
-                "IncidentTypeCategory": "Wildfire",
+                "IncidentTypeCategory": "WF",
                 "DailyAcres": 50,
                 "PercentContained": 0,
                 "FireDiscoveryDateTime": 1716400000000,
                 "ModifiedOnDateTime": 1716500000000,
-                "POOState": "FL",
+                "POOState": "US-FL",
                 "POOCounty": "Miami-Dade",
             },
         },
@@ -72,24 +73,24 @@ SAMPLE_PERIMETERS_RESPONSE = {
             "geometry": {
                 "type": "Polygon",
                 "coordinates": [[
-                    [-116.6, 43.4],
-                    [-116.4, 43.4],
-                    [-116.4, 43.6],
-                    [-116.6, 43.6],
-                    [-116.6, 43.4],
+                    [-113.6, 48.4],
+                    [-113.4, 48.4],
+                    [-113.4, 48.6],
+                    [-113.6, 48.6],
+                    [-113.6, 48.4],
                 ]],
             },
             "properties": {
-                "attr_IrwinID": "GUID-001-BOISE",
-                "attr_IncidentName": "Test Fire 1",
-                "attr_IncidentTypeCategory": "Wildfire",
+                "attr_IrwinID": "GUID-001-GLACIER",
+                "attr_IncidentName": "Glacier Fire",
+                "attr_IncidentTypeCategory": "WF",  # Real format: 2-letter code
                 "attr_IncidentSize": 150,
                 "poly_GISAcres": 148.5,
                 "attr_PercentContained": 25,
                 "attr_FireDiscoveryDateTime": 1716000000000,
                 "attr_ModifiedOnDateTime_dt": 1716100000000,
-                "attr_POOState": "ID",
-                "attr_POOCounty": "Ada",
+                "attr_POOState": "US-MT",  # Real format: ISO 3166-2
+                "attr_POOCounty": "Glacier",
             },
         },
     ],
@@ -137,15 +138,16 @@ class TestWFIGSCommon:
 
     def test_build_regions_full(self):
         from central.adapters.wfigs_common import build_regions
-        regions, primary = build_regions("ID", "Ada")
-        assert regions == ["US-ID-ADA"]
-        assert primary == "US-ID-ADA"
+        # Expects normalized 2-letter state code
+        regions, primary = build_regions("MT", "Glacier")
+        assert regions == ["US-MT-GLACIER"]
+        assert primary == "US-MT-GLACIER"
 
     def test_build_regions_state_only(self):
         from central.adapters.wfigs_common import build_regions
-        regions, primary = build_regions("ID", None)
-        assert regions == ["US-ID"]
-        assert primary == "US-ID"
+        regions, primary = build_regions("MT", None)
+        assert regions == ["US-MT"]
+        assert primary == "US-MT"
 
     def test_build_regions_none(self):
         from central.adapters.wfigs_common import build_regions
@@ -155,7 +157,8 @@ class TestWFIGSCommon:
 
     def test_subject_suffix(self):
         from central.adapters.wfigs_common import subject_suffix
-        assert subject_suffix("ID", "Ada") == "id.ada"
+        # Expects normalized 2-letter state code
+        assert subject_suffix("MT", "Glacier") == "mt.glacier"
         assert subject_suffix("ID", "Ada County") == "id.ada_county"
         assert subject_suffix("ID", None) == "id"
         assert subject_suffix(None, None) == "unknown"
@@ -164,6 +167,66 @@ class TestWFIGSCommon:
         from central.adapters.wfigs_common import point_in_bbox
         assert point_in_bbox(-116.5, 43.5, -124, 31, -102, 49) is True
         assert point_in_bbox(-80.0, 26.0, -124, 31, -102, 49) is False
+
+    # Normalization tests
+    def test_normalize_state_iso_3166(self):
+        """normalize_state strips US- prefix from ISO 3166-2 codes."""
+        from central.adapters.wfigs_common import normalize_state
+        assert normalize_state("US-MT") == "MT"
+        assert normalize_state("US-ID") == "ID"
+        assert normalize_state("US-CA") == "CA"
+
+    def test_normalize_state_already_2letter(self):
+        """normalize_state passes through 2-letter codes."""
+        from central.adapters.wfigs_common import normalize_state
+        assert normalize_state("MT") == "MT"
+        assert normalize_state("ID") == "ID"
+
+    def test_normalize_state_none_empty(self):
+        """normalize_state handles None and empty strings."""
+        from central.adapters.wfigs_common import normalize_state
+        assert normalize_state(None) is None
+        assert normalize_state("") is None
+
+    def test_normalize_state_unknown_format(self):
+        """normalize_state passes through unknown formats."""
+        from central.adapters.wfigs_common import normalize_state
+        assert normalize_state("Montana") == "Montana"
+        assert normalize_state("US-MONTANA") == "US-MONTANA"
+
+    def test_normalize_incident_type_wf(self):
+        """normalize_incident_type maps WF to wildfire."""
+        from central.adapters.wfigs_common import normalize_incident_type
+        assert normalize_incident_type("WF") == "wildfire"
+        assert normalize_incident_type("wf") == "wildfire"
+
+    def test_normalize_incident_type_rx(self):
+        """normalize_incident_type maps RX to prescribed_fire."""
+        from central.adapters.wfigs_common import normalize_incident_type
+        assert normalize_incident_type("RX") == "prescribed_fire"
+        assert normalize_incident_type("rx") == "prescribed_fire"
+
+    def test_normalize_incident_type_cx(self):
+        """normalize_incident_type maps CX to complex."""
+        from central.adapters.wfigs_common import normalize_incident_type
+        assert normalize_incident_type("CX") == "complex"
+
+    def test_normalize_incident_type_fa(self):
+        """normalize_incident_type maps FA to false_alarm."""
+        from central.adapters.wfigs_common import normalize_incident_type
+        assert normalize_incident_type("FA") == "false_alarm"
+
+    def test_normalize_incident_type_unknown_code(self):
+        """normalize_incident_type lowercases unknown codes."""
+        from central.adapters.wfigs_common import normalize_incident_type
+        assert normalize_incident_type("UNKNOWN_CODE") == "unknown_code"
+        assert normalize_incident_type("Wildfire") == "wildfire"
+
+    def test_normalize_incident_type_none(self):
+        """normalize_incident_type returns unknown for None."""
+        from central.adapters.wfigs_common import normalize_incident_type
+        assert normalize_incident_type(None) == "unknown"
+        assert normalize_incident_type("") == "unknown"
 
 
 class TestWFIGSIncidentsAdapter:
@@ -211,13 +274,26 @@ class TestWFIGSIncidentsAdapter:
         # Should have 2 events (Florida filtered out by bbox)
         assert len(events) == 2
 
+        # First event: Glacier Fire
         event = events[0]
-        assert event.id == "GUID-001-BOISE"
+        assert event.id == "GUID-001-GLACIER"
         assert event.adapter == "wfigs_incidents"
-        assert event.category == "fire.incident.wildfire"
+        # Category uses normalized incident type
+        assert event.category == "fire.incident.wildfire"  # NOT fire.incident.wf
         assert event.severity == 3  # 150 acres = severity 3 (100-999 range)
-        assert event.geo.primary_region == "US-ID-ADA"
-        assert event.data["IrwinID"] == "GUID-001-BOISE"
+        # Region uses normalized state (no double US-)
+        assert event.geo.primary_region == "US-MT-GLACIER"  # NOT US-US-MT-GLACIER
+        # Data contains both normalized and raw values
+        assert event.data["POOState"] == "MT"  # normalized
+        assert event.data["POOState_raw"] == "US-MT"  # raw
+        assert event.data["IncidentTypeCategory"] == "wildfire"  # normalized
+        assert event.data["IncidentTypeCategory_raw"] == "WF"  # raw
+
+        # Second event: Owyhee Rx
+        event2 = events[1]
+        assert event2.category == "fire.incident.prescribed_fire"  # NOT fire.incident.rx
+        assert event2.data["POOState"] == "ID"
+        assert event2.data["POOState_raw"] == "US-ID"
 
     @pytest.mark.asyncio
     async def test_is_published_dedup(
@@ -280,27 +356,30 @@ class TestWFIGSIncidentsAdapter:
         # The removal is yielded for GUID-002
         removal_events = [e for e in events2 if e.category == "fire.incident.removed"]
         assert len(removal_events) == 1
-        assert removal_events[0].data["irwin_id"] == "GUID-002-CANYON"
+        assert removal_events[0].data["irwin_id"] == "GUID-002-OWYHEE"
 
-    def test_subject_for_incidents(
+    def test_subject_for_incidents_normalized(
         self, mock_config: AdapterConfig, mock_config_store: MagicMock, cursor_db_path: Path
     ):
+        """subject_for uses normalized state codes."""
         from central.adapters.wfigs_incidents import WFIGSIncidentsAdapter
 
         adapter = WFIGSIncidentsAdapter(mock_config, mock_config_store, cursor_db_path)
 
+        # Event data contains normalized state (MT not US-MT)
         event = Event(
             id="test-id",
             adapter="wfigs_incidents",
             category="fire.incident.wildfire",
             time=datetime.now(timezone.utc),
             severity=2,
-            geo=Geo(primary_region="US-ID-ADA"),
-            data={"POOState": "ID", "POOCounty": "Ada"},
+            geo=Geo(primary_region="US-MT-GLACIER"),
+            data={"POOState": "MT", "POOCounty": "Glacier"},
         )
 
         subject = adapter.subject_for(event)
-        assert subject == "central.fire.incident.id.ada"
+        # Subject uses normalized state: mt.glacier not us-mt.glacier
+        assert subject == "central.fire.incident.mt.glacier"
 
     def test_subject_for_removal(
         self, mock_config: AdapterConfig, mock_config_store: MagicMock, cursor_db_path: Path
@@ -316,11 +395,11 @@ class TestWFIGSIncidentsAdapter:
             time=datetime.now(timezone.utc),
             severity=0,
             geo=Geo(),
-            data={"irwin_id": "test-id", "state": "ID"},
+            data={"irwin_id": "test-id", "state": "MT"},
         )
 
         subject = adapter.subject_for(event)
-        assert subject == "central.fire.incident.removed.id"
+        assert subject == "central.fire.incident.removed.mt"
 
     @pytest.mark.asyncio
     async def test_bbox_post_filter(
@@ -416,29 +495,40 @@ class TestWFIGSPerimetersAdapter:
         assert len(events) == 1
 
         event = events[0]
-        assert event.id == "GUID-001-BOISE"
+        assert event.id == "GUID-001-GLACIER"
         assert event.adapter == "wfigs_perimeters"
-        assert event.category == "fire.perimeter.wildfire"
-        assert event.geo.primary_region == "US-ID-ADA"
+        # Category uses normalized incident type
+        assert event.category == "fire.perimeter.wildfire"  # NOT fire.perimeter.wf
+        # Region uses normalized state (no double US-)
+        assert event.geo.primary_region == "US-MT-GLACIER"  # NOT US-US-MT-GLACIER
+        # Data contains both normalized and raw values
+        assert event.data["POOState"] == "MT"  # normalized
+        assert event.data["POOState_raw"] == "US-MT"  # raw
+        assert event.data["IncidentTypeCategory"] == "wildfire"  # normalized
+        assert event.data["IncidentTypeCategory_raw"] == "WF"  # raw
+        # Geometry is included
         assert "geometry" in event.data
         assert event.data["geometry"]["type"] == "Polygon"
 
-    def test_subject_for_perimeters(
+    def test_subject_for_perimeters_normalized(
         self, mock_config: AdapterConfig, mock_config_store: MagicMock, cursor_db_path: Path
     ):
+        """subject_for uses normalized state codes."""
         from central.adapters.wfigs_perimeters import WFIGSPerimetersAdapter
 
         adapter = WFIGSPerimetersAdapter(mock_config, mock_config_store, cursor_db_path)
 
+        # Event data contains normalized state (MT not US-MT)
         event = Event(
             id="test-id",
             adapter="wfigs_perimeters",
             category="fire.perimeter.wildfire",
             time=datetime.now(timezone.utc),
             severity=2,
-            geo=Geo(primary_region="US-ID-ADA"),
-            data={"POOState": "ID", "POOCounty": "Ada", "geometry": {}},
+            geo=Geo(primary_region="US-MT-GLACIER"),
+            data={"POOState": "MT", "POOCounty": "Glacier", "geometry": {}},
         )
 
         subject = adapter.subject_for(event)
-        assert subject == "central.fire.perimeter.id.ada"
+        # Subject uses normalized state: mt.glacier not us-mt.glacier
+        assert subject == "central.fire.perimeter.mt.glacier"

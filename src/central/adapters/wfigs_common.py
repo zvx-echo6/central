@@ -17,6 +17,35 @@ WFIGS_PERIMETERS_URL = (
 # Fall-off sweep window: 14 days (matches WFIGS's longest fall-off: large fires)
 FALLOFF_WINDOW_DAYS = 14
 
+# Incident type code mappings (WFIGS uses 2-letter codes)
+INCIDENT_TYPE_MAP = {
+    "WF": "wildfire",
+    "RX": "prescribed_fire",
+    "CX": "complex",
+    "FA": "false_alarm",
+}
+
+
+def normalize_state(state: str | None) -> str | None:
+    """Strip 'US-' prefix from POOState (ISO 3166-2 -> 2-letter)."""
+    if not state:
+        return None
+    if state.startswith("US-") and len(state) == 5:
+        return state[3:]
+    if len(state) == 2:
+        return state
+    return state  # unknown shape, pass through
+
+
+def normalize_incident_type(code: str | None) -> str:
+    """Map IncidentTypeCategory code to a readable name."""
+    if not code:
+        return "unknown"
+    upper = code.upper()
+    if upper in INCIDENT_TYPE_MAP:
+        return INCIDENT_TYPE_MAP[upper]
+    return code.lower()
+
 
 def severity_from_acres(acres: float | None) -> int:
     """Map DailyAcres to severity level 0-4."""
@@ -42,6 +71,7 @@ def build_regions(state: str | None, county: str | None) -> tuple[list[str], str
     """
     Build geo.regions list and primary_region from POOState and POOCounty.
 
+    Expects normalized 2-letter state codes (e.g., "MT" not "US-MT").
     Returns (regions, primary_region).
     """
     if not state:
@@ -62,6 +92,7 @@ def subject_suffix(state: str | None, county: str | None) -> str:
     """
     Build subject suffix from state and county.
 
+    Expects normalized 2-letter state codes.
     Returns lowercase state.county (county with spaces→underscores).
     Falls back to "unknown" if state is not available.
     """

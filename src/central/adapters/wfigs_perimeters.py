@@ -25,6 +25,8 @@ from central.adapters.wfigs_common import (
     extract_centroid,
     get_observed_guids,
     init_observed_table,
+    normalize_incident_type,
+    normalize_state,
     parse_wfigs_timestamp,
     polygon_intersects_bbox,
     severity_from_acres,
@@ -185,6 +187,7 @@ class WFIGSPerimetersAdapter(SourceAdapter):
             return f"central.fire.perimeter.removed.{state}"
 
         # Regular perimeters: central.fire.perimeter.<state>.<county>
+        # POOState is already normalized (2-letter code)
         state = event.data.get("POOState")
         county = event.data.get("POOCounty")
         suffix = subject_suffix(state, county)
@@ -271,18 +274,23 @@ class WFIGSPerimetersAdapter(SourceAdapter):
                 ):
                     continue
 
-            # Track this GUID as observed (for fall-off detection)
-            state = props.get("attr_POOState")
+            # Normalize at parse boundary
+            state_raw = props.get("attr_POOState")
+            state = normalize_state(state_raw)
             county = props.get("attr_POOCounty")
+            incident_type_raw = props.get("attr_IncidentTypeCategory")
+            incident_type = normalize_incident_type(incident_type_raw)
+
+            # Track this GUID as observed (for fall-off detection)
+            # Store normalized state for consistency
             current_guids[irwin_id] = (state, county)
 
             # Parse fields using prefixed names
-            incident_type = props.get("attr_IncidentTypeCategory", "unknown").lower()
             discovery_time = parse_wfigs_timestamp(props.get("attr_FireDiscoveryDateTime"))
             # Use poly_GISAcres or attr_IncidentSize for acreage
             daily_acres = props.get("attr_IncidentSize") or props.get("poly_GISAcres")
 
-            # Build regions
+            # Build regions (expects normalized 2-letter state code)
             regions, primary_region = build_regions(state, county)
 
             # Extract centroid for geo
@@ -320,13 +328,15 @@ class WFIGSPerimetersAdapter(SourceAdapter):
                 data={
                     "IrwinID": irwin_id,
                     "IncidentName": props.get("attr_IncidentName") or props.get("poly_IncidentName"),
-                    "IncidentTypeCategory": props.get("attr_IncidentTypeCategory"),
+                    "IncidentTypeCategory": incident_type,
+                    "IncidentTypeCategory_raw": incident_type_raw,
                     "DailyAcres": props.get("attr_IncidentSize"),
                     "GISAcres": props.get("poly_GISAcres"),
                     "PercentContained": props.get("attr_PercentContained"),
                     "FireDiscoveryDateTime": props.get("attr_FireDiscoveryDateTime"),
                     "ModifiedOnDateTime": props.get("attr_ModifiedOnDateTime_dt"),
                     "POOState": state,
+                    "POOState_raw": state_raw,
                     "POOCounty": county,
                     "geometry": geometry,  # Full GeoJSON polygon
                     "raw": props,
