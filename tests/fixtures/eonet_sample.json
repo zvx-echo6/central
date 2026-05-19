@@ -1,0 +1,108 @@
+{
+    "title": "EONET Events (frozen test fixture)",
+    "description": "Trimmed from upstream /api/v3/events for tests. Real-shape entries from live data plus synthetic items to exercise categories absent from the live sample (seaLakeIce, dustHaze, tempExtremes) and multi-geometry. Do not refresh casually.",
+    "link": "https://eonet.gsfc.nasa.gov/api/v3/events",
+    "events": [
+        {
+            "id": "EONET_20098",
+            "title": "Eagle Lake Fire Wildfire, Hancock, Iowa",
+            "description": null,
+            "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_20098",
+            "closed": null,
+            "categories": [
+                {"id": "wildfires", "title": "Wildfires"}
+            ],
+            "sources": [
+                {"id": "IRWIN", "url": "https://irwin.doi.gov/observer/incidents/c283aec9-aab3-4720-addc-47bb6a433a32"}
+            ],
+            "geometry": [
+                {
+                    "magnitudeValue": 550.00,
+                    "magnitudeUnit": "acres",
+                    "date": "2026-05-14T11:04:00Z",
+                    "type": "Point",
+                    "coordinates": [-93.72, 43.11]
+                }
+            ]
+        },
+        {
+            "id": "EONET_31000",
+            "title": "Synthetic Sea Ice off Greenland",
+            "description": "Synthetic test event for seaLakeIce category.",
+            "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_31000",
+            "closed": null,
+            "categories": [
+                {"id": "seaLakeIce", "title": "Sea and Lake Ice"}
+            ],
+            "sources": [],
+            "geometry": [
+                {
+                    "date": "2026-05-10T00:00:00Z",
+                    "type": "Point",
+                    "coordinates": [-60.0, 70.5]
+                }
+            ]
+        },
+        {
+            "id": "EONET_42000",
+            "title": "Synthetic Sahara Dust",
+            "description": "Synthetic test event for dustHaze category.",
+            "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_42000",
+            "closed": null,
+            "categories": [
+                {"id": "dustHaze", "title": "Dust and Haze"}
+            ],
+            "sources": [],
+            "geometry": [
+                {
+                    "date": "2026-05-11T12:00:00Z",
+                    "type": "Point",
+                    "coordinates": [30.0, 25.0]
+                }
+            ]
+        },
+        {
+            "id": "EONET_55000",
+            "title": "Synthetic Tropical Storm Path",
+            "description": "Synthetic multi-geometry event for severeStorms category.",
+            "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_55000",
+            "closed": null,
+            "categories": [
+                {"id": "severeStorms", "title": "Severe Storms"}
+            ],
+            "sources": [
+                {"id": "JTWC", "url": "https://www.metoc.navy.mil/jtwc/jtwc.html"}
+            ],
+            "geometry": [
+                {
+                    "date": "2026-05-12T00:00:00Z",
+                    "type": "Point",
+                    "coordinates": [140.0, 18.0]
+                },
+                {
+                    "date": "2026-05-13T06:00:00Z",
+                    "type": "Point",
+                    "coordinates": [142.5, 19.2]
+                }
+            ]
+        },
+        {
+            "id": "EONET_66000",
+            "title": "Synthetic Heat Wave",
+            "description": "Synthetic test event for tempExtremes category.",
+            "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_66000",
+            "closed": null,
+            "categories": [
+                {"id": "tempExtremes", "title": "Temperature Extremes"}
+            ],
+            "sources": [],
+            "geometry": [
+                {
+                    "date": "2026-05-09T18:00:00Z",
+                    "type": "Point",
+                    "coordinates": [12.5, 41.9]
+                }
+            ]
+        }
+    ]
+}
