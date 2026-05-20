@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import aiohttp
+from pydantic import BaseModel, ConfigDict, Field
 
 from central.enrichment.geocoder import all_null_bundle
 
@@ -23,8 +24,20 @@ logger = logging.getLogger(__name__)
 DEFAULT_BASE_URL = "http://localhost:2322"
 
 
+class PhotonBackendSettings(BaseModel):
+    """Settings for PhotonBackend. Mirrors __init__ defaults exactly."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_url: str = Field(default=DEFAULT_BASE_URL, description="Photon /reverse base URL")
+    timeout_s: float = Field(default=10.0, description="Per-request timeout in seconds")
+    headers: dict[str, str] | None = Field(default=None, description="Extra request headers")
+
+
 class PhotonBackend:
     """GeocoderBackend backed by a raw Photon /reverse endpoint."""
+
+    settings_schema = PhotonBackendSettings
 
     def __init__(
         self,

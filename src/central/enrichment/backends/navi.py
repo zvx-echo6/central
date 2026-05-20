@@ -16,6 +16,7 @@ import logging
 from typing import Any
 
 import aiohttp
+from pydantic import BaseModel, ConfigDict, Field
 
 from central.enrichment.geocoder import GEOCODER_FIELDS, all_null_bundle
 
@@ -30,8 +31,23 @@ _WARMUP_LAT = 43.6150
 _WARMUP_LON = -116.2023
 
 
+class NaviBackendSettings(BaseModel):
+    """Settings for NaviBackend. Mirrors __init__ defaults exactly."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_url: str = Field(default=DEFAULT_BASE_URL, description="Navi /api/reverse base URL")
+    timeout_s: float = Field(default=10.0, description="Per-request timeout in seconds")
+    headers: dict[str, str] | None = Field(
+        default=None, description="Extra request headers (e.g. Authorization)"
+    )
+    warmup: bool = Field(default=True, description="Fire a warmup ping on construction")
+
+
 class NaviBackend:
     """GeocoderBackend backed by the composed Navi /api/reverse endpoint."""
+
+    settings_schema = NaviBackendSettings
 
     def __init__(
         self,

@@ -9,6 +9,8 @@ land in PR K.
 import logging
 from typing import Any, Protocol, runtime_checkable
 
+from pydantic import BaseModel
+
 from central.enrichment.cache import EnrichmentCache
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,12 @@ def all_null_bundle() -> dict[str, Any]:
 @runtime_checkable
 class GeocoderBackend(Protocol):
     """The pluggable reverse-geocoding layer beneath GeocoderEnricher."""
+
+    # Pydantic model (extra='forbid') describing this backend's accepted
+    # settings. The supervisor validates config.enrichment.backend_settings
+    # against it before instantiating, turning a config/settings mismatch into
+    # a clean ValidationError instead of a constructor TypeError.
+    settings_schema: type[BaseModel]
 
     async def reverse(self, lat: float, lon: float) -> dict[str, Any]:
         """Return canonical geocoder fields (see GEOCODER_FIELDS).

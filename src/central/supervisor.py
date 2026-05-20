@@ -12,6 +12,7 @@ from typing import Any
 
 import nats
 from nats.js import JetStreamContext
+from pydantic import ValidationError
 
 from central.adapter import SourceAdapter
 from central.adapter_discovery import discover_adapters
@@ -56,7 +57,12 @@ def build_enrichers(
     startup and hot-reloaded via LISTEN/NOTIFY (see Supervisor._on_config_change).
     """
     backend_cls = _BACKEND_REGISTRY[enrichment_config.backend_class]
-    backend = backend_cls(**enrichment_config.backend_settings)
+    # Validate backend_settings against the backend's settings_schema BEFORE
+    # constructing. A mismatch (e.g. a stale base_url left in the row after
+    # switching to NoOpBackend) raises a clean pydantic ValidationError here
+    # instead of a TypeError inside the backend constructor.
+    validated = backend_cls.settings_schema.model_validate(enrichment_config.backend_settings)
+    backend = backend_cls(**validated.model_dump())
     enricher_cls = _ENRICHER_REGISTRY[enrichment_config.enricher_class]
     return [enricher_cls(backend, cache=cache)]
 
@@ -680,17 +686,27 @@ class Supervisor:
                     )
 
     def _rebuild_enrichers(self, config: EnrichmentConfig) -> None:
-        """Rebuild the active enricher set + cache from an EnrichmentConfig."""
+        """Rebuild the active enricher set + cache from an EnrichmentConfig.
+
+        Builds into locals first and commits to instance state only on success,
+        so a ValidationError (bad backend_settings) leaves the previously-active
+        enrichers/config/cache untouched and propagates to the caller.
+        """
+        cache = EnrichmentCache(ENRICHMENT_CACHE_DB_PATH, ttl_s=config.cache_ttl_s)
+        enrichers = build_enrichers(config, cache)  # may raise ValidationError
         self._active_enrichment_config = config
-        self._enrichment_cache = EnrichmentCache(
-            ENRICHMENT_CACHE_DB_PATH, ttl_s=config.cache_ttl_s
-        )
-        self._enrichers = build_enrichers(config, self._enrichment_cache)
+        self._enrichment_cache = cache
+        self._enrichers = enrichers
 
     async def _handle_enrichment_change(self) -> None:
         """Re-read config.enrichment and rebuild enrichers. Invalidate the cache
         when the backend changed, so stale results from the previous backend
-        don't survive until TTL expiry."""
+        don't survive until TTL expiry.
+
+        Invalid backend_settings (ValidationError) leave the previous backend
+        running — the supervisor stays up; the operator fixes the row and the
+        next NOTIFY brings it in cleanly.
+        """
         new_config = await self._config_source.get_enrichment_config()
         old_config = self._active_enrichment_config
         backend_changed = (
@@ -698,7 +714,19 @@ class Supervisor:
             or new_config.backend_settings != old_config.backend_settings
             or new_config.enricher_class != old_config.enricher_class
         )
-        self._rebuild_enrichers(new_config)
+        try:
+            self._rebuild_enrichers(new_config)
+        except ValidationError as e:
+            logger.error(
+                "Enrichment config invalid; keeping previous backend",
+                extra={
+                    "enricher_class": new_config.enricher_class,
+                    "backend_class": new_config.backend_class,
+                    "backend_settings": new_config.backend_settings,
+                    "errors": e.errors(),
+                },
+            )
+            return
         if backend_changed:
             deleted = await self._enrichment_cache.invalidate()
             logger.info(

@@ -66,6 +66,8 @@ def _type_to_widget_and_options(field_name: str, field_type: type) -> tuple[str,
         return "text", None
     if field_type is int:
         return "number", None
+    if field_type is float:
+        return "number", None
     if field_type is bool:
         return "checkbox", None
     if field_type is RegionConfig:

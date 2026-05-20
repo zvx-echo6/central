@@ -16,6 +16,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import aiohttp
+from pydantic import BaseModel, ConfigDict, Field
 
 from central.enrichment.geocoder import all_null_bundle
 
@@ -25,12 +26,29 @@ DEFAULT_BASE_URL = "https://nominatim.openstreetmap.org"
 DEFAULT_USER_AGENT = "central-enrichment/0.5 (https://github.com/zvx-echo6/central)"
 
 
+class NominatimBackendSettings(BaseModel):
+    """Settings for NominatimBackend. Mirrors __init__ defaults exactly."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_url: str = Field(default=DEFAULT_BASE_URL, description="Nominatim /reverse base URL")
+    user_agent: str = Field(
+        default=DEFAULT_USER_AGENT, description="User-Agent (public OSM requires one)"
+    )
+    rate_limit_per_sec: float = Field(
+        default=1.0, description="Outbound request cap; 0 disables (self-hosted)"
+    )
+    timeout_s: float = Field(default=10.0, description="Per-request timeout in seconds")
+
+
 class NominatimBackend:
     """GeocoderBackend backed by an OSM Nominatim /reverse endpoint.
 
     rate_limit_per_sec throttles outbound requests (public OSM requires <= 1/s);
     set it to 0 to disable for self-hosted instances.
     """
+
+    settings_schema = NominatimBackendSettings
 
     def __init__(
         self,
