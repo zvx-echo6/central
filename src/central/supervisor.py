@@ -20,6 +20,7 @@ from central.config_models import AdapterConfig
 from central.config_source import ConfigSource, DbConfigSource
 from central.config_store import ConfigStore
 from central.bootstrap_config import get_settings
+from central.api_key_resolver import resolve_api_key_alias
 from central.stream_manager import StreamManager
 from central.streams import STREAMS as STREAM_REGISTRY
 CURSOR_DB_PATH = Path("/var/lib/central/cursors.db")
@@ -263,10 +264,13 @@ class Supervisor:
         If the adapter was previously stopped (state exists but task is not running),
         reuses the existing state to preserve last_completed_poll for rate limiting.
         """
-        # API key precondition
+        # API key precondition — resolve via per-row settings[api_key_field]
+        # (operator-selected alias), falling back to the class-attribute
+        # default when settings hasn't been set. Returns None when no key
+        # is required.
         adapter_cls = self._adapters.get(config.name)
-        if adapter_cls is not None and adapter_cls.requires_api_key is not None:
-            alias = adapter_cls.requires_api_key
+        alias = resolve_api_key_alias(adapter_cls, config.settings)
+        if alias is not None:
             key_value = await self._config_store.get_api_key(alias)
             if not key_value:
                 error_msg = f"missing api key: {alias}"

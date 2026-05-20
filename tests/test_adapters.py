@@ -452,8 +452,17 @@ class TestAdaptersJsonbRegression:
             {"alias": "firms_key"},
             {"alias": "other_key"},
         ])
+        # The /adapters/{name} edit handler also issues a fetchval against
+        # config.api_keys to resolve whether the adapter's key is present.
+        # Return 1 (truthy) so the handler proceeds — this test only asserts
+        # api_keys reaches the template context, not the warning state.
+        mock_conn.fetchval = AsyncMock(return_value=1)
         mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_conn.__aexit__ = AsyncMock()
+        # AsyncMock() with no return_value yields a MagicMock — which is truthy,
+        # and the async context manager protocol reads a truthy __aexit__ return
+        # as "exception suppressed." That silently swallows any error inside the
+        # `async with` block. Pin return_value=None so exceptions propagate.
+        mock_conn.__aexit__ = AsyncMock(return_value=None)
 
         mock_pool = MagicMock()
         mock_pool.acquire = MagicMock(return_value=mock_conn)
