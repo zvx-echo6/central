@@ -1995,12 +1995,26 @@ async def streams_update(
 # =============================================================================
 
 
-def _enrichment_fields(current: dict) -> list[FieldDescriptor]:
-    """Field descriptors for the single-row EnrichmentConfig form (generic
-    machinery — same describe_fields used by adapter pages)."""
+def _outer_enrichment_fields(current: dict) -> list[FieldDescriptor]:
+    """EnrichmentConfig form fields EXCEPT backend_settings — that one is
+    rendered as a per-backend <fieldset> via _backend_fields()."""
     from central.config_models import EnrichmentConfig
 
-    return describe_fields(EnrichmentConfig, current)
+    return [
+        f for f in describe_fields(EnrichmentConfig, current)
+        if f.name != "backend_settings"
+    ]
+
+
+def _backend_fields(backend_class: str | None, current_bs: dict) -> list[FieldDescriptor]:
+    """Field descriptors for the selected backend's settings_schema, or [] when
+    the backend class is unknown. Same generic describe_fields machinery."""
+    from central.supervisor import _BACKEND_REGISTRY
+
+    cls = _BACKEND_REGISTRY.get(backend_class or "")
+    if cls is None:
+        return []
+    return describe_fields(cls.settings_schema, current_bs or {})
 
 
 async def _read_enrichment_row(conn) -> dict:
@@ -2013,39 +2027,55 @@ async def _read_enrichment_row(conn) -> dict:
     return dict(row) if row is not None else {}
 
 
+def _enrichment_context(request, *, outer_fields, backend_fields, backend_class,
+                        errors=None, form_data=None, backend_form_data=None):
+    return {
+        "operator": request.state.operator,
+        "csrf_token": request.state.csrf_token,
+        "outer_fields": outer_fields,
+        "backend_fields": backend_fields,
+        "backend_class": backend_class,
+        "errors": errors,
+        "form_data": form_data,
+        "backend_form_data": backend_form_data,
+    }
+
+
 @router.get("/enrichment", response_class=HTMLResponse)
 async def enrichment_form(request: Request) -> HTMLResponse:
-    """Render the enrichment config form."""
+    """Render the enrichment config form (outer fields + a per-backend fieldset
+    for the currently-selected backend_class)."""
     templates = _get_templates()
     pool = get_pool()
-    operator = request.state.operator
 
     async with pool.acquire() as conn:
         current = await _read_enrichment_row(conn)
 
-    response = templates.TemplateResponse(
+    backend_class = current.get("backend_class") or "NoOpBackend"
+    current_bs = current.get("backend_settings") or {}
+
+    return templates.TemplateResponse(
         request=request,
         name="enrichment.html",
-        context={
-            "operator": operator,
-            "csrf_token": request.state.csrf_token,
-            "fields": _enrichment_fields(current),
-            "errors": None,
-            "form_data": None,
-        },
+        context=_enrichment_context(
+            request,
+            outer_fields=_outer_enrichment_fields(current),
+            backend_fields=_backend_fields(backend_class, current_bs),
+            backend_class=backend_class,
+        ),
     )
-    return response
 
 
 @router.post("/enrichment")
 async def enrichment_update(request: Request) -> Response:
-    """Validate + persist the enrichment config. Hot-reload picks it up via
-    the config.enrichment NOTIFY trigger."""
+    """Validate + persist the enrichment config. Hot-reload picks it up via the
+    config.enrichment NOTIFY trigger. backend_settings is validated against the
+    SUBMITTED backend_class's settings_schema."""
     from central.config_models import EnrichmentConfig
+    from central.supervisor import _BACKEND_REGISTRY
 
     templates = _get_templates()
     pool = get_pool()
-    operator = request.state.operator
 
     form = await request.form()
     if not form.get("csrf_token") or form.get("csrf_token") != request.state.csrf_token:
@@ -2053,9 +2083,11 @@ async def enrichment_update(request: Request) -> Response:
 
     errors: dict[str, str] = {}
     form_data: dict[str, Any] = {}
+    backend_form_data: dict[str, Any] = {}
     parsed: dict[str, Any] = {}
 
-    for field in _enrichment_fields({}):
+    # --- outer EnrichmentConfig fields (backend_settings excluded) ---
+    for field in _outer_enrichment_fields({}):
         raw = form.get(field.name, "")
         form_data[field.name] = raw
         if field.widget == "number":
@@ -2063,25 +2095,49 @@ async def enrichment_update(request: Request) -> Response:
                 parsed[field.name] = int(raw) if raw else None
             except ValueError:
                 errors[field.name] = f"{field.label} must be a number"
-        elif field.widget == "json":
-            if not raw or not raw.strip():
-                parsed[field.name] = {}
-            else:
-                try:
-                    loaded = json.loads(raw)
-                    if not isinstance(loaded, dict):
-                        errors[field.name] = f"{field.label} must be a JSON object"
-                    else:
-                        parsed[field.name] = loaded
-                except json.JSONDecodeError as e:
-                    errors[field.name] = f"{field.label} is not valid JSON: {e}"
         else:  # text
             parsed[field.name] = raw.strip() if raw else None
 
+    submitted_backend_class = parsed.get("backend_class")
+
+    # --- backend settings fieldset, validated against the SUBMITTED backend ---
+    backend_settings: dict[str, Any] = {}
+    backend_cls = _BACKEND_REGISTRY.get(submitted_backend_class or "")
+    if backend_cls is None and submitted_backend_class:
+        errors["backend_class"] = f"Unknown backend: {submitted_backend_class}"
+    elif backend_cls is not None:
+        for f in describe_fields(backend_cls.settings_schema, {}):
+            formkey = f"bs_{f.name}"
+            raw = form.get(formkey, "")
+            backend_form_data[formkey] = raw
+            if f.widget == "checkbox":
+                backend_settings[f.name] = formkey in form
+            elif f.widget == "json":
+                if raw and raw.strip():
+                    try:
+                        backend_settings[f.name] = json.loads(raw)
+                    except json.JSONDecodeError as e:
+                        errors[formkey] = f"{f.label} is not valid JSON: {e}"
+                # blank -> omit, schema default applies
+            else:  # text / number — let pydantic coerce, omit blanks for defaults
+                if raw.strip() != "":
+                    backend_settings[f.name] = raw.strip()
+        if not errors:
+            try:
+                backend_settings = backend_cls.settings_schema.model_validate(
+                    backend_settings
+                ).model_dump()
+            except ValidationError as e:
+                for err in e.errors():
+                    loc = err["loc"][0] if err["loc"] else "unknown"
+                    errors[f"bs_{loc}"] = err["msg"]
+
+    # --- outer EnrichmentConfig validation ---
     if not errors:
         try:
             validated = EnrichmentConfig(
-                **{k: v for k, v in parsed.items() if v is not None}
+                **{k: v for k, v in parsed.items() if v is not None},
+                backend_settings=backend_settings,
             )
         except ValidationError as e:
             for err in e.errors():
@@ -2089,21 +2145,22 @@ async def enrichment_update(request: Request) -> Response:
                 errors[str(loc)] = err["msg"]
 
     if errors:
-        async with pool.acquire() as conn:
-            current = await _read_enrichment_row(conn)
-        response = templates.TemplateResponse(
+        # Re-render against the SUBMITTED backend_class so field errors attach
+        # to the right schema (operator may be mid-switch with a typo).
+        return templates.TemplateResponse(
             request=request,
             name="enrichment.html",
-            context={
-                "operator": operator,
-                "csrf_token": request.state.csrf_token,
-                "fields": _enrichment_fields(current),
-                "errors": errors,
-                "form_data": form_data,
-            },
+            context=_enrichment_context(
+                request,
+                outer_fields=_outer_enrichment_fields({}),
+                backend_fields=_backend_fields(submitted_backend_class, backend_settings),
+                backend_class=submitted_backend_class,
+                errors=errors,
+                form_data=form_data,
+                backend_form_data=backend_form_data,
+            ),
             status_code=200,
         )
-        return response
 
     async with pool.acquire() as conn:
         await conn.execute(

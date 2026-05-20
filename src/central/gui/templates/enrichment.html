@@ -7,7 +7,9 @@
 <p class="secondary">
     Central-side event enrichment. Results are attached to each event under
     <code>data._enriched.&lt;enricher&gt;</code>. Changes hot-reload into the
-    supervisor; switching backend invalidates the enrichment cache.
+    supervisor; switching backend invalidates the enrichment cache. Backend
+    settings below are validated against the selected backend; switching
+    backend then saving re-renders this form with the new backend's fields.
 </p>
 
 <form method="post" action="/enrichment">
@@ -15,8 +17,7 @@
 
     <fieldset>
         <legend>Configuration</legend>
-
-        {% for field in fields %}
+        {% for field in outer_fields %}
             {% if field.widget == "text" %}
                 <label for="{{ field.name }}">{{ field.label }}</label>
                 <input type="text" id="{{ field.name }}" name="{{ field.name }}"
@@ -26,24 +27,59 @@
                 {% if errors and errors[field.name] %}
                 <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
                 {% endif %}
-
             {% elif field.widget == "number" %}
                 <label for="{{ field.name }}">{{ field.label }}</label>
-                <input type="number" id="{{ field.name }}" name="{{ field.name }}"
+                <input type="number" step="any" id="{{ field.name }}" name="{{ field.name }}"
                        value="{{ form_data[field.name] if form_data and field.name in form_data else field.current_value or '' }}"
                        {% if field.required %}required{% endif %}>
                 {% if field.description %}<small>{{ field.description }}</small>{% endif %}
                 {% if errors and errors[field.name] %}
                 <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
                 {% endif %}
+            {% endif %}
+        {% endfor %}
+    </fieldset>
 
+    <fieldset>
+        <legend>Backend settings — {{ backend_class }}</legend>
+        {% if not backend_fields %}
+        <small>This backend takes no settings.</small>
+        {% endif %}
+        {% for field in backend_fields %}
+            {% set fk = "bs_" ~ field.name %}
+            {% if field.widget == "text" %}
+                <label for="{{ fk }}">{{ field.label }}</label>
+                <input type="text" id="{{ fk }}" name="{{ fk }}"
+                       value="{{ backend_form_data[fk] if backend_form_data and fk in backend_form_data else field.current_value or '' }}">
+                {% if field.description %}<small>{{ field.description }}</small>{% endif %}
+                {% if errors and errors[fk] %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[fk] }}</small>
+                {% endif %}
+            {% elif field.widget == "number" %}
+                <label for="{{ fk }}">{{ field.label }}</label>
+                <input type="number" step="any" id="{{ fk }}" name="{{ fk }}"
+                       value="{{ backend_form_data[fk] if backend_form_data and fk in backend_form_data else field.current_value or '' }}">
+                {% if field.description %}<small>{{ field.description }}</small>{% endif %}
+                {% if errors and errors[fk] %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[fk] }}</small>
+                {% endif %}
+            {% elif field.widget == "checkbox" %}
+                <label>
+                    <input type="checkbox" name="{{ fk }}"
+                           {% if backend_form_data %}{% if backend_form_data[fk] %}checked{% endif %}{% elif field.current_value %}checked{% endif %}>
+                    {{ field.label }}
+                </label>
+                {% if field.description %}<small>{{ field.description }}</small>{% endif %}
+                {% if errors and errors[fk] %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[fk] }}</small>
+                {% endif %}
             {% elif field.widget == "json" %}
-                <label for="{{ field.name }}">{{ field.label }}</label>
-                <textarea id="{{ field.name }}" name="{{ field.name }}" rows="6"
-                          placeholder="{}">{{ form_data[field.name] if form_data and field.name in form_data else (field.current_value | tojson if field.current_value else '{}') }}</textarea>
+                <label for="{{ fk }}">{{ field.label }}</label>
+                <textarea id="{{ fk }}" name="{{ fk }}" rows="4"
+                          placeholder="{}">{{ backend_form_data[fk] if backend_form_data and fk in backend_form_data else (field.current_value | tojson if field.current_value else '') }}</textarea>
                 <small>JSON object{% if field.description %} — {{ field.description }}{% endif %}</small>
-                {% if errors and errors[field.name] %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                {% if errors and errors[fk] %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[fk] }}</small>
                 {% endif %}
             {% endif %}
         {% endfor %}

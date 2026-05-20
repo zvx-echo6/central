@@ -203,6 +203,11 @@ async def test_enrichment_form_renders():
         await enrichment_form(request)
 
     ctx = templates.TemplateResponse.call_args.kwargs["context"]
-    field_widgets = {f.name: f.widget for f in ctx["fields"]}
-    assert field_widgets["backend_settings"] == "json"
+    # PR L.5: outer fields exclude backend_settings (now a per-backend fieldset);
+    # NoOpBackend's fieldset has zero fields.
+    outer = {f.name for f in ctx["outer_fields"]}
+    assert "backend_settings" not in outer
+    assert "backend_class" in outer
+    assert ctx["backend_class"] == "NoOpBackend"
+    assert ctx["backend_fields"] == []
     assert ctx["csrf_token"] == "tok"
