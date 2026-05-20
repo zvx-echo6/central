@@ -23,7 +23,13 @@ from pathlib import Path
 
 from central.adapter import SourceAdapter
 from central.adapter_discovery import discover_adapters
+from central.enrichment.geocoder import GEOCODER_FIELDS
 from central.streams import STREAMS
+
+# The verbatim design-principle quote that must stay in §2 (Matt, 2026-05-19).
+_DESIGN_PRINCIPLE_QUOTE = (
+    "Central takes it all and gives it all. It's up to the pipe to do with it"
+)
 
 DOC_PATH = Path(__file__).resolve().parents[1] / "docs" / "PRODUCER-INTEGRATION.md"
 
@@ -183,6 +189,48 @@ def test_streams_snippet_quotes_live_registry():
     assert doc_rows == code_rows, (
         f"STREAMS snippet drift: "
         f"doc-only={doc_rows - code_rows}, code-only={code_rows - doc_rows}"
+    )
+
+
+def _section(doc: str, header_re: str) -> str:
+    """Return the body of the section whose header matches header_re, up to the
+    next same-or-higher-level header."""
+    m = re.search(header_re + r"\s*\n(.*?)(?=^## |\Z)", doc, re.DOTALL | re.MULTILINE)
+    assert m, f"doc missing section matching {header_re!r}"
+    return m.group(1)
+
+
+def test_design_principle_quote_present_in_section_2():
+    """§2 must still carry the verbatim Matt quote — the reframe changes the
+    translation beneath it, not the quote itself."""
+    section = _section(_doc_text(), r"^## 2\. The design principle")
+    assert _DESIGN_PRINCIPLE_QUOTE in section, "verbatim design-principle quote missing from §2"
+
+
+def test_anti_pattern_10_1_section_exists():
+    """§10.1 must still exist as a subsection (content reframed to
+    'enrichment outside the framework', structure preserved)."""
+    doc = _doc_text()
+    assert re.search(r"^### 10\.1 ", doc, re.MULTILINE), "doc missing '### 10.1' subsection"
+
+
+def test_enrichment_contract_section_13_has_all_protocol_references():
+    """New §13 must name all four enrichment contract types verbatim."""
+    section = _section(_doc_text(), r"^## 13\. Enrichment contract")
+    for ref in ("Enricher", "GeocoderEnricher", "GeocoderBackend", "NoOpBackend"):
+        assert ref in section, f"§13 missing reference to {ref!r}"
+
+
+def test_enrichment_coverage_matrix_lists_exactly_geocoder_fields():
+    """The §13 per-field coverage matrix must list exactly the canonical
+    GEOCODER_FIELDS — derived from code, not hardcoded here."""
+    section = _section(_doc_text(), r"^## 13\. Enrichment contract")
+    # Matrix rows look like: | `field_name` | ... |
+    row_fields = set(re.findall(r"^\|\s*`([a-z_]+)`\s*\|", section, re.MULTILINE))
+    assert row_fields == set(GEOCODER_FIELDS), (
+        f"coverage-matrix field drift: "
+        f"doc-only={row_fields - set(GEOCODER_FIELDS)}, "
+        f"code-only={set(GEOCODER_FIELDS) - row_fields}"
     )
 
 

@@ -24,6 +24,7 @@ are intentionally not restated. Cross-references point into that doc.
 10. [Anti-patterns — what NOT to do](#10-anti-patterns--what-not-to-do)
 11. [Settings preview hook](#11-settings-preview-hook)
 12. [Acceptance gate for a new adapter](#12-acceptance-gate-for-a-new-adapter)
+13. [Enrichment contract](#13-enrichment-contract)
 
 ---
 
@@ -49,33 +50,47 @@ concerns (live in [`CONSUMER-INTEGRATION.md`](./CONSUMER-INTEGRATION.md)).
 > what it will."
 > — Matt, 2026-05-19
 
-Adapter authors translate that single sentence into a small number of concrete
-rules:
+The correct reading of that sentence: **Central is the consumer's only data
+plane.** A downstream consumer sees exactly what's on the wire and nothing
+more — it cannot do a follow-up lookup, cannot re-query the upstream, cannot
+reverse-geocode a coordinate on its own. So whatever Central does NOT put on
+the wire is, for every consumer, simply missing. "Gives it all" therefore means
+*give the consumer everything a reasonable consumer needs to act on the event*
+— not "give the upstream payload only."
+
+Adapter authors translate that into a small number of concrete rules:
 
 - **Preserve every upstream field.** Anything the upstream returns lives in
   `Event.data` verbatim. Adapters do not silently drop fields, even ones that
-  look redundant or low-value today.
-- **No enrichment.** Adapters do not reverse-geocode, do not call out to
-  upstream metadata endpoints during normal `poll()` flow, do not consult a
-  second source to "fill in" a missing field. If a downstream consumer wants
-  enrichment, that is consumer-side work.
-- **No opinionated translation.** Adapters do not coerce units, do not rename
-  fields to match a Central-wide vocabulary, do not collapse upstream
-  enumerations into Central's preferred labels.
-- **The only adapter-side transforms are mechanical.** Specifically:
-  subject-token normalization (camelCase → snake_case, agency-prefix splitting,
-  whitespace → underscore, lowercase) and dedup-key construction. Both are
-  deterministic functions of upstream identifiers. Nothing else.
+  look redundant or low-value today (see [§10.2](#102-silent-field-dropping)).
+- **Enrich, deliberately and centrally.** Location, timezone, elevation,
+  landclass and similar context that consumers reliably need should be resolved
+  once, by Central, and attached — not left for twelve consumers to each
+  re-derive (most of them can't). Enrichment runs through the framework
+  ([§13](#13-enrichment-contract)): an adapter declares `enrichment_locations`
+  and the supervisor attaches results under `Event.data["_enriched"]`.
+- **Namespace enrichment for provenance.** Central-derived fields live under
+  `_enriched.<enricher_name>`; everything else in `data` is upstream verbatim.
+  A consumer can always tell which is which.
+- **Fail gracefully to null, never to an exception.** Enrichment that can't
+  resolve a field returns `null` for it (a stable, documented field set), and a
+  total enrichment failure returns an all-null bundle. A geocoder outage must
+  never drop or corrupt the underlying event.
+- **No opinionated translation of the upstream payload.** Enrichment *adds*
+  namespaced fields; it does not rewrite upstream ones. Adapters still do not
+  coerce units, rename upstream fields, or collapse upstream enumerations inside
+  `data`. The only in-place adapter transforms remain mechanical: subject-token
+  normalization (camelCase → snake_case, agency-prefix splitting, whitespace →
+  underscore, lowercase) and dedup-key construction.
 
-This rules out a whole category of plausible-sounding work that prior reviews
-have already rejected. For instance, "enrich NWIS site rows with USGS
-monitoring-locations metadata during `poll()`" was proposed for Phase 3 and
-killed on this principle. The producer adds the field-preserving pipe; the pipe
-ends at JetStream publish; everything richer is a downstream concern.
-
-See [§10](#10-anti-patterns--what-not-to-do) for the enforced list of
-anti-patterns. Future authors should reject the same proposals on the same
-grounds.
+This reframes a Phase 2 rule. The earlier draft of this doc said "no
+enrichment — that's consumer-side work," and a proposal to enrich NWIS rows was
+rejected on those grounds. That reasoning is now inverted: consumers have no
+practical way to do that work, so Central does it. The constraint that survives
+is *where* and *how* — through the framework, namespaced, cached, failing to
+null — not *whether*. See [§10.1](#101-enrichment-outside-the-framework) for the
+remaining anti-pattern (enrichment done outside the framework) and
+[§13](#13-enrichment-contract) for the full contract.
 
 ---
 
@@ -625,18 +640,30 @@ adapter authors should mirror it. Do not restate it here.
 These are the patterns prior reviews have explicitly rejected. Reject them
 again on sight in a new-adapter PR.
 
-### 10.1 Enrichment during `poll()`
+### 10.1 Enrichment outside the framework
 
-No calls to upstream metadata endpoints, no reverse-geocode, no consultation
-of a second source to fill in fields the primary feed omitted. The "NWIS
-enrichment" Phase 3 proposal — joining live measurements against the
-monitoring-locations metadata endpoint during `poll()` — was rejected on the
-[§2](#2-the-design-principle) principle. Future proposals along the same
-lines get the same answer.
+Enrichment itself is **expected**, not forbidden — see
+[§2](#2-the-design-principle) and [§13](#13-enrichment-contract). Any adapter
+with location data should opt in by declaring `enrichment_locations` on the
+adapter class; the supervisor then runs the registered enrichers and attaches
+results under `Event.data["_enriched"]`.
 
-If enrichment is genuinely necessary, the right shape is a separate adapter
-(or a downstream consumer) — not an `if metadata_missing: await
-fetch_metadata()` branch buried in an adapter's `poll()`.
+The anti-pattern is doing enrichment the *wrong* way — outside the framework:
+
+- An `if missing: await fetch_metadata()` branch buried in an adapter's
+  `poll()`. This bypasses the cache (so every poll re-hits the geocoder), skips
+  the `_enriched` namespacing (so consumers can't tell upstream from
+  Central-derived), and gives up the never-raise/all-null safety net (so a
+  geocoder hiccup can take down the poll).
+- Writing enriched fields directly into the top level of `Event.data` instead
+  of under `_enriched`. That destroys provenance — a consumer can no longer
+  tell which fields came from the upstream feed and which Central added.
+- Standing up a parallel enrichment path (a second HTTP client, a private cache)
+  inside one adapter instead of registering a backend with the framework.
+
+The rule of thumb: declare `enrichment_locations`, let the supervisor do the
+work. If the framework can't express what you need, extend the framework
+([§13](#13-enrichment-contract)) — don't route around it inside an adapter.
 
 ### 10.2 Silent field dropping
 
@@ -819,5 +846,113 @@ requesting / granting merge.
       introduces a new convention.** This doc is contract-shaped, not
       catalog-shaped — most new adapters need no edit here.
 - [ ] **Full pytest suite green.**
+
+---
+
+## 13. Enrichment contract
+
+Enrichment is how Central adds consumer-needed context (location names,
+timezone, elevation, landclass, …) that the upstream feed doesn't carry and a
+downstream consumer can't look up itself. It runs in the supervisor, after
+dedup and before the CloudEvents wrap, for any adapter that opts in. Results are
+namespaced under `Event.data["_enriched"]` so provenance stays explicit:
+everything under `_enriched` is Central-derived; everything else in `data` is
+upstream verbatim.
+
+### 13.1 Opting an adapter in
+
+Declare `enrichment_locations` on the adapter class — a list of
+`(lat_field, lon_field)` tuples naming top-level keys in `Event.data`:
+
+```python
+class FIRMSAdapter(SourceAdapter):
+    enrichment_locations = [("latitude", "longitude")]
+```
+
+Empty (the default on `SourceAdapter`) means "no enrichment, publish as-is."
+The supervisor uses the first tuple that resolves to a non-null coordinate pair,
+runs each registered enricher over `{"lat": …, "lon": …}`, and attaches the
+results. No adapter code calls enrichers directly.
+
+### 13.2 The `Enricher` Protocol
+
+An enricher is any object satisfying this Protocol (`central.enrichment.base`):
+
+- `name: str` — short identifier, used as the key under
+  `Event.data["_enriched"]`.
+- `async def enrich(self, location: dict[str, float]) -> dict[str, Any]` —
+  given `{"lat": float, "lon": float}`, return a flat dict of enrichment
+  fields. Fields it can't resolve are present with value `None` (not omitted).
+  **Must never raise** — implementations handle their own failures and return
+  an all-null bundle on total failure.
+
+### 13.3 `GeocoderEnricher` and the `GeocoderBackend` Protocol
+
+`GeocoderEnricher` (`central.enrichment.geocoder`, `name = "geocoder"`) is the
+only enricher today. It owns the cache and the canonical field normalization;
+the actual reverse-geocode is delegated to a pluggable backend satisfying the
+`GeocoderBackend` Protocol:
+
+- `async def reverse(self, lat: float, lon: float) -> dict[str, Any]` — return
+  the canonical geocoder fields (see [§13.5](#135-per-field-coverage)); fields
+  the backend can't resolve return `None`. Must never raise.
+
+Backends shipped: `NaviBackend` (composed Navi `/api/reverse/<lat>/<lon>`
+endpoint — name/address + timezone + landclass + elevation in one call),
+`PhotonBackend` (raw Photon, name/address only), `NominatimBackend` (OSM
+Nominatim, name/address only, with a configurable rate limit + `User-Agent`),
+and `NoOpBackend` (all-null — the default until an operator configures a real
+backend).
+
+### 13.4 Cache + failure semantics
+
+`GeocoderEnricher` is backed by a sqlite cache (`central.enrichment.cache`,
+`/var/lib/central/enrichment_cache.db`):
+
+- Key: `(enricher_name, lat_rounded, lon_rounded)`, coordinates rounded to 4
+  decimal places (~11 m). TTL is per-enricher, default 24h.
+- **Cache hit** → return cached bundle, no backend call.
+- **Cache miss** → call backend, cache the normalized result (**even an
+  all-null bundle** — so known-empty coordinates aren't re-hammered), return it.
+- **Backend raises** (a violation of the never-raise contract, or an
+  infrastructure error the backend chose to surface) → return an all-null
+  bundle and **do not cache** it, so the next event for that coordinate retries.
+
+Enrichment config (`EnrichmentConfig`: `enricher_class`, `backend_class`,
+`backend_settings`, `cache_ttl_s`) is read once at supervisor startup. Changing
+the enricher set is a restart, not a hot-reload.
+
+### 13.5 Per-field coverage
+
+The canonical geocoder bundle is exactly nine fields. They mirror
+`central.enrichment.geocoder.GEOCODER_FIELDS` (the single source of truth — this
+table must match it):
+
+| Field | US events | Non-US events today | Non-US after Photon planet expansion |
+|---|---|---|---|
+| `name` | populated (wilderness sparsity gaps) | null | populated |
+| `city` | populated (wilderness sparsity gaps) | null | populated |
+| `county` | populated (wilderness sparsity gaps) | null | populated |
+| `state` | populated (wilderness sparsity gaps) | null | populated |
+| `country` | populated (wilderness sparsity gaps) | null | populated |
+| `postal_code` | populated (wilderness sparsity gaps) | null | populated |
+| `timezone` | populated | populated (`tz_world` is planet-scale) | populated |
+| `landclass` | populated where PAD-US covers | null (PAD-US is US-only) | null |
+| `elevation_m` | populated | populated (planet-DEM) | populated |
+
+**Net for v0.5.0:** US events get a rich bundle; non-US events get `timezone` +
+`elevation_m` and the rest null. Photon planet expansion is queued on the Navi
+side with no firm ETA; when it lands, `NaviBackend` picks it up automatically
+with zero Central code changes.
+
+### 13.6 Known wrinkle — landclass antimeridian false-positive
+
+`landclass` is derived from a PostGIS `ST_Intersects` against PAD-US polygons.
+Points near 51–53°N **outside** the US can spuriously match the Aleutian "Rat
+Islands" PAD-US polygon (false matching across the antimeridian), yielding a
+non-null `landclass` that doesn't actually apply. This is a Navi-side bug being
+worked separately; until it's fixed, treat a non-null `landclass` on a clearly
+non-US point as suspect. Documented for consumers in
+`CONSUMER-INTEGRATION.md`.
 
 ---
