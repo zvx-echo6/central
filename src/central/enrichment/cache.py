@@ -124,3 +124,27 @@ class EnrichmentCache:
     ) -> None:
         """Cache a bundle (idempotent upsert on the rounded-coords key)."""
         await asyncio.to_thread(self._set_sync, enricher_name, lat, lon, payload)
+
+    def _invalidate_sync(self, enricher_name: str | None) -> int:
+        conn = self._connect()
+        try:
+            if enricher_name is None:
+                cur = conn.execute("DELETE FROM enrichment_cache")
+            else:
+                cur = conn.execute(
+                    "DELETE FROM enrichment_cache WHERE enricher_name = ?",
+                    (enricher_name,),
+                )
+            conn.commit()
+            return cur.rowcount
+        finally:
+            conn.close()
+
+    async def invalidate(self, enricher_name: str | None = None) -> int:
+        """Drop cached bundles. Scoped to one enricher when given, else all.
+
+        Called when enrichment config changes — a new backend would otherwise
+        keep returning the previous backend's cached results until TTL expiry.
+        Returns the number of rows deleted.
+        """
+        return await asyncio.to_thread(self._invalidate_sync, enricher_name)

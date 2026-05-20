@@ -47,16 +47,16 @@ _BACKEND_REGISTRY: dict[str, type] = {
 
 def build_enrichers(
     enrichment_config: EnrichmentConfig,
-    cache_db_path: Path = ENRICHMENT_CACHE_DB_PATH,
+    cache: EnrichmentCache,
 ) -> list[Enricher]:
-    """Instantiate the configured enricher(s) with their backend + cache.
+    """Instantiate the configured enricher(s) with their backend + the given cache.
 
-    Read once at supervisor startup — enrichment config is NOT hot-reloaded
-    in PR J (see EnrichmentConfig docstring).
+    The supervisor owns the cache (so it can invalidate it on a config change)
+    and passes it in. Enrichment config is read from config.enrichment at
+    startup and hot-reloaded via LISTEN/NOTIFY (see Supervisor._on_config_change).
     """
     backend_cls = _BACKEND_REGISTRY[enrichment_config.backend_class]
     backend = backend_cls(**enrichment_config.backend_settings)
-    cache = EnrichmentCache(cache_db_path, ttl_s=enrichment_config.cache_ttl_s)
     enricher_cls = _ENRICHER_REGISTRY[enrichment_config.enricher_class]
     return [enricher_cls(backend, cache=cache)]
 
@@ -165,9 +165,15 @@ class Supervisor:
         self._config_store = config_store
         self._nats_url = nats_url
         self._cloudevents_config = cloudevents_config
-        # Enrichment is read once at startup (no hot-reload in PR J).
+        # Enrichment: a valid default set is built now so the supervisor is
+        # never in a half-state; start() then overrides it from the live
+        # config.enrichment row, and _on_config_change hot-reloads it.
+        self._active_enrichment_config = enrichment_config or EnrichmentConfig()
+        self._enrichment_cache = EnrichmentCache(
+            ENRICHMENT_CACHE_DB_PATH, ttl_s=self._active_enrichment_config.cache_ttl_s
+        )
         self._enrichers: list[Enricher] = build_enrichers(
-            enrichment_config or EnrichmentConfig()
+            self._active_enrichment_config, self._enrichment_cache
         )
         self._adapters = discover_adapters()
         self._nc: nats.NATS | None = None
@@ -673,11 +679,52 @@ class Supervisor:
                         extra={"stream": stream_config.name, "error": str(e)},
                     )
 
+    def _rebuild_enrichers(self, config: EnrichmentConfig) -> None:
+        """Rebuild the active enricher set + cache from an EnrichmentConfig."""
+        self._active_enrichment_config = config
+        self._enrichment_cache = EnrichmentCache(
+            ENRICHMENT_CACHE_DB_PATH, ttl_s=config.cache_ttl_s
+        )
+        self._enrichers = build_enrichers(config, self._enrichment_cache)
+
+    async def _handle_enrichment_change(self) -> None:
+        """Re-read config.enrichment and rebuild enrichers. Invalidate the cache
+        when the backend changed, so stale results from the previous backend
+        don't survive until TTL expiry."""
+        new_config = await self._config_source.get_enrichment_config()
+        old_config = self._active_enrichment_config
+        backend_changed = (
+            new_config.backend_class != old_config.backend_class
+            or new_config.backend_settings != old_config.backend_settings
+            or new_config.enricher_class != old_config.enricher_class
+        )
+        self._rebuild_enrichers(new_config)
+        if backend_changed:
+            deleted = await self._enrichment_cache.invalidate()
+            logger.info(
+                "Enrichment backend changed; cache invalidated",
+                extra={
+                    "enricher_class": new_config.enricher_class,
+                    "backend_class": new_config.backend_class,
+                    "rows_deleted": deleted,
+                },
+            )
+        else:
+            logger.info(
+                "Enrichment config changed (cache retained)",
+                extra={"cache_ttl_s": new_config.cache_ttl_s},
+            )
+
     async def _on_config_change(self, table: str, key: str) -> None:
         """Handle a configuration change notification.
 
         Called when NOTIFY fires for config changes.
         """
+        # Handle enrichment config changes (single-row config.enrichment)
+        if table == "enrichment":
+            await self._handle_enrichment_change()
+            return
+
         # Handle stream changes
         if table == "streams":
             stream_name = key
@@ -768,6 +815,18 @@ class Supervisor:
 
         # Ensure streams exist with correct configuration
         await self._ensure_streams()
+
+        # Load the operator-set enrichment config (overrides the constructor
+        # default); hot-reloaded thereafter via _on_config_change.
+        enrichment_config = await self._config_source.get_enrichment_config()
+        self._rebuild_enrichers(enrichment_config)
+        logger.info(
+            "Enrichment configured",
+            extra={
+                "enricher_class": enrichment_config.enricher_class,
+                "backend_class": enrichment_config.backend_class,
+            },
+        )
 
         # Load and start enabled adapters
         enabled_adapters = await self._config_source.list_enabled_adapters()

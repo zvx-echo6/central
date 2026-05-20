@@ -456,6 +456,7 @@ class TestEnrichmentIntegration:
         """A FIRMS event run through the supervisor's enrichment stage emerges
         with data._enriched.geocoder populated (all-null under NoOpBackend)."""
         from central.config_models import EnrichmentConfig
+        from central.enrichment.cache import EnrichmentCache
         from central.enrichment.geocoder import all_null_bundle
         from central.supervisor import apply_enrichment, build_enrichers
 
@@ -469,9 +470,8 @@ class TestEnrichmentIntegration:
         event = adapter._row_to_event(rows[0], "VIIRS_SNPP_NRT")
         assert "_enriched" not in event.data
 
-        enrichers = build_enrichers(
-            EnrichmentConfig(), cache_db_path=tmp_path / "enrichment_cache.db"
-        )
+        cache = EnrichmentCache(tmp_path / "enrichment_cache.db")
+        enrichers = build_enrichers(EnrichmentConfig(), cache)
         await apply_enrichment(event, adapter.enrichment_locations, enrichers)
 
         assert "_enriched" in event.data

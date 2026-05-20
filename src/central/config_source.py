@@ -8,7 +8,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
 
-from central.config_models import AdapterConfig
+from central.config_models import AdapterConfig, EnrichmentConfig
 from central.config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,10 @@ class ConfigSource(Protocol):
 
     async def get_adapter(self, name: str) -> AdapterConfig | None:
         """Get configuration for a specific adapter."""
+        ...
+
+    async def get_enrichment_config(self) -> EnrichmentConfig:
+        """Get the enrichment configuration."""
         ...
 
     async def watch_for_changes(
@@ -64,6 +68,10 @@ class DbConfigSource:
     async def get_adapter(self, name: str) -> AdapterConfig | None:
         """Get a specific adapter from database."""
         return await self._store.get_adapter(name)
+
+    async def get_enrichment_config(self) -> EnrichmentConfig:
+        """Get the enrichment configuration from database."""
+        return await self._store.get_enrichment_config()
 
     async def watch_for_changes(
         self,
