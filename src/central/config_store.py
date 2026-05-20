@@ -12,7 +12,7 @@ from typing import Any
 
 import asyncpg
 
-from central.config_models import AdapterConfig, StreamConfig
+from central.config_models import AdapterConfig, EnrichmentConfig, StreamConfig
 from central.crypto import decrypt, encrypt
 
 logger = logging.getLogger(__name__)
@@ -127,6 +127,48 @@ class ConfigStore:
                 WHERE name = $1
                 """,
                 name,
+            )
+
+    # -------------------------------------------------------------------------
+    # Enrichment configuration (single-row config.enrichment)
+    # -------------------------------------------------------------------------
+
+    async def get_enrichment_config(self) -> EnrichmentConfig:
+        """Read the single config.enrichment row.
+
+        Falls back to EnrichmentConfig() framework defaults if the row is
+        somehow absent (it is migration-seeded, so this is belt-and-suspenders).
+        """
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT enricher_class, backend_class, backend_settings, cache_ttl_s
+                FROM config.enrichment
+                WHERE id = true
+                """
+            )
+        if row is None:
+            return EnrichmentConfig()
+        return EnrichmentConfig(**dict(row))
+
+    async def upsert_enrichment_config(self, config: EnrichmentConfig) -> None:
+        """Write the single config.enrichment row (id = true)."""
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO config.enrichment
+                    (id, enricher_class, backend_class, backend_settings, cache_ttl_s)
+                VALUES (true, $1, $2, $3, $4)
+                ON CONFLICT (id) DO UPDATE SET
+                    enricher_class = EXCLUDED.enricher_class,
+                    backend_class = EXCLUDED.backend_class,
+                    backend_settings = EXCLUDED.backend_settings,
+                    cache_ttl_s = EXCLUDED.cache_ttl_s
+                """,
+                config.enricher_class,
+                config.backend_class,
+                config.backend_settings,  # JSON-encoded by the codec
+                config.cache_ttl_s,
             )
 
     # -------------------------------------------------------------------------

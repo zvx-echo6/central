@@ -21,7 +21,10 @@ from central.enrichment.geocoder import GEOCODER_FIELDS, all_null_bundle
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BASE_URL = "http://192.168.1.130:8440"
+# Generic default — operators point this at their Navi instance via the
+# /enrichment config page (backend_settings.base_url). No deployment-specific
+# host belongs in source.
+DEFAULT_BASE_URL = "http://localhost:8440"
 # Boise — warmup coordinate, amortizes Photon/DEM cold-connection cost at startup.
 _WARMUP_LAT = 43.6150
 _WARMUP_LON = -116.2023

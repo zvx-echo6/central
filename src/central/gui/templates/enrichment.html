@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}Central — Enrichment{% endblock %}
+
+{% block content %}
+<h1>Enrichment</h1>
+<p class="secondary">
+    Central-side event enrichment. Results are attached to each event under
+    <code>data._enriched.&lt;enricher&gt;</code>. Changes hot-reload into the
+    supervisor; switching backend invalidates the enrichment cache.
+</p>
+
+<form method="post" action="/enrichment">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <fieldset>
+        <legend>Configuration</legend>
+
+        {% for field in fields %}
+            {% if field.widget == "text" %}
+                <label for="{{ field.name }}">{{ field.label }}</label>
+                <input type="text" id="{{ field.name }}" name="{{ field.name }}"
+                       value="{{ form_data[field.name] if form_data and field.name in form_data else field.current_value or '' }}"
+                       {% if field.required %}required{% endif %}>
+                {% if field.description %}<small>{{ field.description }}</small>{% endif %}
+                {% if errors and errors[field.name] %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                {% endif %}
+
+            {% elif field.widget == "number" %}
+                <label for="{{ field.name }}">{{ field.label }}</label>
+                <input type="number" id="{{ field.name }}" name="{{ field.name }}"
+                       value="{{ form_data[field.name] if form_data and field.name in form_data else field.current_value or '' }}"
+                       {% if field.required %}required{% endif %}>
+                {% if field.description %}<small>{{ field.description }}</small>{% endif %}
+                {% if errors and errors[field.name] %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                {% endif %}
+
+            {% elif field.widget == "json" %}
+                <label for="{{ field.name }}">{{ field.label }}</label>
+                <textarea id="{{ field.name }}" name="{{ field.name }}" rows="6"
+                          placeholder="{}">{{ form_data[field.name] if form_data and field.name in form_data else (field.current_value | tojson if field.current_value else '{}') }}</textarea>
+                <small>JSON object{% if field.description %} — {{ field.description }}{% endif %}</small>
+                {% if errors and errors[field.name] %}
+                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                {% endif %}
+            {% endif %}
+        {% endfor %}
+    </fieldset>
+
+    <button type="submit">Save Changes</button>
+</form>
+{% endblock %}

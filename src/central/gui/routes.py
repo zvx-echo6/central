@@ -1990,6 +1990,142 @@ async def streams_update(
     return RedirectResponse(url="/streams", status_code=302)
 
 
+# =============================================================================
+# Enrichment config route
+# =============================================================================
+
+
+def _enrichment_fields(current: dict) -> list[FieldDescriptor]:
+    """Field descriptors for the single-row EnrichmentConfig form (generic
+    machinery — same describe_fields used by adapter pages)."""
+    from central.config_models import EnrichmentConfig
+
+    return describe_fields(EnrichmentConfig, current)
+
+
+async def _read_enrichment_row(conn) -> dict:
+    row = await conn.fetchrow(
+        """
+        SELECT enricher_class, backend_class, backend_settings, cache_ttl_s
+        FROM config.enrichment WHERE id = true
+        """
+    )
+    return dict(row) if row is not None else {}
+
+
+@router.get("/enrichment", response_class=HTMLResponse)
+async def enrichment_form(request: Request) -> HTMLResponse:
+    """Render the enrichment config form."""
+    templates = _get_templates()
+    pool = get_pool()
+    operator = request.state.operator
+
+    async with pool.acquire() as conn:
+        current = await _read_enrichment_row(conn)
+
+    response = templates.TemplateResponse(
+        request=request,
+        name="enrichment.html",
+        context={
+            "operator": operator,
+            "csrf_token": request.state.csrf_token,
+            "fields": _enrichment_fields(current),
+            "errors": None,
+            "form_data": None,
+        },
+    )
+    return response
+
+
+@router.post("/enrichment")
+async def enrichment_update(request: Request) -> Response:
+    """Validate + persist the enrichment config. Hot-reload picks it up via
+    the config.enrichment NOTIFY trigger."""
+    from central.config_models import EnrichmentConfig
+
+    templates = _get_templates()
+    pool = get_pool()
+    operator = request.state.operator
+
+    form = await request.form()
+    if not form.get("csrf_token") or form.get("csrf_token") != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
+
+    errors: dict[str, str] = {}
+    form_data: dict[str, Any] = {}
+    parsed: dict[str, Any] = {}
+
+    for field in _enrichment_fields({}):
+        raw = form.get(field.name, "")
+        form_data[field.name] = raw
+        if field.widget == "number":
+            try:
+                parsed[field.name] = int(raw) if raw else None
+            except ValueError:
+                errors[field.name] = f"{field.label} must be a number"
+        elif field.widget == "json":
+            if not raw or not raw.strip():
+                parsed[field.name] = {}
+            else:
+                try:
+                    loaded = json.loads(raw)
+                    if not isinstance(loaded, dict):
+                        errors[field.name] = f"{field.label} must be a JSON object"
+                    else:
+                        parsed[field.name] = loaded
+                except json.JSONDecodeError as e:
+                    errors[field.name] = f"{field.label} is not valid JSON: {e}"
+        else:  # text
+            parsed[field.name] = raw.strip() if raw else None
+
+    if not errors:
+        try:
+            validated = EnrichmentConfig(
+                **{k: v for k, v in parsed.items() if v is not None}
+            )
+        except ValidationError as e:
+            for err in e.errors():
+                loc = err["loc"][0] if err["loc"] else "unknown"
+                errors[str(loc)] = err["msg"]
+
+    if errors:
+        async with pool.acquire() as conn:
+            current = await _read_enrichment_row(conn)
+        response = templates.TemplateResponse(
+            request=request,
+            name="enrichment.html",
+            context={
+                "operator": operator,
+                "csrf_token": request.state.csrf_token,
+                "fields": _enrichment_fields(current),
+                "errors": errors,
+                "form_data": form_data,
+            },
+            status_code=200,
+        )
+        return response
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO config.enrichment
+                (id, enricher_class, backend_class, backend_settings, cache_ttl_s)
+            VALUES (true, $1, $2, $3, $4)
+            ON CONFLICT (id) DO UPDATE SET
+                enricher_class = EXCLUDED.enricher_class,
+                backend_class = EXCLUDED.backend_class,
+                backend_settings = EXCLUDED.backend_settings,
+                cache_ttl_s = EXCLUDED.cache_ttl_s
+            """,
+            validated.enricher_class,
+            validated.backend_class,
+            validated.backend_settings,  # encoded as jsonb by the pool codec
+            validated.cache_ttl_s,
+        )
+
+    return RedirectResponse(url="/enrichment", status_code=302)
+
+
 # Alias validation regex
 ALIAS_REGEX = re.compile(r'^[a-zA-Z0-9_]+$')
 

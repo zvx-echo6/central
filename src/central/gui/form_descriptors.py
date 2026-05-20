@@ -88,6 +88,11 @@ def _type_to_widget_and_options(field_name: str, field_type: type) -> tuple[str,
             f"Field '{field_name}' has unsupported list type: list[{inner_type.__name__ if inner_type else '?'}]"
         )
 
+    # dict -> json textarea (generic; e.g. EnrichmentConfig.backend_settings).
+    # The form renders the value as JSON; the POST handler parses it back.
+    if field_type is dict or origin is dict:
+        return "json", None
+
     # Check if it's a BaseModel subclass (nested model other than RegionConfig)
     if isinstance(field_type, type) and issubclass(field_type, BaseModel):
         raise NotImplementedError(

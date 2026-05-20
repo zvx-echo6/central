@@ -110,8 +110,13 @@ async def test_headers_passed_through_config():
     reason="set NAVI_INTEGRATION_TEST=1 to hit the live Navi endpoint",
 )
 async def test_live_navi_boise():
-    """Integration smoke against the real endpoint (default skipped)."""
-    b = NaviBackend(warmup=False)  # default base_url
+    """Integration smoke against the real endpoint (default skipped).
+
+    The endpoint host is supplied via NAVI_BASE_URL so no deployment-specific
+    address lives in source; defaults to localhost when unset.
+    """
+    base_url = os.environ.get("NAVI_BASE_URL", "http://localhost:8440")
+    b = NaviBackend(base_url=base_url, warmup=False)
     result = await b.reverse(43.6150, -116.2023)
     assert result["name"] == "Where you are"
     assert result["city"] == "Boise"
