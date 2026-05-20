@@ -24,7 +24,10 @@ from central.api_key_resolver import resolve_api_key_alias
 from central.config_models import EnrichmentConfig
 from central.enrichment.base import Enricher
 from central.enrichment.cache import EnrichmentCache
+from central.enrichment.backends.navi import NaviBackend
+from central.enrichment.backends.nominatim import NominatimBackend
 from central.enrichment.backends.no_op import NoOpBackend
+from central.enrichment.backends.photon import PhotonBackend
 from central.enrichment.geocoder import GeocoderEnricher
 from central.models import Event
 from central.stream_manager import StreamManager
@@ -33,9 +36,13 @@ CURSOR_DB_PATH = Path("/var/lib/central/cursors.db")
 ENRICHMENT_CACHE_DB_PATH = Path("/var/lib/central/enrichment_cache.db")
 
 # Enricher / backend class-name registries for EnrichmentConfig resolution.
-# PR J ships GeocoderEnricher + NoOpBackend only; PR K extends these.
 _ENRICHER_REGISTRY: dict[str, type] = {"GeocoderEnricher": GeocoderEnricher}
-_BACKEND_REGISTRY: dict[str, type] = {"NoOpBackend": NoOpBackend}
+_BACKEND_REGISTRY: dict[str, type] = {
+    "NoOpBackend": NoOpBackend,
+    "NaviBackend": NaviBackend,
+    "PhotonBackend": PhotonBackend,
+    "NominatimBackend": NominatimBackend,
+}
 
 
 def build_enrichers(

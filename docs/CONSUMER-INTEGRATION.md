@@ -296,6 +296,36 @@ ground-survey workflows.
   archive is at `https://firms.modaps.eosdis.nasa.gov/`.)
 - **Removal semantics:** none. FIRMS publishes detections; absence is the signal
   if a fire stops burning. Consumers should not expect explicit "removal" events.
+- **Enrichment (`data._enriched.geocoder`):** FIRMS is the enrichment pilot, so
+  each event carries a Central-derived geocoder bundle under
+  `data._enriched.geocoder`. It is *not* an upstream FIRMS field — Central
+  reverse-geocodes the hotspot's `latitude`/`longitude` and attaches the result.
+  The bundle always has these nine keys (any unresolved field is `null`, never
+  missing):
+
+  | key | meaning |
+  |---|---|
+  | `name` | place / feature name |
+  | `city` | city / town / village |
+  | `county` | county (or equivalent) |
+  | `state` | state / province |
+  | `country` | country |
+  | `postal_code` | postal / ZIP code |
+  | `timezone` | IANA tz (e.g. `America/Boise`) |
+  | `landclass` | land-management class (US PAD-US) |
+  | `elevation_m` | ground elevation, metres |
+
+  **Coverage by region (v0.5.0):** US hotspots get the full bundle (with
+  sparsity gaps in deep wilderness); non-US hotspots currently get only
+  `timezone` and `elevation_m` populated (both planet-scale), the rest `null`,
+  pending an upstream planet expansion. Treat `null` as "not resolved," not
+  "does not exist."
+
+  **Known wrinkle — `landclass` antimeridian false-positive:** a non-US hotspot
+  near 51–53°N can spuriously get a non-`null` `landclass` (it false-matches the
+  Aleutian "Rat Islands" US land-management polygon across the dateline). If you
+  consume `landclass`, treat a non-`null` value on a clearly non-US point as
+  suspect. Fix is tracked upstream.
 - **Live example (verbatim from CT104):**
 
 ```json
