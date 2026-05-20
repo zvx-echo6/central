@@ -21,9 +21,65 @@ from central.config_source import ConfigSource, DbConfigSource
 from central.config_store import ConfigStore
 from central.bootstrap_config import get_settings
 from central.api_key_resolver import resolve_api_key_alias
+from central.config_models import EnrichmentConfig
+from central.enrichment.base import Enricher
+from central.enrichment.cache import EnrichmentCache
+from central.enrichment.backends.no_op import NoOpBackend
+from central.enrichment.geocoder import GeocoderEnricher
+from central.models import Event
 from central.stream_manager import StreamManager
 from central.streams import STREAMS as STREAM_REGISTRY
 CURSOR_DB_PATH = Path("/var/lib/central/cursors.db")
+ENRICHMENT_CACHE_DB_PATH = Path("/var/lib/central/enrichment_cache.db")
+
+# Enricher / backend class-name registries for EnrichmentConfig resolution.
+# PR J ships GeocoderEnricher + NoOpBackend only; PR K extends these.
+_ENRICHER_REGISTRY: dict[str, type] = {"GeocoderEnricher": GeocoderEnricher}
+_BACKEND_REGISTRY: dict[str, type] = {"NoOpBackend": NoOpBackend}
+
+
+def build_enrichers(
+    enrichment_config: EnrichmentConfig,
+    cache_db_path: Path = ENRICHMENT_CACHE_DB_PATH,
+) -> list[Enricher]:
+    """Instantiate the configured enricher(s) with their backend + cache.
+
+    Read once at supervisor startup — enrichment config is NOT hot-reloaded
+    in PR J (see EnrichmentConfig docstring).
+    """
+    backend_cls = _BACKEND_REGISTRY[enrichment_config.backend_class]
+    backend = backend_cls(**enrichment_config.backend_settings)
+    cache = EnrichmentCache(cache_db_path, ttl_s=enrichment_config.cache_ttl_s)
+    enricher_cls = _ENRICHER_REGISTRY[enrichment_config.enricher_class]
+    return [enricher_cls(backend, cache=cache)]
+
+
+async def apply_enrichment(
+    event: Event,
+    enrichment_locations: list[tuple[str, str]],
+    enrichers: list[Enricher],
+) -> None:
+    """Attach enrichment results to event.data["_enriched"] in place.
+
+    No-op when the adapter declares no enrichment_locations or no enrichers
+    are registered. Uses the first (lat_path, lon_path) tuple that resolves to
+    a non-null coordinate pair in event.data. Each enricher's result is keyed
+    by enricher.name. Mutates the data dict in place (Event is frozen, but its
+    data dict is not — this avoids a model_copy on every published event).
+    """
+    if not enrichment_locations or not enrichers:
+        return
+    for lat_path, lon_path in enrichment_locations:
+        lat = event.data.get(lat_path)
+        lon = event.data.get(lon_path)
+        if lat is None or lon is None:
+            continue
+        location = {"lat": float(lat), "lon": float(lon)}
+        enriched: dict[str, Any] = {}
+        for enricher in enrichers:
+            enriched[enricher.name] = await enricher.enrich(location)
+        event.data["_enriched"] = enriched
+        return
 
 # Stream subject mappings -- derived from the registry; every stream is included
 # (META too: supervisor must create it in JetStream even though archive skips it).
@@ -96,11 +152,16 @@ class Supervisor:
         config_store: ConfigStore,
         nats_url: str,
         cloudevents_config: Any = None,
+        enrichment_config: EnrichmentConfig | None = None,
     ) -> None:
         self._config_source = config_source
         self._config_store = config_store
         self._nats_url = nats_url
         self._cloudevents_config = cloudevents_config
+        # Enrichment is read once at startup (no hot-reload in PR J).
+        self._enrichers: list[Enricher] = build_enrichers(
+            enrichment_config or EnrichmentConfig()
+        )
         self._adapters = discover_adapters()
         self._nc: nats.NATS | None = None
         self._js: JetStreamContext | None = None
@@ -216,6 +277,16 @@ class Supervisor:
                     if state.adapter.is_published(event.id):
                         state.adapter.bump_last_seen(event.id)
                         continue
+
+                    # Enrichment (no-op unless the adapter declares
+                    # enrichment_locations). Runs after dedup so we don't
+                    # enrich events we'd skip, and before wrap_event so the
+                    # _enriched block lands in the published payload.
+                    await apply_enrichment(
+                        event,
+                        state.adapter.enrichment_locations,
+                        self._enrichers,
+                    )
 
                     # Build CloudEvent (uses defaults if no config provided)
                     envelope, msg_id = wrap_event(event, self._cloudevents_config)
@@ -764,6 +835,9 @@ async def async_main() -> None:
         nats_url=settings.nats_url,
         # CloudEvents uses protocol-level defaults from cloudevents_constants
         cloudevents_config=None,
+        # Enrichment defaults: GeocoderEnricher + NoOpBackend (all-null). Read
+        # once here at startup; PR K wires real backends + DB-backed config.
+        enrichment_config=EnrichmentConfig(),
     )
     logger.info(
         "CloudEvents config: defaults",

@@ -70,6 +70,9 @@ class FIRMSAdapter(SourceAdapter):
     wizard_order = 2
     default_cadence_s = 300
 
+    # Enrichment pilot (PR J): FIRMS rows carry top-level latitude/longitude.
+    enrichment_locations = [("latitude", "longitude")]
+
     def __init__(
         self,
         config: AdapterConfig,
