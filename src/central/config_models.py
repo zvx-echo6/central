@@ -47,6 +47,28 @@ class AdapterConfig(BaseModel):
         return self.paused_at is not None
 
 
+class EnrichmentConfig(BaseModel):
+    """Configuration for the supervisor's enrichment stage.
+
+    Read once at supervisor startup (hot-reload is out of scope for PR J).
+    Defaults wire the GeocoderEnricher to the NoOpBackend (all-null bundle);
+    real backends arrive in PR K via backend_class + backend_settings.
+    """
+
+    enricher_class: str = Field(
+        default="GeocoderEnricher", description="Enricher class name to instantiate"
+    )
+    backend_class: str = Field(
+        default="NoOpBackend", description="Backend class name to instantiate"
+    )
+    backend_settings: dict[str, Any] = Field(
+        default_factory=dict, description="Keyword args passed to the backend constructor"
+    )
+    cache_ttl_s: int = Field(
+        default=86400, description="Enrichment cache TTL in seconds (default 24h)"
+    )
+
+
 class StreamConfig(BaseModel):
     """Configuration for a JetStream stream."""
     

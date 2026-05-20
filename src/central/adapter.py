@@ -40,7 +40,14 @@ class SourceAdapter(ABC):
     the wizard validates it against staged api_keys state."""
     wizard_order: int | None = None
     default_cadence_s: int
-    
+
+    enrichment_locations: list[tuple[str, str]] = []
+    """Coordinate field paths the supervisor enriches, as (lat_field, lon_field)
+    tuples into Event.data. Empty (the default) means publish as-is — no
+    enrichment. Each tuple names top-level keys in Event.data holding a
+    latitude and longitude; the supervisor extracts them, runs registered
+    enrichers, and attaches results under Event.data["_enriched"]."""
+
     @abstractmethod
     async def poll(self) -> AsyncIterator[Event]:
         """

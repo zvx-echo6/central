@@ -421,3 +421,58 @@ class TestApplyConfig:
         assert adapter._satellites == ["VIIRS_NOAA20_NRT"]
 
         await adapter.shutdown()
+
+
+class TestEnrichmentIntegration:
+    """FIRMS is the PR J enrichment pilot."""
+
+    def test_enrichment_locations_declared_and_resolvable(self, temp_db_path, mock_config_store):
+        """FIRMS declares enrichment_locations and the declared paths actually
+        resolve to coordinates in a real event's data — verified structurally,
+        not by hardcoding the literal tuple."""
+        locations = getattr(FIRMSAdapter, "enrichment_locations")
+        assert isinstance(locations, list) and len(locations) >= 1
+        for tup in locations:
+            assert isinstance(tup, tuple) and len(tup) == 2
+            assert all(isinstance(p, str) for p in tup)
+
+        config = make_adapter_config()
+        adapter = FIRMSAdapter(
+            config=config,
+            config_store=mock_config_store,
+            cursor_db_path=temp_db_path,
+        )
+        rows = adapter._parse_csv(SAMPLE_CSV, "VIIRS_SNPP_NRT")
+        event = adapter._row_to_event(rows[0], "VIIRS_SNPP_NRT")
+        # Every declared (lat_path, lon_path) must resolve to a float in data.
+        for lat_path, lon_path in locations:
+            assert isinstance(event.data.get(lat_path), float)
+            assert isinstance(event.data.get(lon_path), float)
+
+    @pytest.mark.asyncio
+    async def test_event_passes_through_supervisor_enrichment(
+        self, tmp_path, temp_db_path, mock_config_store
+    ):
+        """A FIRMS event run through the supervisor's enrichment stage emerges
+        with data._enriched.geocoder populated (all-null under NoOpBackend)."""
+        from central.config_models import EnrichmentConfig
+        from central.enrichment.geocoder import all_null_bundle
+        from central.supervisor import apply_enrichment, build_enrichers
+
+        config = make_adapter_config()
+        adapter = FIRMSAdapter(
+            config=config,
+            config_store=mock_config_store,
+            cursor_db_path=temp_db_path,
+        )
+        rows = adapter._parse_csv(SAMPLE_CSV, "VIIRS_SNPP_NRT")
+        event = adapter._row_to_event(rows[0], "VIIRS_SNPP_NRT")
+        assert "_enriched" not in event.data
+
+        enrichers = build_enrichers(
+            EnrichmentConfig(), cache_db_path=tmp_path / "enrichment_cache.db"
+        )
+        await apply_enrichment(event, adapter.enrichment_locations, enrichers)
+
+        assert "_enriched" in event.data
+        assert event.data["_enriched"]["geocoder"] == all_null_bundle()
