@@ -5,7 +5,7 @@ import base64
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import asyncpg
 import pytest
@@ -206,10 +206,7 @@ class TestRateLimitGuarantee:
         state.config = new_config
         state.adapter.cadence_s = 90
 
-        # Calculate expected next poll time
-        expected_next_poll = last_poll + timedelta(seconds=90)
         now = datetime.now(timezone.utc)
-        expected_wait = max(0, (expected_next_poll - now).total_seconds())
 
         # The wait time should be based on last_poll + new_cadence
         # Since last_poll was 30 seconds ago and new cadence is 90,
@@ -230,7 +227,6 @@ class TestRateLimitGuarantee:
         If operator increases cadence to 120s after a gap of 150s,
         the poll should happen now (not wait another 120s).
         """
-        from central.supervisor import AdapterState
 
         mock_adapter = MagicMock()
         mock_adapter.name = "test"
@@ -246,13 +242,6 @@ class TestRateLimitGuarantee:
             settings={},
             paused_at=None,
             updated_at=datetime.now(timezone.utc),
-        )
-
-        state = AdapterState(
-            name="test",
-            adapter=mock_adapter,
-            config=config,
-            last_completed_poll=last_poll,
         )
 
         # Calculate next poll time
@@ -274,7 +263,6 @@ class TestRateLimitGuarantee:
         poll should be at (last_completed_poll + cadence_s), not immediately
         (unless that time has already passed).
         """
-        from central.supervisor import AdapterState
 
         mock_adapter = MagicMock()
         mock_adapter.name = "test"
@@ -291,13 +279,6 @@ class TestRateLimitGuarantee:
             settings={},
             paused_at=None,
             updated_at=datetime.now(timezone.utc),
-        )
-
-        state = AdapterState(
-            name="test",
-            adapter=mock_adapter,
-            config=config,
-            last_completed_poll=last_poll,
         )
 
         # Calculate next poll time
