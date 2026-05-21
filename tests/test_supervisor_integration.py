@@ -139,12 +139,18 @@ class MockNWSAdapter:
 
 @pytest.fixture
 def mock_nats():
-    """Mock NATS connection."""
+    """Mock NATS connection.
+
+    nats-py's `nc.jetstream()` is synchronous, so model it with a sync
+    MagicMock. (As an AsyncMock attribute, `supervisor._js = nc.jetstream()`
+    would assign an unawaited coroutine — the "coroutine ... was never awaited"
+    warning — rather than the JetStream mock.)
+    """
     mock_nc = AsyncMock()
     mock_nc.publish = AsyncMock()
     mock_js = AsyncMock()
     mock_js.publish = AsyncMock()
-    mock_nc.jetstream.return_value = mock_js
+    mock_nc.jetstream = MagicMock(return_value=mock_js)
     return mock_nc
 
 
@@ -574,3 +580,27 @@ class TestEnableDisableEnableIntegration:
 
         # State should be gone
         assert "nws" not in supervisor._adapter_states
+
+
+def test_enrichment_cache_path_is_hermetic(mock_config_store, tmp_path: Path) -> None:
+    """No test may touch the production enrichment cache.
+
+    The autouse `isolate_enrichment_cache` fixture (conftest) must redirect
+    ENRICHMENT_CACHE_DB_PATH off /var/lib/central onto a per-test temp dir, and
+    constructing a Supervisor must open the cache there — not in production.
+    """
+    import central.supervisor as supervisor_mod
+
+    patched = supervisor_mod.ENRICHMENT_CACHE_DB_PATH
+    assert tmp_path in patched.parents
+    assert "/var/lib/central" not in str(patched)
+
+    supervisor = supervisor_mod.Supervisor(
+        config_source=MockConfigSource(),
+        config_store=mock_config_store,
+        nats_url="nats://localhost:4222",
+        cloudevents_config=None,
+    )
+    # __init__ opened the cache at the temp path, leaving the db file behind.
+    assert patched.exists()
+    assert supervisor._enrichment_cache is not None

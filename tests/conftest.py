@@ -13,6 +13,25 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from central.bootstrap_config import Settings
 
 
+@pytest.fixture(autouse=True)
+def isolate_enrichment_cache(tmp_path, monkeypatch):
+    """Redirect the supervisor's enrichment cache off the production path.
+
+    `central.supervisor.ENRICHMENT_CACHE_DB_PATH` defaults to
+    /var/lib/central/enrichment_cache.db. Constructing a Supervisor opens it,
+    so without this fixture the suite writes to (or, for any user without write
+    access to /var/lib/central, fails on) the live cache. Point it at a
+    per-test temp dir so no test ever touches the production path.
+    """
+    import central.supervisor as supervisor_mod
+
+    monkeypatch.setattr(
+        supervisor_mod,
+        "ENRICHMENT_CACHE_DB_PATH",
+        tmp_path / "enrichment_cache.db",
+    )
+
+
 @pytest.fixture(scope="session")
 def event_loop():
     """Create an event loop for the test session."""
