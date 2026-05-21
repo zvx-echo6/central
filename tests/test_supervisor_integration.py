@@ -20,6 +20,7 @@ import pytest
 import pytest_asyncio
 
 from central.config_models import AdapterConfig
+from central.bootstrap_config import get_settings
 from central.crypto import KEY_SIZE, clear_key_cache
 
 
@@ -56,11 +57,20 @@ def master_key_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def setup_master_key(master_key_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Configure master key path for all tests."""
-    clear_key_cache()
+def setup_master_key(master_key_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Configure master key path for all tests.
+
+    Clear get_settings (and the crypto key cache) AFTER setting the env so
+    crypto rebuilds from the test key regardless of suite order, and again on
+    teardown so the test key never leaks into a later test. See PR M-b.
+    """
     monkeypatch.setenv("CENTRAL_DB_DSN", TEST_DB_DSN)
     monkeypatch.setenv("CENTRAL_MASTER_KEY_PATH", str(master_key_path))
+    clear_key_cache()
+    get_settings.cache_clear()
+    yield
+    clear_key_cache()
+    get_settings.cache_clear()
 
 
 class MockConfigSource:

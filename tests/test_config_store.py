@@ -13,6 +13,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+from central.bootstrap_config import get_settings
 from central.config_store import ConfigStore
 from central.crypto import KEY_SIZE, clear_key_cache
 
@@ -34,12 +35,24 @@ def master_key_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def setup_master_key(master_key_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Configure master key path for all tests."""
-    clear_key_cache()
+def setup_master_key(master_key_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Configure master key path for all tests.
+
+    CENTRAL_MASTER_KEY_PATH feeds Settings, which get_settings() lru-caches. An
+    earlier test can warm that cache with the default /etc/central/master.key
+    before this fixture runs, so the env change alone is not enough — clear
+    get_settings (and the crypto key cache) AFTER setting the env so crypto
+    rebuilds from the test key regardless of suite order, and again on teardown
+    so the test key never leaks into a later test.
+    """
     monkeypatch.setenv("CENTRAL_DB_DSN", TEST_DB_DSN)
     monkeypatch.setenv("CENTRAL_MASTER_KEY_PATH", str(master_key_path))
     monkeypatch.setenv("CENTRAL_CSRF_SECRET", "test-csrf-secret-for-testing-only-32chars")
+    clear_key_cache()
+    get_settings.cache_clear()
+    yield
+    clear_key_cache()
+    get_settings.cache_clear()
 
 
 @pytest_asyncio.fixture
@@ -338,3 +351,13 @@ class TestListenerReconnect:
             pytest.fail("Listener did not stop after cancellation")
 
         assert listen_task.cancelled() or listen_task.done()
+
+
+def test_master_key_path_is_isolated(master_key_path: Path) -> None:
+    """Contract: after setup_master_key runs, get_settings() resolves the master
+    key to the per-session test key — never the production /etc/central path —
+    regardless of suite order. Fails on the pre-fix code in a full-suite run
+    where get_settings was warmed with the default path by an earlier test.
+    """
+    assert get_settings().master_key_path == master_key_path
+    assert get_settings().master_key_path != Path("/etc/central/master.key")
