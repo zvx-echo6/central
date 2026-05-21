@@ -76,9 +76,12 @@ async def apply_enrichment(
 
     No-op when the adapter declares no enrichment_locations or no enrichers
     are registered. Uses the first (lat_path, lon_path) tuple that resolves to
-    a non-null coordinate pair in event.data. Each enricher's result is keyed
-    by enricher.name. Mutates the data dict in place (Event is frozen, but its
-    data dict is not — this avoids a model_copy on every published event).
+    a non-null coordinate pair in event.data. If no declared pair resolves to
+    coordinates, still attaches an all-null bundle so that every event from an
+    enriched adapter carries _enriched (consumers get a stable field set).
+    Each enricher's result is keyed by enricher.name. Mutates the data dict in
+    place (Event is frozen, but its data dict is not — this avoids a
+    model_copy on every published event).
     """
     if not enrichment_locations or not enrichers:
         return
@@ -93,6 +96,15 @@ async def apply_enrichment(
             enriched[enricher.name] = await enricher.enrich(location)
         event.data["_enriched"] = enriched
         return
+    # No declared pair resolved to coordinates. Still attach _enriched: each
+    # enricher resolves the null location to its own all-null bundle (per the
+    # never-raise contract), so coordless events (e.g. removal tombstones)
+    # carry the same shape as enriched ones.
+    null_location = {"lat": None, "lon": None}
+    enriched = {}
+    for enricher in enrichers:
+        enriched[enricher.name] = await enricher.enrich(null_location)
+    event.data["_enriched"] = enriched
 
 # Stream subject mappings -- derived from the registry; every stream is included
 # (META too: supervisor must create it in JetStream even though archive skips it).
