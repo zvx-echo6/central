@@ -842,3 +842,246 @@ class TestMapAllAdapterGeometry:
         ).read_text()
         assert "// rebindEventLayers(); // DISABLED" not in src
         assert "isDegenerate" in src
+
+
+# --- PR L-c: readable Time / Location / Subject / Adapter columns ---------
+
+
+def _first_row_cells(html):
+    """Visible <td> text of the first event-row (before its detail row).
+
+    Splits on the detail row's class attribute (not the bare string
+    'event-detail', which also appears in the page's <style> block).
+    """
+    import re
+    body = html.split('class="event-detail"')[0]
+    return [
+        re.sub(r"<[^>]+>", "", c).strip()
+        for c in re.findall(r"<td[^>]*>(.*?)</td>", body, re.S)
+    ]
+
+
+class TestEventTimeFormat:
+    """(A) Server-side 'MM-DD-YYYY HH:MM UTC' formatting (24h, no seconds)."""
+
+    def test_format_basic_utc(self):
+        from central.gui.routes import _format_event_time
+        assert _format_event_time("2026-05-21T06:00:00+00:00") == "05-21-2026 06:00 UTC"
+
+    def test_format_converts_offset_to_utc(self):
+        from central.gui.routes import _format_event_time
+        # 19:30 at -06:00 is 01:30 UTC the next day.
+        assert _format_event_time("2026-05-20T19:30:00-06:00") == "05-21-2026 01:30 UTC"
+
+    def test_format_empty_and_none(self):
+        from central.gui.routes import _format_event_time
+        assert _format_event_time("") == ""
+        assert _format_event_time(None) == ""
+
+    def test_format_no_seconds_no_offset_suffix(self):
+        from central.gui.routes import _format_event_time
+        out = _format_event_time("2026-01-02T03:04:59+00:00")
+        assert out == "01-02-2026 03:04 UTC"
+        assert ":59" not in out and "+00" not in out
+
+
+class TestTableDisplayDecoration:
+    """(A)/(D) _decorate_table_events adds display fields; /events.json unaffected."""
+
+    def test_adapter_display_matches_registry(self):
+        from central.adapter_discovery import discover_adapters
+        from central.gui.routes import _decorate_table_events, _format_event_time
+        registry = discover_adapters()
+        events = [_event(name) for name in registry]
+        _decorate_table_events(events)
+        for ev in events:
+            cls = registry[ev["adapter"]]
+            assert ev["adapter_display"] == cls.display_name
+            assert ev["time_human"] == _format_event_time(ev["time"])
+
+    def test_unknown_adapter_display_falls_back_to_name(self):
+        from central.gui.routes import _decorate_table_events
+        events = [_event("not_a_real_adapter")]
+        _decorate_table_events(events)
+        assert events[0]["adapter_display"] == "not_a_real_adapter"
+
+    @pytest.mark.asyncio
+    async def test_events_json_has_no_table_only_fields(self):
+        # No /events.json schema change: display fields must not leak into JSON.
+        mock_request = MagicMock()
+        mock_request.state.operator = MagicMock(id=1, username="admin")
+        mock_request.query_params = {}
+
+        mock_conn = AsyncMock()
+        mock_conn.fetch.return_value = [{
+            "id": "e1",
+            "time": datetime(2026, 5, 21, 6, 0, tzinfo=timezone.utc),
+            "received": datetime(2026, 5, 21, 6, 0, tzinfo=timezone.utc),
+            "adapter": "nwis",
+            "category": "hydro",
+            "subject": None,
+            "geometry": None,
+            "data": {},
+            "regions": [],
+        }]
+        mock_pool = MagicMock()
+        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("central.gui.routes.get_pool", return_value=mock_pool):
+            resp = await events_json(mock_request)
+
+        ev = json.loads(resp.body)["events"][0]
+        assert "time_human" not in ev
+        assert "adapter_display" not in ev
+
+
+class TestLocationColumn:
+    """(B) Generic _enriched/top-level location reader — no adapter logic."""
+
+    def _location(self, inner):
+        return _first_row_cells(_render_rows([_event("usgs_quake", inner=inner)]))[2]
+
+    def test_city_state_country(self):
+        loc = self._location({"_enriched": {"geocoder": {
+            "city": "Trinidad", "state": "Colorado", "country": "United States"}}})
+        assert loc == "Trinidad, Colorado, United States"
+
+    def test_state_country_when_city_null(self):
+        loc = self._location({"_enriched": {"geocoder": {
+            "city": None, "state": "Missouri", "country": "United States"}}})
+        assert loc == "Missouri, United States"
+
+    def test_top_level_country_fallback(self):
+        # gdacs-style: no geocoder, country at top level.
+        assert self._location({"country": "Austria"}) == "Austria"
+
+    def test_top_level_state_only_fallback(self):
+        # wfigs-style: state code at top level, no country.
+        assert self._location({"state": "CO"}) == "CO"
+
+    def test_landclass_fallback(self):
+        loc = self._location({"_enriched": {"geocoder": {
+            "city": None, "state": None, "country": None,
+            "landclass": "Ridgecrest Field Office"}}})
+        assert loc == "Ridgecrest Field Office"
+
+    def test_coordinates_alone_are_not_a_location(self):
+        # Bare lat/lon is a position, not a place name -> "—".
+        assert self._location({"latitude": 35.3603324, "longitude": -117.7854995}) == "—"
+
+    def test_none_when_nothing_available(self):
+        assert self._location({}) == "—"
+
+
+class TestSubjectColumn:
+    """(C) Per-adapter one-line summaries, registry-derived dispatch + fallback."""
+
+    def test_every_adapter_has_a_summary_partial(self):
+        from central.adapter_discovery import discover_adapters
+        from central.gui import templates as gui_templates
+        for name in discover_adapters():
+            gui_templates.env.get_template("_event_summaries/%s.html" % name)
+
+    def test_default_summary_partial_exists(self):
+        from central.gui import templates as gui_templates
+        gui_templates.env.get_template("_event_summaries/_default.html")
+
+    def test_every_adapter_summary_renders_without_error(self):
+        from central.adapter_discovery import discover_adapters
+        for name in discover_adapters():
+            _render_rows([_event(name)])  # must not raise
+
+    def test_usgs_quake_summary_is_plain_language(self):
+        cells = _first_row_cells(_render_rows([_event(
+            "usgs_quake", inner={"magnitude": 1.347, "magType": "ml",
+                                 "place": "14 km W of Johannesburg, CA"})]))
+        assert cells[3] == "Magnitude 1.3 — 14 km W of Johannesburg, CA"
+        assert "ml" not in cells[3]  # scale code dropped
+
+    def test_nwis_summary_drops_parameter_code(self):
+        cells = _first_row_cells(_render_rows([_event(
+            "nwis", inner={"parameter_code": "00060", "value": 111.0,
+                           "unit_of_measure": "ft^3/s"})]))
+        assert cells[3] == "Water reading: 111.0 ft^3/s"
+        assert "00060" not in cells[3]  # opaque pcode dropped
+
+    def test_unknown_adapter_summary_is_dash(self):
+        cells = _first_row_cells(_render_rows([_event("not_a_real_adapter", inner={"x": 1})]))
+        assert cells[3] == "—"
+
+    def test_summary_populates_data_subject_for_popup(self):
+        html = _render_rows([_event("usgs_quake", inner={"magnitude": 1.347,
+                                                          "place": "near Town"})])
+        assert 'data-subject="Magnitude 1.3 — near Town"' in html
+
+
+class TestTableRendersThroughHTTP:
+    """End-to-end HTTP render: Time and Adapter cells must be populated in the
+    real response, guarding the route->template binding (not the helper alone)."""
+
+    def _mock_pool(self):
+        now = datetime(2026, 5, 21, 6, 0, tzinfo=timezone.utc)
+
+        def _fetchrow(query, *args):
+            q = " ".join(str(query).split())
+            if "config.sessions" in q:
+                return {"id": 1, "username": "admin", "created_at": now,
+                        "password_changed_at": now, "csrf_token": "csrf"}
+            if "map_tile_url" in q:
+                return {"map_tile_url": "https://t/{z}/{x}/{y}.png",
+                        "map_attribution": "OSM"}
+            return None
+
+        rows = [
+            {"id": "evt-q", "time": now, "received": now, "adapter": "usgs_quake",
+             "category": "quake", "subject": None, "geometry": None,
+             "data": {"data": {"data": {"magnitude": 1.3, "place": "near Town"}}},
+             "regions": []},
+            {"id": "evt-w", "time": now, "received": now, "adapter": "nwis",
+             "category": "hydro", "subject": None, "geometry": None,
+             "data": {"data": {"data": {"value": 5.0, "unit_of_measure": "ft"}}},
+             "regions": []},
+        ]
+        mock_conn = MagicMock()
+        mock_conn.fetchrow = AsyncMock(side_effect=_fetchrow)
+        mock_conn.fetch = AsyncMock(return_value=rows)
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock()
+        mock_pool = MagicMock()
+        mock_pool.acquire = MagicMock(return_value=mock_conn)
+        return mock_pool
+
+    def _client(self):
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from central.gui.middleware import SessionMiddleware
+        from central.gui.routes import router
+        app = FastAPI()
+        app.include_router(router)
+        app.add_middleware(SessionMiddleware)
+        return TestClient(app, cookies={"central_session": "valid"})
+
+    def _expected_adapter_display(self):
+        from central.adapter_discovery import discover_adapters
+        return discover_adapters()["usgs_quake"].display_name
+
+    def test_events_page_time_and_adapter_cells_populated(self):
+        mock_pool = self._mock_pool()
+        with patch("central.gui.middleware.get_pool", return_value=mock_pool), \
+             patch("central.gui.routes.get_pool", return_value=mock_pool):
+            resp = self._client().get("/events")
+        assert resp.status_code == 200
+        cells = _first_row_cells(resp.text)
+        assert cells[1].endswith("UTC") and "2026" in cells[1]   # Time non-empty
+        assert cells[4] == self._expected_adapter_display()       # Adapter display_name
+
+    def test_events_rows_fragment_time_and_adapter_cells_populated(self):
+        mock_pool = self._mock_pool()
+        with patch("central.gui.middleware.get_pool", return_value=mock_pool), \
+             patch("central.gui.routes.get_pool", return_value=mock_pool):
+            resp = self._client().get("/events/rows")
+        assert resp.status_code == 200
+        cells = _first_row_cells(resp.text)
+        assert cells[1].endswith("UTC") and "2026" in cells[1]   # Time non-empty
+        assert cells[4] == self._expected_adapter_display()       # Adapter display_name

@@ -465,8 +465,67 @@
     // Fit to results button
     document.getElementById("fit-to-results").addEventListener("click", fitToAllLayers);
 
+    // Client-side sort of the displayed rows; state persists across HTMX swaps.
+    var sortState = { col: null, dir: 1 };  // dir: 1 asc, -1 desc
+
+    function sortKey(row, col) {
+        // Time sorts on the ISO timestamp for true chronological order.
+        if (col === 1) return row.dataset.time || "";
+        var cell = row.children[col];
+        return cell ? cell.textContent.trim().toLowerCase() : "";
+    }
+
+    function applySort() {
+        if (sortState.col === null) return;
+        var tbody = document.querySelector("#events-rows table.events-table tbody");
+        if (!tbody) return;
+        var pairs = [];
+        tbody.querySelectorAll("tr.event-row").forEach(function(r) {
+            pairs.push([r, r.nextElementSibling]);  // main row + its detail row
+        });
+        // Array.prototype.sort is stable (ES2019+), so equal keys keep order.
+        pairs.sort(function(a, b) {
+            var ka = sortKey(a[0], sortState.col), kb = sortKey(b[0], sortState.col);
+            if (ka < kb) return -sortState.dir;
+            if (ka > kb) return sortState.dir;
+            return 0;
+        });
+        pairs.forEach(function(p) {
+            tbody.appendChild(p[0]);
+            if (p[1]) tbody.appendChild(p[1]);
+        });
+    }
+
+    function updateSortIndicators(ths) {
+        ths.forEach(function(th, idx) {
+            th.querySelectorAll(".sort-ind").forEach(function(s) { s.remove(); });
+            if (idx === sortState.col) {
+                var s = document.createElement("span");
+                s.className = "sort-ind";
+                s.textContent = sortState.dir === 1 ? " ▲" : " ▼";
+                th.appendChild(s);
+            }
+        });
+    }
+
+    function bindSortHandlers() {
+        var ths = document.querySelectorAll("#events-rows table.events-table thead th");
+        ths.forEach(function(th, idx) {
+            if (idx === 0) return;  // expand column is not sortable
+            th.style.cursor = "pointer";
+            th.onclick = function() {
+                if (sortState.col === idx) { sortState.dir *= -1; }
+                else { sortState.col = idx; sortState.dir = 1; }
+                updateSortIndicators(ths);
+                applySort();
+            };
+        });
+        updateSortIndicators(ths);
+    }
+
     // Initial load - bind layers and fit bounds
     rebindEventLayers(); // Initial load only
+    bindSortHandlers();
     if (false) { // DISABLED: map never auto-fits
         fitToAllLayers();
         isInitialLoad = false;
@@ -477,6 +536,9 @@
     document.body.addEventListener("htmx:afterSwap", function(evt) {
         if (evt.detail.target.id === "events-rows") {
             rebindEventLayers();
+            // Re-bind sort handlers to the new rows and re-apply the active sort.
+            bindSortHandlers();
+            applySort();
             // Do NOT call fitToAllLayers - preserve user viewport
         }
     });

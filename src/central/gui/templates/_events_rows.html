@@ -10,30 +10,40 @@
         <tr>
             <th style="width: 2rem;"></th>
             <th>Time</th>
-            <th>Adapter</th>
-            <th>Category</th>
-            <th>Geometry</th>
+            <th>Location</th>
             <th>Subject</th>
+            <th>Adapter</th>
         </tr>
     </thead>
     <tbody>
         {% for event in events %}
+        {# Per-adapter one-line summary, dispatched by adapter name with a generic
+           fallback (no hardcoded list). Captured once so it serves both the
+           Subject cell and the map popup (via data-subject). #}
+        {% set subject_summary %}{% include ["_event_summaries/" ~ event.adapter ~ ".html", "_event_summaries/_default.html"] %}{% endset %}
+        {# Location: generic _enriched.geocoder reader, then top-level named
+           fields, then coordinates. No adapter-specific logic. #}
+        {% set d = (event.data.get('data') or {}).get('data') or {} %}
+        {% set gc = (d.get('_enriched') or {}).get('geocoder') or {} %}
+        {% set loc_local = gc.get('city') or d.get('city') or gc.get('county') or d.get('county') %}
+        {% set loc_state = gc.get('state') or d.get('state') %}
+        {% set loc_country = gc.get('country') or d.get('country') %}
+        {% set loc_parts = [loc_local, loc_state, loc_country] | select | list %}
         <tr class="event-row" data-row-idx="{{ loop.index0 }}"
             data-event-id="{{ event.id }}"
             data-adapter="{{ event.adapter }}"
             data-category="{{ event.category }}"
             data-time="{{ event.time }}"
-            data-subject="{{ event.subject or '' }}"
+            data-subject="{{ subject_summary | trim }}"
             {% if event.geometry %}data-geometry='{{ event.geometry | tojson }}'{% endif %}>
             <td><button type="button" class="expand-row" aria-label="Expand">&#9656;</button></td>
-            <td>{{ event.time }}</td>
-            <td>{{ event.adapter }}</td>
-            <td>{{ event.category }}</td>
-            <td>{{ event.geometry_summary }}</td>
-            <td>{{ event.subject or '—' }}</td>
+            <td title="{{ event.time }}">{{ event.time_human }}</td>
+            <td>{% if loc_parts %}{{ loc_parts | join(', ') }}{% elif gc.get('landclass') %}{{ gc.landclass }}{% else %}—{% endif %}</td>
+            <td>{{ subject_summary | trim or '—' }}</td>
+            <td>{{ event.adapter_display }}</td>
         </tr>
         <tr class="event-detail" hidden>
-            <td colspan="6">
+            <td colspan="5">
                 <dl class="event-detail-list">
                     <dt>Event ID</dt>
                     <dd><code>{{ event.id }}</code></dd>

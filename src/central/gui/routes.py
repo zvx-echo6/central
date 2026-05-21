@@ -4,7 +4,7 @@ import base64
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger("central.gui.routes")
@@ -2870,6 +2870,31 @@ def _geometry_summary(geometry: dict | None) -> str:
         return geom_type
 
 
+def _format_event_time(iso: str | None) -> str:
+    """Format an ISO-8601 timestamp as 'MM-DD-YYYY HH:MM UTC' (24h, no seconds)."""
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso).astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        return iso
+    return dt.strftime("%m-%d-%Y %H:%M") + " UTC"
+
+
+def _decorate_table_events(events: list[dict]) -> None:
+    """Add display-only fields used by the HTML events table (in place).
+
+    These are for the table chrome only and are deliberately NOT added in
+    _fetch_events, so the /events.json payload is unchanged. adapter_display
+    is sourced from the registry (display_name), with the bare name as fallback.
+    """
+    display = {cls.name: cls.display_name for cls in discover_adapters().values()}
+    for event in events:
+        event["geometry_summary"] = _geometry_summary(event.get("geometry"))
+        event["time_human"] = _format_event_time(event.get("time"))
+        event["adapter_display"] = display.get(event.get("adapter"), event.get("adapter"))
+
+
 
 @router.get("/events.json")
 async def events_json(request: Request):
@@ -2958,9 +2983,8 @@ async def events_list(request: Request) -> HTMLResponse:
             events = result.events
             next_cursor = result.next_cursor
 
-    # Add geometry summary to each event
-    for event in events:
-        event["geometry_summary"] = _geometry_summary(event.get("geometry"))
+    # Add table-only display fields (time_human, adapter_display, geometry_summary)
+    _decorate_table_events(events)
 
     # Registry-derived adapter list for the filter <select> and map legend.
     # Sorted by name for stable ordering; index drives the legend color palette.
@@ -3022,9 +3046,8 @@ async def events_rows(request: Request) -> HTMLResponse:
             events = result.events
             next_cursor = result.next_cursor
 
-    # Add geometry summary to each event
-    for event in events:
-        event["geometry_summary"] = _geometry_summary(event.get("geometry"))
+    # Add table-only display fields (time_human, adapter_display, geometry_summary)
+    _decorate_table_events(events)
 
     return templates.TemplateResponse(
         request=request,

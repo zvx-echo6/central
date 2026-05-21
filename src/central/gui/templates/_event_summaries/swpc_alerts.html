@@ -1,0 +1,2 @@
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{%- if d.get('product_id') or d.get('message') %}Space weather alert{% if d.get('product_id') %} {{ d.product_id }}{% endif %}{% if d.get('message') %}: {{ d.message | replace('\r', ' ') | replace('\n', ' ') | truncate(80) }}{% endif %}{% endif -%}
