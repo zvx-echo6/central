@@ -40,6 +40,9 @@ class SWPCProtonsAdapter(SourceAdapter):
     wizard_order = None
     default_cadence_s = 600
 
+    # Space weather — no geographic coordinate to enrich.
+    enrichment_locations = []
+
     def __init__(
         self,
         config: AdapterConfig,

@@ -212,6 +212,9 @@ class NWSAdapter(SourceAdapter):
     wizard_order = 1
     default_cadence_s = 60
 
+    # Alerts cover forecast zones/counties (polygons), not a single point.
+    enrichment_locations = []
+
     def __init__(
         self,
         config: AdapterConfig,

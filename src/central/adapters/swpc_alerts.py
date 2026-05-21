@@ -41,6 +41,9 @@ class SWPCAlertsAdapter(SourceAdapter):
     wizard_order = None
     default_cadence_s = 300
 
+    # Space weather — no geographic coordinate to enrich.
+    enrichment_locations = []
+
     def __init__(
         self,
         config: AdapterConfig,

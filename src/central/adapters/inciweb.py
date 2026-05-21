@@ -171,6 +171,9 @@ class InciWebAdapter(SourceAdapter):
     wizard_order = None  # Ships disabled
     default_cadence_s = 600
 
+    # Coords parsed from the narrative, mirrored from Geo.centroid into event.data.
+    enrichment_locations = [("latitude", "longitude")]
+
     def __init__(
         self,
         config: AdapterConfig,
@@ -461,6 +464,9 @@ class InciWebAdapter(SourceAdapter):
                     "url": item.get("link", ""),
                     "guid": guid,
                     "raw": item,
+                    # Mirror centroid (lon, lat) for the flat enrichment path.
+                    "latitude": centroid[1] if centroid else None,
+                    "longitude": centroid[0] if centroid else None,
                 },
             )
 
