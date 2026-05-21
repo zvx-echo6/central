@@ -684,3 +684,161 @@ class TestEventRowDataAttributes:
         assert context["events"][0]["adapter"] == "usgs_quake"
         assert context["events"][0]["category"] == "quake.event"
         assert context["events"][0]["subject"] == "M4.2 Earthquake"
+
+
+# --- PR L-b: operator /events tab polish ---------------------------------
+
+
+def _events_context(events):
+    """Minimal context for rendering _events_rows.html as a standalone fragment."""
+    return {
+        "events": events,
+        "next_cursor": None,
+        "filter_error": None,
+        "filter_values": {
+            "adapter": "", "category": "", "since": "", "until": "",
+            "region_north": "", "region_south": "", "region_east": "",
+            "region_west": "", "limit": "50",
+        },
+    }
+
+
+def _event(adapter, inner=None, geometry=None):
+    """Build an event dict matching _fetch_events output shape.
+
+    `inner` populates payload->data->data (the adapter-specific payload) at
+    event["data"]["data"]["data"], which the per-adapter partials read.
+    """
+    return {
+        "id": "evt-" + adapter,
+        "time": "2026-05-17T12:00:00+00:00",
+        "received": "2026-05-17T12:00:00+00:00",
+        "adapter": adapter,
+        "category": adapter + ".test",
+        "subject": "subject",
+        "geometry": geometry,
+        "geometry_summary": "",
+        "data": {"data": {"data": inner or {}}},
+        "regions": [],
+    }
+
+
+def _render_rows(events):
+    """Render _events_rows.html through the real Jinja environment."""
+    from central.gui import templates as gui_templates
+    return gui_templates.env.get_template("_events_rows.html").render(
+        **_events_context(events)
+    )
+
+
+class TestRegistryDrivenAdapterFilter:
+    """(A) Adapter filter <select> is driven by discover_adapters(), no hardcoded list."""
+
+    @pytest.mark.asyncio
+    async def test_filter_options_cover_every_discovered_adapter(self):
+        from central.adapter_discovery import discover_adapters
+        registry = discover_adapters()
+
+        mock_request = MagicMock()
+        mock_request.state.operator = MagicMock(id=1, username="admin")
+        mock_request.state.csrf_token = "test_csrf"
+        mock_request.query_params = {}
+
+        mock_conn = AsyncMock()
+        mock_conn.fetch.return_value = []
+        mock_conn.fetchrow.return_value = {
+            "map_tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+            "map_attribution": "OpenStreetMap",
+        }
+        mock_pool = MagicMock()
+        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        mock_templates = MagicMock()
+        mock_templates.TemplateResponse.return_value = MagicMock(status_code=200)
+
+        with patch("central.gui.routes._get_templates", return_value=mock_templates):
+            with patch("central.gui.routes.get_pool", return_value=mock_pool):
+                await events_list(mock_request)
+
+        context = mock_templates.TemplateResponse.call_args.kwargs.get("context")
+
+        # The list is exactly the registry, sorted by name (stable), no extras.
+        assert [a["name"] for a in context["adapters"]] == sorted(registry.keys())
+        # Each entry carries name + display_name straight from the adapter class.
+        for cls in registry.values():
+            assert {"name": cls.name, "display_name": cls.display_name} in context["adapters"]
+
+
+class TestPerAdapterRowPartials:
+    """(C) Per-adapter row partials with registry-derived dispatch + _default fallback."""
+
+    def test_every_discovered_adapter_has_a_partial(self):
+        from central.adapter_discovery import discover_adapters
+        from central.gui import templates as gui_templates
+        # get_template raises TemplateNotFound if a per-adapter file is missing.
+        for name in discover_adapters():
+            gui_templates.env.get_template("_event_rows/%s.html" % name)
+
+    def test_default_fallback_partial_exists(self):
+        from central.gui import templates as gui_templates
+        gui_templates.env.get_template("_event_rows/_default.html")
+
+    def test_every_discovered_adapter_renders_without_error(self):
+        from central.adapter_discovery import discover_adapters
+        for name in discover_adapters():
+            html = _render_rows([_event(name)])
+            assert 'data-adapter="%s"' % name in html
+
+    def test_unknown_adapter_falls_back_to_default(self):
+        # No bespoke partial -> dispatch resolves to _default.html (no crash),
+        # and the raw payload block is still rendered.
+        html = _render_rows([_event("not_a_real_adapter", inner={"foo": "bar"})])
+        assert 'data-adapter="not_a_real_adapter"' in html
+        assert "event-data-pre" in html
+
+    def test_usgs_quake_partial_surfaces_curated_fields(self):
+        html = _render_rows([_event(
+            "usgs_quake",
+            inner={"magnitude": 4.2, "magType": "mb", "place": "10km N of Town", "depth": 5.0},
+        )])
+        assert "Magnitude" in html
+        assert "4.2" in html
+        assert "10km N of Town" in html
+
+    def test_nws_partial_surfaces_curated_fields(self):
+        html = _render_rows([_event(
+            "nws",
+            inner={"event": "Tornado Warning", "headline": "TORNADO", "severity": "Extreme"},
+        )])
+        assert "Tornado Warning" in html
+        assert "Extreme" in html
+
+
+class TestMapAllAdapterGeometry:
+    """(B) Every non-null geometry reaches the map; rebind-on-swap is enabled."""
+
+    def test_polygon_geometry_emitted_as_data_geometry(self):
+        poly = {
+            "type": "Polygon",
+            "coordinates": [[[-104.18, 37.14], [-103.66, 37.14],
+                             [-103.66, 37.43], [-104.18, 37.43], [-104.18, 37.14]]],
+        }
+        html = _render_rows([_event("nws", inner={"event": "x"}, geometry=poly)])
+        assert "data-geometry=" in html
+        assert "Polygon" in html
+
+    def test_event_without_geometry_omits_data_geometry(self):
+        html = _render_rows([_event("swpc_protons", inner={"flux": 1.0})])
+        assert "data-geometry=" not in html
+
+    def test_map_rebinds_on_swap_and_handles_degenerate_geometry(self):
+        # Regression guard for the NWIS-only map: rebind must fire on HTMX swap
+        # and the degenerate-geometry fallback must exist.
+        import pathlib
+        from central.gui import templates as gui_templates
+        src = pathlib.Path(
+            gui_templates.env.loader.searchpath[0], "events_list.html"
+        ).read_text()
+        assert "// rebindEventLayers(); // DISABLED" not in src
+        assert "isDegenerate" in src

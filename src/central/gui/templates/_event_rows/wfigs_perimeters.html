@@ -1,0 +1,6 @@
+{# NIFC WFIGS wildfire perimeters. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('state') is not none %}<dt>State</dt><dd>{{ d.state }}</dd>{% endif %}
+{% if d.get('county') is not none %}<dt>County</dt><dd>{{ d.county }}</dd>{% endif %}
+{% if d.get('reason') is not none %}<dt>Reason</dt><dd>{{ d.reason }}</dd>{% endif %}
+{% if d.get('irwin_id') is not none %}<dt>IRWIN ID</dt><dd><code>{{ d.irwin_id }}</code></dd>{% endif %}

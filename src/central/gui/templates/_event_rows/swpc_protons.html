@@ -1,0 +1,6 @@
+{# NOAA SWPC GOES proton flux. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('flux') is not none %}<dt>Flux</dt><dd>{{ d.flux }}</dd>{% endif %}
+{% if d.get('energy') is not none %}<dt>Energy</dt><dd>{{ d.energy }}</dd>{% endif %}
+{% if d.get('satellite') is not none %}<dt>Satellite</dt><dd>{{ d.satellite }}</dd>{% endif %}
+{% if d.get('time_tag') is not none %}<dt>Time tag</dt><dd>{{ d.time_tag }}</dd>{% endif %}

@@ -1,0 +1,5 @@
+{# NIFC InciWeb wildfire narrative. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('title') is not none %}<dt>Title</dt><dd>{{ d.title }}</dd>{% endif %}
+{% if d.get('description') is not none %}<dt>Description</dt><dd>{{ d.description | truncate(200) }}</dd>{% endif %}
+{% if d.get('url') is not none %}<dt>Source</dt><dd><a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.url }}</a></dd>{% endif %}

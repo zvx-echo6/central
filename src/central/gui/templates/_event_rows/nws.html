@@ -1,0 +1,6 @@
+{# NWS weather alerts. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('event') is not none %}<dt>Event</dt><dd>{{ d.event }}</dd>{% endif %}
+{% if d.get('severity') is not none %}<dt>Severity</dt><dd>{{ d.severity }}{% if d.get('certainty') is not none %} / {{ d.certainty }}{% endif %}</dd>{% endif %}
+{% if d.get('headline') is not none %}<dt>Headline</dt><dd>{{ d.headline }}</dd>{% endif %}
+{% if d.get('areaDesc') is not none %}<dt>Area</dt><dd>{{ d.areaDesc | truncate(200) }}</dd>{% endif %}

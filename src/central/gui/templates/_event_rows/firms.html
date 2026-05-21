@@ -1,0 +1,6 @@
+{# NASA FIRMS fire hotspots. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('confidence') is not none %}<dt>Confidence</dt><dd>{{ d.confidence }}</dd>{% endif %}
+{% if d.get('frp') is not none %}<dt>FRP (MW)</dt><dd>{{ d.frp }}</dd>{% endif %}
+{% if d.get('bright_ti4') is not none %}<dt>Brightness (TI4)</dt><dd>{{ d.bright_ti4 }}</dd>{% endif %}
+{% if d.get('satellite') is not none %}<dt>Satellite</dt><dd>{{ d.satellite }}{% if d.get('daynight') is not none %} ({{ d.daynight }}){% endif %}</dd>{% endif %}

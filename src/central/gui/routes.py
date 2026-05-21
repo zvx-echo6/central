@@ -2962,6 +2962,13 @@ async def events_list(request: Request) -> HTMLResponse:
     for event in events:
         event["geometry_summary"] = _geometry_summary(event.get("geometry"))
 
+    # Registry-derived adapter list for the filter <select> and map legend.
+    # Sorted by name for stable ordering; index drives the legend color palette.
+    adapters = [
+        {"name": cls.name, "display_name": cls.display_name}
+        for cls in sorted(discover_adapters().values(), key=lambda c: c.name)
+    ]
+
     return templates.TemplateResponse(
         request=request,
         name="events_list.html",
@@ -2974,6 +2981,7 @@ async def events_list(request: Request) -> HTMLResponse:
             "filter_error": error,
             "tile_url": tile_url,
             "tile_attribution": tile_attribution,
+            "adapters": adapters,
         },
     )
 

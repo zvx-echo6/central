@@ -1,0 +1,6 @@
+{# USGS earthquakes. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('magnitude') is not none %}<dt>Magnitude</dt><dd>{{ d.magnitude }}{% if d.get('magType') is not none %} {{ d.magType }}{% endif %}</dd>{% endif %}
+{% if d.get('place') is not none %}<dt>Place</dt><dd>{{ d.place }}</dd>{% endif %}
+{% if d.get('depth') is not none %}<dt>Depth (km)</dt><dd>{{ d.depth }}</dd>{% endif %}
+{% if d.get('url') is not none %}<dt>Source</dt><dd><a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.url }}</a></dd>{% endif %}
