@@ -1,0 +1,2 @@
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{%- if d.get('value') is not none %}Water reading: {{ d.value }}{% if d.get('unit_of_measure') %} {{ d.unit_of_measure }}{% endif %}{% endif -%}

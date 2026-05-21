@@ -1,0 +1,2 @@
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{%- if d.get('county') or d.get('state') %}Wildfire incident — {% if d.get('county') %}{{ d.county }}{% if d.get('state') %}, {% endif %}{% endif %}{% if d.get('state') %}{{ d.state }}{% endif %}{% endif -%}

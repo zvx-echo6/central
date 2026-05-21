@@ -1,0 +1,2 @@
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{%- if d.get('frp') is not none or d.get('confidence') %}Fire detected{% if d.get('frp') is not none %} — {{ d.frp }} MW radiative power{% endif %}{% if d.get('confidence') == 'high' %} (high confidence){% endif %}{% endif -%}

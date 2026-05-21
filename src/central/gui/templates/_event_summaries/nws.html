@@ -1,0 +1,2 @@
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{%- if d.get('event') %}{{ d.event }}{% endif %}{% if d.get('severity') %} — {{ d.severity }}{% endif -%}

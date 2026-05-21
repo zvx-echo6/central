@@ -1,0 +1,2 @@
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{%- if d.get('magnitude') is not none %}Magnitude {{ d.magnitude | round(1) }}{% if d.get('place') %} — {{ d.place }}{% endif %}{% endif -%}

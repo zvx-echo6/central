@@ -1,0 +1,2 @@
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{%- if d.get('flux') is not none %}Solar proton flux: {{ d.flux | round(2) }} pfu{% if d.get('energy') %} at {{ d.energy }}{% endif %}{% endif -%}
