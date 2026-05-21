@@ -148,6 +148,9 @@ class EONETAdapter(SourceAdapter):
     wizard_order = None
     default_cadence_s = 1800
 
+    # Event lat/lon mirrored from Geo.centroid into event.data (see poll()).
+    enrichment_locations = [("latitude", "longitude")]
+
     def __init__(
         self,
         config: AdapterConfig,
@@ -369,6 +372,12 @@ class EONETAdapter(SourceAdapter):
                 "magnitudeUnit": magnitude_unit,
                 "latest_geometry_date": latest_date_iso or None,
             }
+
+            # Mirror centroid (lon, lat) into top-level data keys for the flat
+            # enrichment path (see enrichment_locations).
+            if centroid is not None:
+                data["latitude"] = centroid[1]
+                data["longitude"] = centroid[0]
 
             dedup_key = _dedup_key(event_id, latest_date_iso)
 

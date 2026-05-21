@@ -124,6 +124,9 @@ class NWISAdapter(SourceAdapter):
     wizard_order = None
     default_cadence_s = 900
 
+    # Site lat/lon mirrored from Geo.centroid into event.data (see _build_event).
+    enrichment_locations = [("latitude", "longitude")]
+
     def __init__(
         self,
         config: AdapterConfig,
@@ -371,6 +374,12 @@ class NWISAdapter(SourceAdapter):
             "time_series_id": props.get("time_series_id"),
             "last_modified": props.get("last_modified"),
         }
+
+        # Mirror centroid (lon, lat) into top-level data keys so the flat
+        # enrichment path can reach them (see enrichment_locations).
+        if centroid is not None:
+            data["latitude"] = centroid[1]
+            data["longitude"] = centroid[0]
 
         return Event(
             id=f"{monitoring_location_id}:{parameter_code}:{time_iso}",

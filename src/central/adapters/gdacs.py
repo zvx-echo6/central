@@ -150,6 +150,9 @@ class GDACSAdapter(SourceAdapter):
     wizard_order = None
     default_cadence_s = 600
 
+    # Event lat/lon mirrored from Geo.centroid into event.data (see poll()).
+    enrichment_locations = [("latitude", "longitude")]
+
     def __init__(
         self,
         config: AdapterConfig,
@@ -390,6 +393,12 @@ class GDACSAdapter(SourceAdapter):
                 "datemodified": datemodified_elem.text if datemodified_elem is not None and datemodified_elem.text else None,
                 "iscurrent": iscurrent,
             }
+
+            # Mirror centroid (lon, lat) into top-level data keys for the flat
+            # enrichment path (see enrichment_locations).
+            if centroid is not None:
+                data["latitude"] = centroid[1]
+                data["longitude"] = centroid[0]
 
             if not iscurrent:
                 # Explicit tombstone from upstream. Only emit if we previously observed it.

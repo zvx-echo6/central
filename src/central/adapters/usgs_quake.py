@@ -79,6 +79,9 @@ class USGSQuakeAdapter(SourceAdapter):
     wizard_order = 3
     default_cadence_s = 60
 
+    # Epicenter lat/lon are top-level keys in event.data (see _build_event).
+    enrichment_locations = [("latitude", "longitude")]
+
     def __init__(
         self,
         config: AdapterConfig,

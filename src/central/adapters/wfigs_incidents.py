@@ -60,6 +60,9 @@ class WFIGSIncidentsAdapter(SourceAdapter):
     wizard_order = None  # Not in setup wizard
     default_cadence_s = 300
 
+    # Incident-point lat/lon mirrored from Geo.centroid into event.data.
+    enrichment_locations = [("latitude", "longitude")]
+
     def __init__(
         self,
         config: AdapterConfig,
@@ -326,6 +329,9 @@ class WFIGSIncidentsAdapter(SourceAdapter):
                     "POOState_raw": state_raw,
                     "POOCounty": county,
                     "raw": props,
+                    # Mirror centroid (lon, lat) for the flat enrichment path.
+                    "latitude": centroid[1] if centroid else None,
+                    "longitude": centroid[0] if centroid else None,
                 },
             )
 

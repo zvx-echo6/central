@@ -60,6 +60,9 @@ class WFIGSPerimetersAdapter(SourceAdapter):
     wizard_order = None  # Not in setup wizard
     default_cadence_s = 300
 
+    # Perimeters are polygons, not a single point — no coordinate to enrich.
+    enrichment_locations = []
+
     def __init__(
         self,
         config: AdapterConfig,
