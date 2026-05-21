@@ -9,15 +9,13 @@ IMPORTANT: These tests are designed to:
 - PASS on fixed code (last_completed_poll is preserved across disable/enable)
 """
 
-import asyncio
 import base64
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import pytest_asyncio
 
 from central.config_models import AdapterConfig
 from central.bootstrap_config import get_settings
@@ -195,7 +193,7 @@ class TestEnableDisableEnableIntegration:
         - Assert next poll fires immediately (last+cadence is in past)
         - Assert exactly ONE poll happens, not multiple catch-up
         """
-        from central.supervisor import Supervisor, AdapterState
+        from central.supervisor import Supervisor
 
         config_source = MockConfigSource()
         initial_config = AdapterConfig(
@@ -306,7 +304,7 @@ class TestEnableDisableEnableIntegration:
         - Re-enable adapter 20 seconds later (still within cadence window)
         - Assert next poll fires at last_poll + 60s, NOT immediately
         """
-        from central.supervisor import Supervisor, AdapterState
+        from central.supervisor import Supervisor
 
         config_source = MockConfigSource()
         initial_config = AdapterConfig(
