@@ -1,0 +1,6 @@
+{# USGS NWIS water observations. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('parameter_code') is not none %}<dt>Parameter</dt><dd>{{ d.parameter_code }}</dd>{% endif %}
+{% if d.get('value') is not none %}<dt>Value</dt><dd>{{ d.value }} {{ d.get('unit_of_measure', '') }}</dd>{% endif %}
+{% if d.get('monitoring_location_id') is not none %}<dt>Site</dt><dd><code>{{ d.monitoring_location_id }}</code></dd>{% endif %}
+{% if d.get('statistic_id') is not none %}<dt>Statistic</dt><dd>{{ d.statistic_id }}</dd>{% endif %}

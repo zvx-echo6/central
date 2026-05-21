@@ -18,7 +18,8 @@
     }
     .map-legend {
         display: flex;
-        gap: 1rem;
+        flex-wrap: wrap;
+        gap: 0.5rem 1rem;
         font-size: 0.85rem;
     }
     .map-legend-item {
@@ -105,6 +106,12 @@
 {% endblock %}
 
 {% block content %}
+{# 12-slot legend/marker palette. Adapters map to colors by their sorted index
+   (loop.index0 % palette length) — no per-adapter color is hardcoded. #}
+{% set palette = [
+    "#f59e0b", "#dc2626", "#7c3aed", "#2563eb", "#059669", "#db2777",
+    "#0891b2", "#65a30d", "#ea580c", "#4f46e5", "#9333ea", "#0d9488"
+] %}
 <h1>Events</h1>
 
 {% if filter_error %}
@@ -123,9 +130,9 @@
                 <label for="adapter">Adapter</label>
                 <select id="adapter" name="adapter">
                     <option value="">All</option>
-                    <option value="nws" {% if filter_values.adapter == 'nws' %}selected{% endif %}>nws</option>
-                    <option value="firms" {% if filter_values.adapter == 'firms' %}selected{% endif %}>firms</option>
-                    <option value="usgs_quake" {% if filter_values.adapter == 'usgs_quake' %}selected{% endif %}>usgs_quake</option>
+                    {% for a in adapters %}
+                    <option value="{{ a.name }}" {% if filter_values.adapter == a.name %}selected{% endif %}>{{ a.display_name }}</option>
+                    {% endfor %}
                 </select>
             </div>
             <div>
@@ -163,18 +170,12 @@
 <div id="events-map"></div>
 <div class="map-controls">
     <div class="map-legend">
+        {% for a in adapters %}
         <div class="map-legend-item">
-            <div class="map-legend-swatch" style="background-color: #f59e0b;"></div>
-            <span>NWS (Weather)</span>
+            <div class="map-legend-swatch" style="background-color: {{ palette[loop.index0 % palette|length] }};"></div>
+            <span>{{ a.display_name }}</span>
         </div>
-        <div class="map-legend-item">
-            <div class="map-legend-swatch" style="background-color: #dc2626;"></div>
-            <span>FIRMS (Fire)</span>
-        </div>
-        <div class="map-legend-item">
-            <div class="map-legend-swatch" style="background-color: #7c3aed;"></div>
-            <span>USGS (Quake)</span>
-        </div>
+        {% endfor %}
     </div>
     <button type="button" id="fit-to-results" class="outline secondary">Fit map to results</button>
 </div>
@@ -189,15 +190,55 @@
     var tileUrl = {{ tile_url | tojson }};
     var tileAttr = {{ tile_attribution | tojson }};
 
-    // Adapter color mapping
+    // Adapter color mapping — built from the registry-derived adapter list and
+    // the same palette the legend uses, keyed by sorted index. No adapter name
+    // or color is hardcoded here.
+    var PALETTE = {{ palette | tojson }};
     var ADAPTER_COLORS = {
-        "nws":        "#f59e0b",
-        "firms":      "#dc2626",
-        "usgs_quake": "#7c3aed"
+        {% for a in adapters %}{{ a.name | tojson }}: PALETTE[{{ loop.index0 }} % PALETTE.length]{{ "," if not loop.last }}
+        {% endfor %}
     };
 
     function getAdapterColor(adapter) {
         return ADAPTER_COLORS[adapter] || "#3388ff";
+    }
+
+    // Flatten arbitrarily-nested GeoJSON coordinates into a flat [lng, lat] list.
+    function flattenCoords(coords, out) {
+        if (coords.length && typeof coords[0] === "number") {
+            out.push(coords);
+            return;
+        }
+        for (var i = 0; i < coords.length; i++) {
+            flattenCoords(coords[i], out);
+        }
+    }
+
+    // A geometry whose vertices all collapse to a single point (zero extent in
+    // both dimensions). Enrichment stores some point-like sources as degenerate
+    // polygons; Leaflet would draw these invisibly, so we plot a marker instead.
+    function isDegenerate(geom) {
+        if (!geom || !geom.coordinates) return false;
+        var pts = [];
+        flattenCoords(geom.coordinates, pts);
+        if (pts.length === 0) return false;
+        var minX = pts[0][0], maxX = pts[0][0], minY = pts[0][1], maxY = pts[0][1];
+        for (var i = 1; i < pts.length; i++) {
+            if (pts[i][0] < minX) minX = pts[i][0];
+            if (pts[i][0] > maxX) maxX = pts[i][0];
+            if (pts[i][1] < minY) minY = pts[i][1];
+            if (pts[i][1] > maxY) maxY = pts[i][1];
+        }
+        return (maxX - minX) < 1e-9 && (maxY - minY) < 1e-9;
+    }
+
+    // Mean of all vertices, returned as Leaflet [lat, lng].
+    function centroidLatLng(geom) {
+        var pts = [];
+        flattenCoords(geom.coordinates, pts);
+        var sx = 0, sy = 0;
+        for (var i = 0; i < pts.length; i++) { sx += pts[i][0]; sy += pts[i][1]; }
+        return [sy / pts.length, sx / pts.length];
     }
 
     // Initialize map
@@ -275,23 +316,33 @@
                 var adapter = row.dataset.adapter || "";
                 var color = getAdapterColor(adapter);
 
-                var layer = L.geoJSON(geom, {
-                    style: {
-                        color: color,
-                        weight: 2,
-                        fillColor: color,
-                        fillOpacity: 0.25
-                    },
-                    pointToLayer: function(feature, latlng) {
-                        return L.circleMarker(latlng, {
-                            radius: 8,
+                var markerStyle = {
+                    radius: 8,
+                    color: color,
+                    weight: 2,
+                    fillColor: color,
+                    fillOpacity: 0.25
+                };
+
+                // Real polygons/lines render as geometry; zero-extent geometries
+                // (degenerate polygons from enrichment) render as a point marker
+                // so every non-null geometry is actually visible on the map.
+                var layer;
+                if (isDegenerate(geom)) {
+                    layer = L.circleMarker(centroidLatLng(geom), markerStyle);
+                } else {
+                    layer = L.geoJSON(geom, {
+                        style: {
                             color: color,
                             weight: 2,
                             fillColor: color,
                             fillOpacity: 0.25
-                        });
-                    }
-                });
+                        },
+                        pointToLayer: function(feature, latlng) {
+                            return L.circleMarker(latlng, markerStyle);
+                        }
+                    });
+                }
 
                 layer.bindPopup(buildPopup(row));
                 layer.on("click", function() {
@@ -421,10 +472,11 @@
         isInitialLoad = false;
     }
 
-    // Re-bind layers after HTMX swap (but do NOT fit bounds)
+    // Re-bind layers after HTMX swap so the map tracks the current (filtered /
+    // paginated) result set. Viewport is preserved — we never auto-fit here.
     document.body.addEventListener("htmx:afterSwap", function(evt) {
         if (evt.detail.target.id === "events-rows") {
-            // rebindEventLayers(); // DISABLED: map shows all events, only table filters
+            rebindEventLayers();
             // Do NOT call fitToAllLayers - preserve user viewport
         }
     });

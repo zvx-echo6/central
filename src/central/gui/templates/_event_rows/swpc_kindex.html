@@ -1,0 +1,6 @@
+{# NOAA SWPC planetary K-index. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('Kp') is not none %}<dt>Kp</dt><dd>{{ d.Kp }}</dd>{% endif %}
+{% if d.get('a_running') is not none %}<dt>A-running</dt><dd>{{ d.a_running }}</dd>{% endif %}
+{% if d.get('station_count') is not none %}<dt>Stations</dt><dd>{{ d.station_count }}</dd>{% endif %}
+{% if d.get('time_tag') is not none %}<dt>Time tag</dt><dd>{{ d.time_tag }}</dd>{% endif %}

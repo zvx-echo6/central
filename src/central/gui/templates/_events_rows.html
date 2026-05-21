@@ -43,6 +43,11 @@
                     <dt>Regions</dt>
                     <dd>{{ event.regions | join(", ") }}</dd>
                     {% endif %}
+                    {# Per-adapter curated fields. Dispatch by adapter name with a
+                       generic fallback; the chosen template is whichever exists
+                       first, so new adapters fall through to _default.html with
+                       no hardcoded adapter list here. #}
+                    {% include ["_event_rows/" ~ event.adapter ~ ".html", "_event_rows/_default.html"] %}
                     <dt>Data</dt>
                     <dd><pre class="event-data-pre">{{ event.data | tojson(indent=2) }}</pre></dd>
                 </dl>

@@ -1,0 +1,5 @@
+{# NOAA SWPC space-weather alerts. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('product_id') is not none %}<dt>Product</dt><dd><code>{{ d.product_id }}</code></dd>{% endif %}
+{% if d.get('issue_datetime') is not none %}<dt>Issued</dt><dd>{{ d.issue_datetime }}</dd>{% endif %}
+{% if d.get('message') is not none %}<dt>Message</dt><dd>{{ d.message | truncate(240) }}</dd>{% endif %}

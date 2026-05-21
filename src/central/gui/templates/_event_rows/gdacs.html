@@ -1,0 +1,6 @@
+{# GDACS global disaster alerts. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('title') is not none %}<dt>Title</dt><dd>{{ d.title }}</dd>{% endif %}
+{% if d.get('eventtype') is not none %}<dt>Event type</dt><dd>{{ d.eventtype }}</dd>{% endif %}
+{% if d.get('alertlevel') is not none %}<dt>Alert level</dt><dd>{{ d.alertlevel }}{% if d.get('alertscore') is not none %} ({{ d.alertscore }}){% endif %}</dd>{% endif %}
+{% if d.get('country') is not none %}<dt>Country</dt><dd>{{ d.country }}</dd>{% endif %}
