@@ -1,6 +1,7 @@
 """Route handlers for Central GUI."""
 
 import base64
+import html
 import json
 import logging
 import re
@@ -2727,6 +2728,24 @@ def _parse_events_params(params) -> tuple[dict | None, str | None]:
     }, None
 
 
+def _derive_subject(event: dict) -> str | None:
+    """Derive an event's plain-text subject for the JSON API.
+
+    Renders the same per-adapter ``_event_summaries/{adapter}.html`` partial
+    the /events table uses (falling back to ``_default.html``), so the JSON
+    subject carries the same human text as the GUI's Subject cell with no
+    duplicated derivation logic. The partials are HTML-autoescaped for the
+    table (e.g. ``>`` -> ``&gt;``); we ``html.unescape`` so JSON consumers get
+    plain text. Returns ``None`` when the partial yields no text -- an unknown
+    adapter, or an event whose source fields don't support a subject (e.g. a
+    wfigs row with neither county nor state).
+    """
+    template = _get_templates().env.select_template(
+        [f"_event_summaries/{event.get('adapter')}.html", "_event_summaries/_default.html"]
+    )
+    return html.unescape(template.render(event=event)).strip() or None
+
+
 async def _fetch_events(parsed_params: dict) -> EventsQueryResult:
     """
     Fetch events from database using parsed parameters.
@@ -2794,7 +2813,6 @@ async def _fetch_events(parsed_params: dict) -> EventsQueryResult:
             received,
             adapter,
             category,
-            payload->>'subject' as subject,
             ST_AsGeoJSON(geom) as geometry,
             payload as data,
             regions
@@ -2824,17 +2842,23 @@ async def _fetch_events(parsed_params: dict) -> EventsQueryResult:
         if row["geometry"]:
             geometry = json.loads(row["geometry"])
 
-        events.append({
+        event = {
             "id": row["id"],
             "time": row["time"].isoformat(),
             "received": row["received"].isoformat(),
             "adapter": row["adapter"],
             "category": row["category"],
-            "subject": row["subject"],
             "geometry": geometry,
             "data": dict(row["data"]) if row["data"] else {},
             "regions": list(row["regions"]) if row["regions"] else [],
-        })
+        }
+        # Subject is derived from the inner adapter payload by rendering the
+        # same _event_summaries partial the /events table uses, so the JSON
+        # `subject` matches the GUI's Subject cell. (The CloudEvents envelope
+        # has no top-level `subject`; the old `payload->>'subject'` was always
+        # null for every consumer.)
+        event["subject"] = _derive_subject(event)
+        events.append(event)
 
     # Build next_cursor if there are more results
     next_cursor = None

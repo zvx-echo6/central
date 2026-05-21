@@ -1,12 +1,15 @@
 """Tests for events feed frontend routes."""
 
+import html
 import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from central.gui.routes import events_list, events_rows, events_json
+from central.adapter_discovery import discover_adapters
+from central.gui import templates as _gui_templates
+from central.gui.routes import events_list, events_rows, events_json, _derive_subject
 
 
 class TestEventsFeedFrontendAuthenticated:
@@ -683,7 +686,11 @@ class TestEventRowDataAttributes:
         assert len(context["events"]) == 1
         assert context["events"][0]["adapter"] == "usgs_quake"
         assert context["events"][0]["category"] == "quake.event"
-        assert context["events"][0]["subject"] == "M4.2 Earthquake"
+        # `subject` is now derived from the inner payload (rendered partial),
+        # not a DB pass-through, so the mock's input value is no longer echoed;
+        # just confirm the field is present. See TestEventsJsonSubject for the
+        # derivation contract.
+        assert "subject" in context["events"][0]
 
 
 # --- PR L-b: operator /events tab polish ---------------------------------
@@ -1085,3 +1092,106 @@ class TestTableRendersThroughHTTP:
         cells = _first_row_cells(resp.text)
         assert cells[1].endswith("UTC") and "2026" in cells[1]   # Time non-empty
         assert cells[4] == self._expected_adapter_display()       # Adapter display_name
+
+
+# --- feat(events-json-subject): JSON subject derivation ------------------
+
+# Representative inner adapter payloads (payload->'data'->'data'), captured from
+# production -- one per registered adapter. Keyed by adapter name so the
+# coverage test below fails loudly if a new adapter ships without a sample.
+_SAMPLE_INNER = {
+    "eonet": {"title": "Kress Wildfire, Swisher, Texas"},
+    "firms": {"frp": 0.34, "confidence": "nominal"},
+    "gdacs": {"title": "Green flood alert in Austria", "alertlevel": "Green"},
+    "inciweb": {"title": "MTHLF Jericho Creek"},
+    "nwis": {"value": 93.2, "unit_of_measure": "ft^3/s"},
+    "nws": {"event": "Special Weather Statement", "severity": "Moderate"},
+    "swpc_alerts": {
+        "product_id": "EF3A",
+        "message": (
+            "Space Weather Message Code: ALTEF3\r\nSerial Number: 3691\r\n"
+            "Issue Time: 2026 May 21 0509 UTC\r\n\r\nCONTINUED ALERT: "
+            "Electron 2MeV Integral Flux exceeded 1000pfu"
+        ),
+    },
+    "swpc_kindex": {"Kp": 1.0},
+    "swpc_protons": {"flux": 15.06399917602539, "energy": ">=1 MeV"},
+    "usgs_quake": {"magnitude": 1.009682538298, "place": "17 km W of Searles Valley, CA"},
+    "wfigs_incidents": {"county": "Montezuma", "state": "CO"},
+    "wfigs_perimeters": {"county": "Carbon", "state": "MT"},
+}
+
+# Exact expected subjects for the deterministic adapters. swpc_alerts is omitted
+# (its message runs through Jinja's truncate(80)) and is checked separately.
+# swpc_protons expects unescaped ">=" -- _derive_subject html.unescapes the
+# autoescaped partial output so JSON consumers get plain text.
+_EXPECTED_SUBJECT = {
+    "eonet": "Kress Wildfire, Swisher, Texas",
+    "firms": "Fire detected — 0.34 MW radiative power",
+    "gdacs": "Green flood alert in Austria — Green alert",
+    "inciweb": "MTHLF Jericho Creek",
+    "nwis": "Water reading: 93.2 ft^3/s",
+    "nws": "Special Weather Statement — Moderate",
+    "swpc_kindex": "Geomagnetic activity (Kp index): 1.0",
+    "swpc_protons": "Solar proton flux: 15.06 pfu at >=1 MeV",
+    "usgs_quake": "Magnitude 1.0 — 17 km W of Searles Valley, CA",
+    "wfigs_incidents": "Wildfire incident — Montezuma, CO",
+    "wfigs_perimeters": "Wildfire perimeter — Carbon, MT",
+}
+
+
+def _subject_event(adapter: str, inner: dict) -> dict:
+    """Build a minimal event dict shaped like _fetch_events output."""
+    return {"adapter": adapter, "data": {"data": {"data": inner}}}
+
+
+class TestEventsJsonSubject:
+    """/events.json `subject` is derived from the inner payload and carries the
+    same human text as the GUI's per-adapter Subject cell (feat/events-json-subject).
+
+    The old `payload->>'subject'` SQL was always null (the CloudEvents envelope
+    has no top-level subject). Parameterized over discover_adapters() -- no
+    hardcoded adapter list.
+    """
+
+    def test_sample_covers_every_registered_adapter(self):
+        """No hardcoded list: samples must track the live registry exactly."""
+        assert set(_SAMPLE_INNER) == set(discover_adapters())
+
+    @pytest.mark.parametrize("adapter", sorted(discover_adapters()))
+    def test_subject_non_null_per_adapter(self, adapter):
+        """Every registered adapter derives a non-null subject for a real event."""
+        event = _subject_event(adapter, _SAMPLE_INNER[adapter])
+        assert _derive_subject(event) is not None
+
+    @pytest.mark.parametrize("adapter", sorted(discover_adapters()))
+    def test_subject_matches_rendered_partial(self, adapter):
+        """Derived subject equals the adapter's own partial (unescaped) -- the
+        JSON path and the GUI Subject cell never diverge."""
+        event = _subject_event(adapter, _SAMPLE_INNER[adapter])
+        oracle = html.unescape(
+            _gui_templates.env.get_template(f"_event_summaries/{adapter}.html").render(event=event)
+        ).strip()
+        assert _derive_subject(event) == oracle
+
+    @pytest.mark.parametrize("adapter", sorted(_EXPECTED_SUBJECT))
+    def test_subject_exact_human_text(self, adapter):
+        """Pin the human-readable subject for the deterministic adapters."""
+        event = _subject_event(adapter, _SAMPLE_INNER[adapter])
+        assert _derive_subject(event) == _EXPECTED_SUBJECT[adapter]
+
+    def test_swpc_alerts_prefixes_id_and_truncates_message(self):
+        """swpc_alerts subject prefixes the product id and truncates the body."""
+        event = _subject_event("swpc_alerts", _SAMPLE_INNER["swpc_alerts"])
+        subject = _derive_subject(event)
+        assert subject is not None
+        assert subject.startswith("Space weather alert EF3A: ")
+        assert subject.endswith("...")
+
+    def test_unknown_adapter_yields_none(self):
+        """Unknown adapters fall back to _default.html -> no subject."""
+        assert _derive_subject(_subject_event("does_not_exist", {"x": 1})) is None
+
+    def test_missing_source_fields_yields_none(self):
+        """An event lacking its adapter's source fields derives no subject."""
+        assert _derive_subject(_subject_event("usgs_quake", {})) is None
