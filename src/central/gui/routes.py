@@ -2700,6 +2700,17 @@ def _parse_events_params(params) -> tuple[dict | None, str | None]:
         except ValueError:
             return None, "Region parameters must be valid numbers"
 
+        # Defense in depth: the map JS normalizes coordinates, but a degenerate
+        # or out-of-range bbox (e.g. Leaflet pan-past-dateline artifacts like
+        # east=411.3, west=-608.2) must never reach ST_MakeEnvelope. Treat an
+        # invalid envelope as "no bbox" rather than erroring or querying a bogus
+        # envelope that silently matches the wrong rows.
+        if not (
+            -90 <= bbox["south"] < bbox["north"] <= 90
+            and -180 <= bbox["west"] < bbox["east"] <= 180
+        ):
+            bbox = None
+
     # Parse cursor
     cursor_time = None
     cursor_id = None

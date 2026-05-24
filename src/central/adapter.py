@@ -86,6 +86,27 @@ class SourceAdapter(ABC):
         """Optional lifecycle hook called on graceful shutdown."""
         pass
 
+    def bump_last_seen(self, event_id: str) -> None:
+        """Refresh the dedup ``last_seen`` for an already-published event.
+
+        The supervisor calls this on every dedup hit so the periodic
+        ``sweep_old_ids`` purge doesn't expire long-lived events that upstream
+        keeps re-listing (e.g. EONET open events, NWS active alerts). Adapters
+        that maintain the standard ``published_ids`` table inherit this; it is a
+        safe no-op for any adapter without a ``_db`` handle. Previously only
+        four adapters defined it, so adapters that re-emit (eonet, etc.) raised
+        ``AttributeError`` here and the supervisor surfaced it on /dashboard.
+        """
+        db = getattr(self, "_db", None)
+        if db is None:
+            return
+        db.execute(
+            "UPDATE published_ids SET last_seen = CURRENT_TIMESTAMP "
+            "WHERE adapter = ? AND event_id = ?",
+            (self.name, event_id),
+        )
+        db.commit()
+
     async def preview_for_settings(self, settings: BaseModel) -> list[dict] | None:
         """Optional. Override to surface a settings-driven preview on the edit page.
 
