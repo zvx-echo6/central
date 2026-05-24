@@ -158,16 +158,6 @@ class WFIGSIncidentsAdapter(SourceAdapter):
         )
         self._db.commit()
 
-    def bump_last_seen(self, event_id: str) -> None:
-        """Bump the last_seen timestamp for an event."""
-        if not self._db:
-            return
-        self._db.execute(
-            "UPDATE published_ids SET last_seen = CURRENT_TIMESTAMP WHERE adapter = ? AND event_id = ?",
-            (self.name, event_id),
-        )
-        self._db.commit()
-
     def sweep_old_ids(self) -> int:
         """Remove published_ids older than 14 days. Returns count deleted."""
         if not self._db:

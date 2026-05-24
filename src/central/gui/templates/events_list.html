@@ -274,12 +274,30 @@
         viewportDebounceTimer = setTimeout(applyViewportFilter, 400);
     });
 
+    // Normalize a longitude into [-180, 180]. Leaflet returns out-of-range
+    // values (e.g. east=411, west=-608) when the map is panned past the
+    // dateline / wrapped at low zoom; those must not reach the bbox filter.
+    function wrapLon(lon) {
+        return ((((lon + 180) % 360) + 360) % 360) - 180;
+    }
+
     function applyViewportFilter() {
         var bounds = map.getBounds();
-        northInput.value = bounds.getNorth().toFixed(4);
-        southInput.value = bounds.getSouth().toFixed(4);
-        eastInput.value = bounds.getEast().toFixed(4);
-        westInput.value = bounds.getWest().toFixed(4);
+        var rawWest = bounds.getWest();
+        var rawEast = bounds.getEast();
+        // When the visible map spans more than ~350 deg of longitude (zoomed
+        // far out / wrapped), a bbox filter is meaningless — treat as no bbox.
+        if (rawEast - rawWest > 350) {
+            northInput.value = "";
+            southInput.value = "";
+            eastInput.value = "";
+            westInput.value = "";
+        } else {
+            northInput.value = Math.min(90, bounds.getNorth()).toFixed(4);
+            southInput.value = Math.max(-90, bounds.getSouth()).toFixed(4);
+            eastInput.value = wrapLon(rawEast).toFixed(4);
+            westInput.value = wrapLon(rawWest).toFixed(4);
+        }
         htmx.trigger(document.getElementById("filter-form"), "submit");
     }
 

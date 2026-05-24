@@ -108,3 +108,52 @@ def test_nwis_event_mirrors_centroid_into_data():
     assert event.data["longitude"] == -90.25
     # Geo.centroid retained for existing rendering uses.
     assert event.geo.centroid == (-90.25, 41.78)
+
+
+# --- bump_last_seen contract (v0.7.0 Bug 1) ---------------------------------
+
+def test_every_adapter_resolves_bump_last_seen():
+    """The supervisor calls adapter.bump_last_seen on every dedup hit. Every
+    registered adapter must resolve a callable (inherited from SourceAdapter or
+    overridden) -- otherwise the AttributeError leaks to /dashboard (the eonet
+    bug). Registry-derived, no hardcoded list."""
+    missing = [
+        name for name, cls in discover_adapters().items()
+        if not callable(getattr(cls, "bump_last_seen", None))
+    ]
+    assert not missing, f"adapters missing bump_last_seen: {missing}"
+
+
+def test_base_bump_last_seen_updates_and_is_noop_without_db():
+    """SourceAdapter.bump_last_seen updates published_ids.last_seen when a _db
+    handle is present, and is a safe no-op when it is not."""
+    import sqlite3
+
+    from central.adapter import SourceAdapter
+
+    class _StubAdapter(SourceAdapter):
+        name = "stub"
+
+        async def poll(self): ...           # never called in this test
+        async def apply_config(self, new_config): ...
+        def subject_for(self, event): return ""
+
+    adapter = _StubAdapter()
+    adapter.bump_last_seen("e1")  # no _db attribute -> must not raise
+
+    adapter._db = sqlite3.connect(":memory:")
+    adapter._db.execute(
+        "CREATE TABLE published_ids (adapter TEXT, event_id TEXT, "
+        "first_seen TIMESTAMP, last_seen TIMESTAMP)"
+    )
+    adapter._db.execute(
+        "INSERT INTO published_ids VALUES ('stub', 'e1', "
+        "'2020-01-01 00:00:00', '2020-01-01 00:00:00')"
+    )
+    adapter._db.commit()
+
+    adapter.bump_last_seen("e1")
+    row = adapter._db.execute(
+        "SELECT last_seen FROM published_ids WHERE event_id = 'e1'"
+    ).fetchone()
+    assert row[0] != "2020-01-01 00:00:00"  # bumped to CURRENT_TIMESTAMP

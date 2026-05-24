@@ -262,6 +262,13 @@ required tables. The default is a no-op.
 shutdown. Close the HTTP session, close the sqlite3 cursor DB. The default is
 a no-op.
 
+**`def bump_last_seen(self, event_id: str) -> None`** — Optional. Called by the
+supervisor on every dedup hit (an already-published event re-seen upstream) so
+the periodic `sweep_old_ids` purge doesn't expire long-lived events. The base
+class implements the standard `published_ids` bump; adapters using that table
+inherit it and need not override. It is a safe no-op when the adapter has no
+`_db` handle.
+
 **`async def preview_for_settings(self, settings: BaseModel) -> list[dict] | None`** —
 Optional. The settings-page preview hook. The default returns `None` (no
 preview). See [§11](#11-settings-preview-hook) for the contract.
