@@ -1143,6 +1143,7 @@ _SAMPLE_INNER = {
     "wfigs_incidents": {"county": "Montezuma", "state": "CO"},
     "wfigs_perimeters": {"county": "Carbon", "state": "MT"},
     "wzdx": {"road_names": ["I-80"], "direction": "eastbound"},
+    "state_511_atis": {"layer": "Incidents", "roadway_name": "US-95", "location_description": "Ponderosa Mobile Home Park"},
 }
 
 # Exact expected subjects for the deterministic adapters. swpc_alerts is omitted

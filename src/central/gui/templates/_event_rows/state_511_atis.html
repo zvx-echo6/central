@@ -1,0 +1,10 @@
+{# State 511 (Castle Rock ATIS) detail rows. Fields from payload->data->data;
+   every block guarded. direction "Unknown"/"None" suppressed (wzdx lesson). #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('roadway_name') %}<dt>Road</dt><dd>{{ d.roadway_name }}{% if d.get('direction') and d.direction not in ['Unknown', 'None'] %} ({{ d.direction }}){% endif %}</dd>{% endif %}
+{% if d.get('location_description') %}<dt>Location</dt><dd>{{ d.location_description }}</dd>{% endif %}
+{% if d.get('event_sub_type') %}<dt>Type</dt><dd>{{ d.event_sub_type }}</dd>{% endif %}
+{% if d.get('is_full_closure') %}<dt>Full closure</dt><dd>Yes</dd>{% endif %}
+{% if d.get('start_date') %}<dt>Started</dt><dd>{{ d.start_date }}</dd>{% endif %}
+{% if d.get('last_updated') %}<dt>Updated</dt><dd>{{ d.last_updated }}</dd>{% endif %}
+{% if d.get('description') %}<dt>Description</dt><dd>{{ d.description | truncate(220) }}</dd>{% endif %}

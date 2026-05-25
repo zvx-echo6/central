@@ -2651,7 +2651,7 @@ ADAPTER_GROUPS = {
     "Space": ["swpc_alerts", "swpc_kindex", "swpc_protons"],
     "Geophysical": ["usgs_quake", "nwis"],
     "Earth Observation": ["eonet"],
-    "Transportation": ["wzdx"],
+    "Transportation": ["wzdx", "state_511_atis"],
 }
 # Same palette the map legend uses, indexed by sorted-adapter position.
 EVENTS_PALETTE = [
