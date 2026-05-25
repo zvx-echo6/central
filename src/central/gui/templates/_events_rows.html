@@ -33,6 +33,7 @@
             data-event-id="{{ event.id }}"
             data-adapter="{{ event.adapter }}"
             data-category="{{ event.category }}"
+            data-severity="{{ event.severity if event.severity is not none else '' }}"
             data-time="{{ event.time }}"
             data-subject="{{ subject_summary | trim }}"
             {% if event.geometry %}data-geometry='{{ event.geometry | tojson }}'{% endif %}>

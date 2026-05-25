@@ -208,3 +208,46 @@ def test_url_round_trip():
     reparsed, _ = routes._parse_events_params(requery)
     for k in ("q", "adapters", "categories", "event_types", "severities", "time_token"):
         assert reparsed[k] == parsed[k]
+
+
+# --- map-filter toggle + severity column (v0.7.2) ---------------------------
+
+_REGION = {
+    "region_north": "42", "region_south": "31", "region_east": "-102", "region_west": "-124.5",
+    "time": "all",
+}
+
+
+def test_map_filter_off_ignores_bbox():
+    """Default (no map_filter): region params are present but the bbox must be
+    dropped, so the table is not constrained by the map view."""
+    parsed, err = routes._parse_events_params(dict(_REGION))
+    assert err is None
+    assert parsed["map_filter"] is False
+    assert parsed["bbox"] is None
+
+
+def test_map_filter_on_applies_bbox():
+    """map_filter=1: the region bbox is honored."""
+    parsed, err = routes._parse_events_params(dict(_REGION, map_filter="1"))
+    assert err is None
+    assert parsed["map_filter"] is True
+    assert parsed["bbox"] == {"north": 42.0, "south": 31.0, "east": -102.0, "west": -124.5}
+
+
+@pytest.mark.asyncio
+async def test_bbox_reaches_query_only_when_map_filter_on():
+    on, _ = routes._parse_events_params(dict(_REGION, map_filter="1"))
+    off, _ = routes._parse_events_params(dict(_REGION))
+    cap_on = await _capture(on)
+    cap_off = await _capture(off)
+    assert "ST_Intersects" in cap_on["query"]
+    assert "ST_Intersects" not in cap_off["query"]
+
+
+@pytest.mark.asyncio
+async def test_select_includes_severity_column():
+    """v0.7.2 marker opacity needs severity in the row -> SELECT must fetch it."""
+    parsed, _ = routes._parse_events_params({"time": "all"})
+    cap = await _capture(parsed)
+    assert "severity" in cap["query"]

@@ -4,6 +4,8 @@
 
 {% block head %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
 <style>
     #events-map {
         height: 400px;
@@ -138,6 +140,18 @@
     .pill-remove, .pill-clear-all { background: none; border: none; cursor: pointer;
         color: var(--pico-color); padding: 0; font-size: 1rem; line-height: 1; width: auto; }
     .pill-clear-all { font-size: 0.8rem; text-decoration: underline; }
+    /* --- v0.7.2 map markers: per-event_type shape + per-severity opacity --- */
+    .evt-marker { width: 15px; height: 15px; box-sizing: border-box;
+        border: 1px solid rgba(0,0,0,0.55); }
+    .evt-circle { border-radius: 50%; }
+    .evt-square { border-radius: 1px; }
+    .evt-triangle { border: none; clip-path: polygon(50% 0%, 100% 100%, 0% 100%); }
+    .evt-star { border: none; clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%,
+        79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%); }
+    .evt-marker.evt-hl { filter: drop-shadow(0 0 4px #ff3333); transform: scale(1.35); }
+    .map-filter-toggle { display: inline-flex; align-items: center; gap: 0.35rem;
+        font-size: 0.85rem; cursor: pointer; }
+    .map-filter-toggle input { width: auto; margin: 0; }
 </style>
 {% endblock %}
 
@@ -199,6 +213,10 @@
     <input type="hidden" id="region_east" name="region_east" value="{{ filter_state.region_east }}">
     <input type="hidden" id="region_west" name="region_west" value="{{ filter_state.region_west }}">
     <input type="hidden" name="limit" value="{{ filter_state.limit }}">
+    {# Map-filter toggle state. Disabled (omitted from the URL) when off; the
+       map-controls checkbox below syncs + enables it. #}
+    <input type="hidden" name="map_filter" id="filter-map_filter" value="1"
+           {{ '' if filter_state.map_filter else 'disabled' }}>
 
     <div class="filter-actions">
         <button type="submit" class="filter-apply">Apply</button>
@@ -219,6 +237,10 @@
         </div>
         {% endfor %}
     </div>
+    <label class="map-filter-toggle">
+        <input type="checkbox" id="map-filter-toggle" {{ 'checked' if filter_state.map_filter else '' }}>
+        Filter table by map view
+    </label>
     <button type="button" id="fit-to-results" class="outline secondary">Fit map to results</button>
 </div>
 
@@ -227,6 +249,7 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script>
 (function() {
     var tileUrl = {{ tile_url | tojson }};
@@ -291,18 +314,51 @@
         maxZoom: 18
     }).addTo(map);
 
-    // Layer group for event geometries
-    var eventLayerGroup = L.layerGroup().addTo(map);
+    // Point markers cluster (v0.7.2); polygons/lines go in a separate
+    // un-clustered group (markercluster only supports point markers).
+    var markerCluster = L.markerClusterGroup({
+        disableClusteringAtZoom: 9,
+        showCoverageOnHover: false,
+        spiderfyOnMaxZoom: true
+    }).addTo(map);
+    var polyGroup = L.featureGroup().addTo(map);
     var highlightedRow = null;
     var highlightedLayer = null;
     var isInitialLoad = true;
     var programmaticMove = false;
+
+    // event_type is the first dotted segment of category (disaster/fire/hydro/
+    // quake/space/wx). Shape encodes it; severity encodes opacity.
+    var EVENT_TYPE_SHAPE = {
+        quake: "evt-circle", hydro: "evt-circle", space: "evt-circle",
+        fire: "evt-square", wx: "evt-triangle", disaster: "evt-star"
+    };
+    var SEVERITY_OPACITY = { "4": 1.0, "3": 0.85, "2": 0.7, "1": 0.5, "0": 0.4 };
+    function eventTypeOf(row) { return (row.dataset.category || "").split(".")[0]; }
+    function shapeClass(row) { return EVENT_TYPE_SHAPE[eventTypeOf(row)] || "evt-circle"; }
+    function severityOpacity(row) {
+        var s = row.dataset.severity;
+        return (s !== undefined && s !== "" && SEVERITY_OPACITY[s] !== undefined)
+            ? SEVERITY_OPACITY[s] : 0.4;  // null / 0 / missing -> unknown
+    }
+    function makeDivIcon(row, color) {
+        var op = severityOpacity(row);
+        return L.divIcon({
+            className: "",  // suppress Leaflet's default icon styling
+            html: '<div class="evt-marker ' + shapeClass(row) +
+                  '" style="background:' + color + ';opacity:' + op + '"></div>',
+            iconSize: [15, 15], iconAnchor: [8, 8]
+        });
+    }
 
     // Region input elements
     var northInput = document.getElementById("region_north");
     var southInput = document.getElementById("region_south");
     var eastInput = document.getElementById("region_east");
     var westInput = document.getElementById("region_west");
+    var mapFilterHidden = document.getElementById("filter-map_filter");
+    var mapFilterToggle = document.getElementById("map-filter-toggle");
+    function mapFilterOn() { return mapFilterToggle && mapFilterToggle.checked; }
 
     // Viewport-driven filter with debounce
     var viewportDebounceTimer = null;
@@ -312,6 +368,8 @@
             programmaticMove = false;
             return;
         }
+        // Only drive the table from the viewport when the toggle is ON.
+        if (!mapFilterOn()) return;
         if (viewportDebounceTimer) clearTimeout(viewportDebounceTimer);
         viewportDebounceTimer = setTimeout(applyViewportFilter, 400);
     });
@@ -361,7 +419,8 @@
     }
 
     function rebindEventLayers() {
-        eventLayerGroup.clearLayers();
+        markerCluster.clearLayers();
+        polyGroup.clearLayers();
 
         var rows = document.querySelectorAll("#events-rows tr.event-row[data-geometry]");
 
@@ -375,33 +434,27 @@
 
                 var adapter = row.dataset.adapter || "";
                 var color = getAdapterColor(adapter);
+                var op = severityOpacity(row);
 
-                var markerStyle = {
-                    radius: 8,
-                    color: color,
-                    weight: 2,
-                    fillColor: color,
-                    fillOpacity: 0.25
-                };
-
-                // Real polygons/lines render as geometry; zero-extent geometries
-                // (degenerate polygons from enrichment) render as a point marker
-                // so every non-null geometry is actually visible on the map.
-                var layer;
+                // Point-like geometries (Points + zero-extent polygons from
+                // enrichment) become divIcon markers (shape=event_type,
+                // opacity=severity) and cluster. Real polygons/lines render as
+                // geometry in the un-clustered group.
+                var layer, isMarker;
                 if (isDegenerate(geom)) {
-                    layer = L.circleMarker(centroidLatLng(geom), markerStyle);
+                    layer = L.marker(centroidLatLng(geom), { icon: makeDivIcon(row, color) });
+                    isMarker = true;
+                    layer.addTo(markerCluster);
                 } else {
                     layer = L.geoJSON(geom, {
-                        style: {
-                            color: color,
-                            weight: 2,
-                            fillColor: color,
-                            fillOpacity: 0.25
-                        },
+                        style: { color: color, weight: 2, fillColor: color,
+                                 opacity: op, fillOpacity: op * 0.5 },
                         pointToLayer: function(feature, latlng) {
-                            return L.circleMarker(latlng, markerStyle);
+                            return L.marker(latlng, { icon: makeDivIcon(row, color) });
                         }
                     });
+                    isMarker = false;
+                    layer.addTo(polyGroup);
                 }
 
                 layer.bindPopup(buildPopup(row));
@@ -409,29 +462,39 @@
                     highlightRow(row, layer, color);
                 });
 
-                layer.addTo(eventLayerGroup);
-
-                // Store reference for row highlighting
                 row._mapLayer = layer;
                 row._mapColor = color;
+                row._isMarker = isMarker;
             } catch (e) {
                 console.error("Error parsing geometry:", e);
             }
         });
     }
 
+    // Toggle the red highlight ring on a divIcon marker's element (may be null
+    // when the marker is collapsed inside a cluster).
+    function setMarkerHl(layer, on) {
+        var el = layer.getElement && layer.getElement();
+        var inner = el && el.querySelector(".evt-marker");
+        if (inner) inner.classList.toggle("evt-hl", on);
+    }
+
     function highlightRow(row, layer, originalColor) {
-        // Reset previous highlight
+        // Reset previous highlight (marker via class, polygon via setStyle).
         if (highlightedRow) {
             highlightedRow.classList.remove("highlighted");
         }
-        if (highlightedLayer && highlightedLayer._originalColor) {
-            highlightedLayer.setStyle({
-                color: highlightedLayer._originalColor,
-                weight: 2,
-                fillColor: highlightedLayer._originalColor,
-                fillOpacity: 0.25
-            });
+        if (highlightedLayer) {
+            if (highlightedLayer._isMarker) {
+                setMarkerHl(highlightedLayer, false);
+            } else if (highlightedLayer._originalColor) {
+                highlightedLayer.setStyle({
+                    color: highlightedLayer._originalColor,
+                    weight: 2,
+                    fillColor: highlightedLayer._originalColor,
+                    fillOpacity: 0.25
+                });
+            }
         }
 
         // Set new highlight
@@ -439,23 +502,27 @@
         highlightedRow = row;
 
         if (layer) {
-            layer._originalColor = originalColor;
-            layer.setStyle({
-                color: "#ff3333",
-                weight: 4,
-                fillColor: "#ff3333",
-                fillOpacity: 0.4
-            });
+            layer._isMarker = row._isMarker;
+            if (layer._isMarker) {
+                setMarkerHl(layer, true);
+            } else {
+                layer._originalColor = originalColor;
+                layer.setStyle({
+                    color: "#ff3333",
+                    weight: 4,
+                    fillColor: "#ff3333",
+                    fillOpacity: 0.4
+                });
+            }
             highlightedLayer = layer;
         }
     }
 
     function fitToAllLayers() {
-        var layers = eventLayerGroup.getLayers();
-        if (layers.length === 0) return;
+        var layers = markerCluster.getLayers().concat(polyGroup.getLayers());
+        if (layers.length === 0) return;  // empty set -> keep CONUS setView (graceful)
         programmaticMove = true;
-        var group = L.featureGroup(layers);
-        map.fitBounds(group.getBounds(), { padding: [20, 20] });
+        map.fitBounds(L.featureGroup(layers).getBounds(), { padding: [20, 20] });
     }
 
     // Row click handler (event delegation)
@@ -583,25 +650,41 @@
         updateSortIndicators(ths);
     }
 
-    // Initial load - bind layers and fit bounds
-    rebindEventLayers(); // Initial load only
+    // Initial load - bind layers and fit to the actual result distribution
+    // (v0.7.2). Empty set -> fitToAllLayers no-ops, keeping the CONUS setView.
+    rebindEventLayers();
     bindSortHandlers();
-    if (false) { // DISABLED: map never auto-fits
-        fitToAllLayers();
-        isInitialLoad = false;
-    }
+    fitToAllLayers();
+    isInitialLoad = false;
 
-    // Re-bind layers after HTMX swap so the map tracks the current (filtered /
-    // paginated) result set. Viewport is preserved — we never auto-fit here.
+    // Re-bind layers after each HTMX swap so the map tracks the current
+    // (filtered / paginated) result set. Re-fit ONLY when the map-filter toggle
+    // is OFF; when ON the viewport is operator-driven (it feeds the bbox) and
+    // re-fitting would fight/loop the filter.
     document.body.addEventListener("htmx:afterSwap", function(evt) {
         if (evt.detail.target.id === "events-rows") {
             rebindEventLayers();
-            // Re-bind sort handlers to the new rows and re-apply the active sort.
             bindSortHandlers();
             applySort();
-            // Do NOT call fitToAllLayers - preserve user viewport
+            if (!mapFilterOn()) fitToAllLayers();
         }
     });
+
+    // Map-filter toggle: sync the form's hidden input (enabled only when ON, so
+    // it's omitted from the URL when OFF) and apply immediately.
+    if (mapFilterToggle) {
+        mapFilterToggle.addEventListener("change", function() {
+            if (mapFilterToggle.checked) {
+                mapFilterHidden.disabled = false;
+                applyViewportFilter();        // sends current bbox + map_filter=1
+            } else {
+                mapFilterHidden.disabled = true;
+                northInput.value = ""; southInput.value = "";
+                eastInput.value = ""; westInput.value = "";
+                htmx.trigger(document.getElementById("filter-form"), "submit");
+            }
+        });
+    }
 
     // Fix map rendering after container shows
     setTimeout(function() { map.invalidateSize(); }, 100);
