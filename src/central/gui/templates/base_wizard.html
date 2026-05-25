@@ -1,23 +1,19 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Central - Setup{% endblock %}</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="/static/css/central.css">
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
-    <nav class="container">
-        <ul>
-            <li><strong>Central</strong></li>
-        </ul>
-        <ul>
-            <li>Setup Wizard</li>
-        </ul>
+    <nav class="nav">
+        <div class="brand">Central</div>
+        <div class="nav-links"><span class="who">Setup Wizard</span></div>
     </nav>
-    <main class="container">
+    <main class="page" style="max-width: 760px;">
         {% block content %}{% endblock %}
     </main>
 </body>

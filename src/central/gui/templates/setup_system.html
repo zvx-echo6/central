@@ -14,7 +14,7 @@
     </header>
 
     {% if error %}
-    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    <div class="flash flash-error" role="alert">{{ error }}</div>
     {% endif %}
 
     <form action="/setup/system" method="post">
@@ -27,7 +27,7 @@
             <small>Use {z}, {x}, {y} placeholders. Example: https://tile.openstreetmap.org/{z}/{x}/{y}.png</small>
         </label>
         {% if errors and errors.map_tile_url %}
-        <small style="color: var(--pico-color-red-500);">{{ errors.map_tile_url }}</small>
+        <small class="field-error">{{ errors.map_tile_url }}</small>
         {% endif %}
 
         <label for="map_attribution">
@@ -37,11 +37,11 @@
             <small>Credit the map provider (required by most tile services).</small>
         </label>
         {% if errors and errors.map_attribution %}
-        <small style="color: var(--pico-color-red-500);">{{ errors.map_attribution }}</small>
+        <small class="field-error">{{ errors.map_attribution }}</small>
         {% endif %}
 
-        <div style="display: flex; gap: 1rem; margin-top: 1rem;">
-            <a href="/setup/operator" role="button" class="outline">&larr; Back</a>
+        <div class="wizard-actions">
+            <a href="/setup/operator" role="button" class="btn-outline">&larr; Back</a>
             <button type="submit">Next &rarr;</button>
         </div>
     </form>

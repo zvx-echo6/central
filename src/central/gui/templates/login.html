@@ -3,31 +3,25 @@
 {% block title %}Central - Login{% endblock %}
 
 {% block content %}
-<article>
-    <header>
-        <h1>Login</h1>
-    </header>
-    
+<div class="auth-card card">
+    <h1>Login</h1>
+
     {% if error %}
-    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    <div class="flash flash-error" role="alert">{{ error }}</div>
     {% endif %}
-    
+
     <form action="/login" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        
-        <label for="username">
-            Username
-            <input type="text" id="username" name="username" required 
-                   autocomplete="username" autofocus>
-        </label>
-        
-        <label for="password">
-            Password
-            <input type="password" id="password" name="password" required
-                   autocomplete="current-password">
-        </label>
-        
-        <button type="submit">Login</button>
+
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" required
+               autocomplete="username" autofocus>
+
+        <label for="password" style="margin-top: 12px;">Password</label>
+        <input type="password" id="password" name="password" required
+               autocomplete="current-password">
+
+        <button type="submit" style="width: 100%; margin-top: 18px;">Login</button>
     </form>
-</article>
+</div>
 {% endblock %}

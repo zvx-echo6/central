@@ -14,16 +14,16 @@
     </header>
 
     {% if error %}
-    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    <div class="flash flash-error" role="alert">{{ error }}</div>
     {% endif %}
 
     {% if success %}
-    <p style="color: var(--pico-color-green-500);">{{ success }}</p>
+    <div class="flash flash-ok" role="status">{{ success }}</div>
     {% endif %}
 
     {% if keys %}
     <h2>Existing Keys</h2>
-    <table>
+    <div class="table-wrap"><table>
         <thead>
             <tr>
                 <th>Alias</th>
@@ -38,7 +38,7 @@
             </tr>
             {% endfor %}
         </tbody>
-    </table>
+    </table></div>
     {% else %}
     <p><em>No API keys configured yet.</em></p>
     {% endif %}
@@ -48,13 +48,13 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="action" value="add">
 
-        <div class="grid">
+        <div class="cols">
             <div>
                 <label for="alias">Alias</label>
                 <input type="text" id="alias" name="alias" placeholder="e.g., firms"
                        value="{{ form_data.alias if form_data else '' }}" maxlength="64">
                 {% if errors and errors.alias %}
-                <small style="color: var(--pico-color-red-500);">{{ errors.alias }}</small>
+                <small class="field-error">{{ errors.alias }}</small>
                 {% else %}
                 <small>Letters, numbers, and underscores only.</small>
                 {% endif %}
@@ -64,14 +64,14 @@
                 <input type="password" id="plaintext_key" name="plaintext_key"
                        placeholder="Paste your API key">
                 {% if errors and errors.plaintext_key %}
-                <small style="color: var(--pico-color-red-500);">{{ errors.plaintext_key }}</small>
+                <small class="field-error">{{ errors.plaintext_key }}</small>
                 {% else %}
                 <small>Will be encrypted before storage.</small>
                 {% endif %}
             </div>
         </div>
 
-        <button type="submit" class="outline">Add Key</button>
+        <button type="submit" class="btn-outline" style="margin-top: 12px;">Add Key</button>
     </form>
 
     <hr>
@@ -79,8 +79,8 @@
     <form action="/setup/keys" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="action" value="next">
-        <div style="display: flex; gap: 1rem;">
-            <a href="/setup/system" role="button" class="outline">&larr; Back</a>
+        <div class="wizard-actions">
+            <a href="/setup/system" role="button" class="btn-outline">&larr; Back</a>
             <button type="submit">Next &rarr;</button>
         </div>
     </form>

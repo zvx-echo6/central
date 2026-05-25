@@ -20,7 +20,7 @@
             <td>
                 {{ adapter.display_name or adapter.name }}
                 {% if adapter.api_key_missing %}
-                <span style="color: var(--pico-color-orange-500); margin-left: 0.5rem;" title="Missing API key: {{ adapter.requires_api_key_alias }}">⚠️ API Key Missing</span>
+                <span class="warn" style="margin-left: 0.5rem;" title="Missing API key: {{ adapter.requires_api_key_alias }}">⚠️ API Key Missing</span>
                 {% endif %}
             </td>
             <td>{% if adapter.enabled %}Yes{% else %}No{% endif %}</td>

@@ -4,7 +4,7 @@
 
 {% block content %}
 <h1>Enrichment</h1>
-<p class="secondary">
+<p class="muted">
     Central-side event enrichment. Results are attached to each event under
     <code>data._enriched.&lt;enricher&gt;</code>. Changes hot-reload into the
     supervisor; switching backend invalidates the enrichment cache. Backend
@@ -25,7 +25,7 @@
                        {% if field.required %}required{% endif %}>
                 {% if field.description %}<small>{{ field.description }}</small>{% endif %}
                 {% if errors and errors[field.name] %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                <small class="field-error">{{ errors[field.name] }}</small>
                 {% endif %}
             {% elif field.widget == "number" %}
                 <label for="{{ field.name }}">{{ field.label }}</label>
@@ -34,7 +34,7 @@
                        {% if field.required %}required{% endif %}>
                 {% if field.description %}<small>{{ field.description }}</small>{% endif %}
                 {% if errors and errors[field.name] %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                <small class="field-error">{{ errors[field.name] }}</small>
                 {% endif %}
             {% endif %}
         {% endfor %}
@@ -53,7 +53,7 @@
                        value="{{ backend_form_data[fk] if backend_form_data and fk in backend_form_data else field.current_value or '' }}">
                 {% if field.description %}<small>{{ field.description }}</small>{% endif %}
                 {% if errors and errors[fk] %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[fk] }}</small>
+                <small class="field-error">{{ errors[fk] }}</small>
                 {% endif %}
             {% elif field.widget == "number" %}
                 <label for="{{ fk }}">{{ field.label }}</label>
@@ -61,7 +61,7 @@
                        value="{{ backend_form_data[fk] if backend_form_data and fk in backend_form_data else field.current_value or '' }}">
                 {% if field.description %}<small>{{ field.description }}</small>{% endif %}
                 {% if errors and errors[fk] %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[fk] }}</small>
+                <small class="field-error">{{ errors[fk] }}</small>
                 {% endif %}
             {% elif field.widget == "checkbox" %}
                 <label>
@@ -71,7 +71,7 @@
                 </label>
                 {% if field.description %}<small>{{ field.description }}</small>{% endif %}
                 {% if errors and errors[fk] %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[fk] }}</small>
+                <small class="field-error">{{ errors[fk] }}</small>
                 {% endif %}
             {% elif field.widget == "json" %}
                 <label for="{{ fk }}">{{ field.label }}</label>
@@ -79,7 +79,7 @@
                           placeholder="{}">{{ backend_form_data[fk] if backend_form_data and fk in backend_form_data else (field.current_value | tojson if field.current_value else '') }}</textarea>
                 <small>JSON object{% if field.description %} — {{ field.description }}{% endif %}</small>
                 {% if errors and errors[fk] %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[fk] }}</small>
+                <small class="field-error">{{ errors[fk] }}</small>
                 {% endif %}
             {% endif %}
         {% endfor %}

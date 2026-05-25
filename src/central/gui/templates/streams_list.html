@@ -5,20 +5,20 @@
 {% block content %}
 <h1>Streams</h1>
 
-<div class="grid">
+<div class="cols">
 {% for stream in streams %}
 <article>
     <header style="display: flex; justify-content: space-between; align-items: center;">
         <strong>{{ stream.name }}</strong>
         {% if stream.managed_max_bytes %}
-        <span style="font-size: 0.8em; background: var(--pico-secondary-background); padding: 0.2em 0.5em; border-radius: 4px;">Managed by supervisor</span>
+        <span style="font-size: 0.8em; background: var(--bg-chip); color: var(--ink-muted); padding: 0.2em 0.5em; border-radius: 4px;">Managed by supervisor</span>
         {% endif %}
     </header>
 
     <div style="margin-bottom: 1rem;">
         <strong>Live Data:</strong>
         {% if stream.error %}
-        <span style="color: var(--pico-color-red-500);">({{ stream.error }})</span>
+        <span class="error">({{ stream.error }})</span>
         {% else %}
         <ul style="margin: 0.5rem 0;">
             <li>Messages: {{ stream.live_messages }}</li>
@@ -59,7 +59,7 @@
     </div>
 
     {% if errors and errors[stream.name] %}
-    <p style="color: var(--pico-color-red-500);">{{ errors[stream.name] }}</p>
+    <p class="error">{{ errors[stream.name] }}</p>
     {% endif %}
 
     <div>
@@ -71,7 +71,7 @@
             <form action="/streams/{{ stream.name }}" method="post" style="margin: 0;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="max_age_s" value="{{ preset_seconds }}">
-                <button type="submit" class="{% if stream.max_age_s == preset_seconds %}contrast{% else %}outline{% endif %}" style="padding: 0.3em 0.6em; font-size: 0.9em;">
+                <button type="submit" class="{% if stream.max_age_s == preset_seconds %}btn-contrast{% else %}btn-outline{% endif %}" style="height: 30px; padding: 0 12px;">
                     {{ label }}
                 </button>
             </form>
@@ -83,7 +83,7 @@
             <label for="custom_days_{{ stream.name }}" style="margin: 0;">Custom:</label>
             <input type="number" id="custom_days_{{ stream.name }}" name="custom_days" min="1" max="1825" placeholder="days" style="width: 100px;" onchange="this.form.max_age_s.value = this.value * 86400;">
             <input type="hidden" name="max_age_s" value="">
-            <button type="submit" class="outline" style="padding: 0.3em 0.6em;">Save</button>
+            <button type="submit" class="btn-outline" style="height: 34px;">Save</button>
         </form>
     </div>
 </article>

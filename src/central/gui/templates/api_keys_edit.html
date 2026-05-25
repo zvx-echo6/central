@@ -27,7 +27,7 @@
                placeholder="Paste your new API key here" required maxlength="4096"
                aria-invalid="{{ 'true' if errors and errors.new_plaintext_key else 'false' }}">
         {% if errors and errors.new_plaintext_key %}
-        <small style="color: var(--pico-color-red-500);">{{ errors.new_plaintext_key }}</small>
+        <small class="field-error">{{ errors.new_plaintext_key }}</small>
         {% else %}
         <small>The key will be encrypted before storage.</small>
         {% endif %}
@@ -40,7 +40,7 @@
     <header><strong>Delete Key</strong></header>
 
     {% if key.used_by %}
-    <p style="color: var(--pico-color-red-500);">
+    <p class="error">
         <strong>Cannot delete:</strong> This key is used by: {{ key.used_by | join(', ') }}.
         Remove these references from the adapters first.
     </p>
@@ -51,12 +51,12 @@
     <p>Permanently delete this API key. This action cannot be undone.</p>
 
     {% if error %}
-    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    <p class="error">{{ error }}</p>
     {% endif %}
 
     <form action="/api-keys/{{ key.alias }}/delete" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="contrast">Delete Key</button>
+        <button type="submit" class="btn-danger">Delete Key</button>
     </form>
     {% endif %}
 </article>

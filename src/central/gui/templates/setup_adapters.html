@@ -21,7 +21,7 @@
     </header>
 
     {% if error %}
-    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    <div class="flash flash-error" role="alert">{{ error }}</div>
     {% endif %}
 
     <form action="/setup/adapters" method="post">
@@ -31,7 +31,7 @@
         <details open style="margin-bottom: 2rem;">
             <summary><strong>{{ adapter.display_name or adapter.name }}</strong></summary>
 
-            <div style="padding: 1rem; border-left: 3px solid var(--pico-primary);">
+            <div style="padding: 1rem; border-left: 3px solid var(--accent);">
                 <label>
                     <input type="checkbox" name="{{ adapter.name }}_enabled"
                            {% if form_data and form_data.get(adapter.name + '_enabled') %}checked
@@ -39,14 +39,14 @@
                     Enabled
                 </label>
                 {% if errors and errors.get(adapter.name + '_enabled') %}
-                <small style="color: var(--pico-color-red-500); display: block;">{{ errors[adapter.name + '_enabled'] }}</small>
+                <small class="field-error">{{ errors[adapter.name + '_enabled'] }}</small>
                 {% endif %}
 
                 <label for="{{ adapter.name }}_cadence_s">Cadence (seconds)</label>
                 <input type="number" id="{{ adapter.name }}_cadence_s" name="{{ adapter.name }}_cadence_s"
                        value="{{ form_data.get(adapter.name + '_cadence_s') if form_data else adapter.cadence_s }}">
                 {% if errors and errors.get(adapter.name + '_cadence_s') %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[adapter.name + '_cadence_s'] }}</small>
+                <small class="field-error">{{ errors[adapter.name + '_cadence_s'] }}</small>
                 {% endif %}
 
                 {% for field in adapter.fields %}
@@ -61,7 +61,7 @@
                         <small>{{ field.description }}</small>
                         {% endif %}
                         {% if errors and errors.get(form_key) %}
-                        <small style="color: var(--pico-color-red-500);">{{ errors[form_key] }}</small>
+                        <small class="field-error">{{ errors[form_key] }}</small>
                         {% endif %}
 
                     {% elif field.widget == "api_key_select" %}
@@ -79,7 +79,7 @@
                         <small>{{ field.description }}</small>
                         {% endif %}
                         {% if errors and errors.get(form_key) %}
-                        <small style="color: var(--pico-color-red-500);">{{ errors[form_key] }}</small>
+                        <small class="field-error">{{ errors[form_key] }}</small>
                         {% endif %}
 
                     {% elif field.widget == "number" %}
@@ -91,7 +91,7 @@
                         <small>{{ field.description }}</small>
                         {% endif %}
                         {% if errors and errors.get(form_key) %}
-                        <small style="color: var(--pico-color-red-500);">{{ errors[form_key] }}</small>
+                        <small class="field-error">{{ errors[form_key] }}</small>
                         {% endif %}
 
                     {% elif field.widget == "checkbox" %}
@@ -105,7 +105,7 @@
                         <small>{{ field.description }}</small>
                         {% endif %}
                         {% if errors and errors.get(form_key) %}
-                        <small style="color: var(--pico-color-red-500);">{{ errors[form_key] }}</small>
+                        <small class="field-error">{{ errors[form_key] }}</small>
                         {% endif %}
 
                     {% elif field.widget == "csv" %}
@@ -115,7 +115,7 @@
                                {% if field.required %}required{% endif %}>
                         <small>Comma-separated values{% if field.description %} — {{ field.description }}{% endif %}</small>
                         {% if errors and errors.get(form_key) %}
-                        <small style="color: var(--pico-color-red-500);">{{ errors[form_key] }}</small>
+                        <small class="field-error">{{ errors[form_key] }}</small>
                         {% endif %}
 
                     {% elif field.widget == "select" %}
@@ -132,7 +132,7 @@
                         <small>{{ field.description }}</small>
                         {% endif %}
                         {% if errors and errors.get(form_key) %}
-                        <small style="color: var(--pico-color-red-500);">{{ errors[form_key] }}</small>
+                        <small class="field-error">{{ errors[form_key] }}</small>
                         {% endif %}
 
                     {% elif field.widget == "checkboxes" %}
@@ -149,7 +149,7 @@
                         <small style="display: block;">{{ field.description }}</small>
                         {% endif %}
                         {% if errors and errors.get(form_key) %}
-                        <small style="color: var(--pico-color-red-500); display: block;">{{ errors[form_key] }}</small>
+                        <small class="field-error">{{ errors[form_key] }}</small>
                         {% endif %}
 
                     {% elif field.widget == "region" %}
@@ -168,7 +168,7 @@
 
                             <div id="region-map-{{ adapter.name }}" style="height: 300px; margin-bottom: 1rem;"></div>
 
-                            <div class="grid">
+                            <div class="cols">
                                 <div>
                                     <label>North</label>
                                     <input type="number" name="{{ region_key }}_north" step="0.0001" min="-90" max="90" readonly
@@ -191,7 +191,7 @@
                                 </div>
                             </div>
                             {% if errors and errors.get(region_key) %}
-                            <small style="color: var(--pico-color-red-500);">{{ errors[region_key] }}</small>
+                            <small class="field-error">{{ errors[region_key] }}</small>
                             {% endif %}
                         </div>
                     {% endif %}
@@ -200,8 +200,8 @@
         </details>
         {% endfor %}
 
-        <div style="display: flex; gap: 1rem; margin-top: 1rem;">
-            <a href="/setup/keys" role="button" class="outline">&larr; Back</a>
+        <div class="wizard-actions">
+            <a href="/setup/keys" role="button" class="btn-outline">&larr; Back</a>
             <button type="submit">Next &rarr;</button>
         </div>
     </form>
