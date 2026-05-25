@@ -4,4 +4,4 @@
 {% set d = (event.data.get('data') or {}).get('data') or {} %}
 {%- set roads = d.get('road_names') or [] -%}
 {%- set road = roads[0] if roads else None -%}
-Work zone{% if road %} on {{ road }}{% endif %}{% if d.get('direction') %} {{ d.direction }}{% endif %}
+Work zone{% if road %} on {{ road }}{% endif %}{% if d.get('direction') and d.direction != 'unknown' %} {{ d.direction }}{% endif %}

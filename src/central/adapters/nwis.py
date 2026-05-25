@@ -142,6 +142,7 @@ class NWISAdapter(SourceAdapter):
 
     # Continuous high-volume water-gauge feed -> the /telemetry tab, not /events.
     data_class = "telemetry"
+    dedup_sweep_days = 30  # telemetry keeps dedup ids longer than the 14-day default
 
     def __init__(
         self,
@@ -217,42 +218,6 @@ class NWISAdapter(SourceAdapter):
                 "region": self.region.model_dump() if self.region else None,
             },
         )
-
-    def is_published(self, dedup_key: str) -> bool:
-        if not self._db:
-            return False
-        cur = self._db.execute(
-            "SELECT 1 FROM published_ids WHERE adapter = ? AND event_id = ?",
-            (self.name, dedup_key),
-        )
-        return cur.fetchone() is not None
-
-    def mark_published(self, dedup_key: str) -> None:
-        if not self._db:
-            return
-        self._db.execute(
-            """
-            INSERT INTO published_ids (adapter, event_id, first_seen, last_seen)
-            VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (adapter, event_id) DO UPDATE SET
-                last_seen = CURRENT_TIMESTAMP
-            """,
-            (self.name, dedup_key),
-        )
-        self._db.commit()
-
-    def sweep_old_ids(self) -> int:
-        if not self._db:
-            return 0
-        cur = self._db.execute(
-            "DELETE FROM published_ids WHERE adapter = ? AND last_seen < datetime('now', '-30 days')",
-            (self.name,),
-        )
-        self._db.commit()
-        count = cur.rowcount
-        if count > 0:
-            logger.info("NWIS swept old dedup entries", extra={"count": count})
-        return count
 
     def subject_for(self, event: Event) -> str:
         # event.category is "hydro.<parameter_code>.<agency>.<bare_site_no>"

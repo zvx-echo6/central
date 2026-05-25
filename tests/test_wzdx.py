@@ -150,3 +150,11 @@ def test_summary_partial_renders_subject():
     flat = {"road_names": ["I-80"], "direction": "eastbound"}
     row = {"adapter": "wzdx", "data": {"data": {"data": flat}}}
     assert _derive_subject(row) == "Work zone on I-80 eastbound"
+
+
+def test_summary_omits_unknown_direction():
+    # direction "unknown" (common in e.g. AZ mcdot) must not leak into the subject.
+    from central.gui.routes import _derive_subject
+    flat = {"road_names": ["I-80"], "direction": "unknown"}
+    row = {"adapter": "wzdx", "data": {"data": {"data": flat}}}
+    assert _derive_subject(row) == "Work zone on I-80"
