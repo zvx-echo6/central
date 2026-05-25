@@ -75,6 +75,13 @@ def _build_geom_sql(geo_data: dict[str, Any] | None) -> str | None:
     if not geo_data:
         return None
 
+    # A full GeoJSON geometry (e.g. flow-segment LineString) wins over the
+    # bbox/centroid fallbacks so the map renders the real shape. Inert for
+    # adapters that don't set geo.geometry.
+    geometry = geo_data.get("geometry")
+    if geometry:
+        return json.dumps(geometry)
+
     bbox = geo_data.get("bbox")
     centroid = geo_data.get("centroid")
 

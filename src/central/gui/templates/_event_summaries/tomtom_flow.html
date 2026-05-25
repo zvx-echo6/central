@@ -1,0 +1,5 @@
+{# TomTom flow segment one-line subject. relative_speed -> % of free-flow.
+   Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{%- set rs = d.get('relative_speed') -%}
+Traffic flow{% if d.get('road_category') %} ({{ d.road_category }}){% endif %}{% if rs is not none %} — {{ (rs * 100) | round | int }}% of free-flow{% endif %}

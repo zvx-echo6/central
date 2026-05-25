@@ -15,6 +15,7 @@ class Geo(BaseModel):
     bbox: tuple[float, float, float, float] | None = None  # (minLon, minLat, maxLon, maxLat)
     regions: list[str] = []  # ["US-ID-Ada", "US-ID-Z033", ...]
     primary_region: str | None = None  # alphabetically first region, used for subject
+    geometry: dict[str, Any] | None = None  # full GeoJSON geometry; preferred by the archive over bbox/centroid for the map geom column
 
 
 class Event(BaseModel):

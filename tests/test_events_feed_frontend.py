@@ -1144,6 +1144,7 @@ _SAMPLE_INNER = {
     "wfigs_perimeters": {"county": "Carbon", "state": "MT"},
     "wzdx": {"road_names": ["I-80"], "direction": "eastbound"},
     "state_511_atis": {"layer": "Incidents", "roadway_name": "US-95", "location_description": "Ponderosa Mobile Home Park"},
+    "tomtom_flow": {"road_category": "primary", "relative_speed": 0.11},
 }
 
 # Exact expected subjects for the deterministic adapters. swpc_alerts is omitted
@@ -1163,6 +1164,7 @@ _EXPECTED_SUBJECT = {
     "wfigs_incidents": "Wildfire incident — Montezuma, CO",
     "wfigs_perimeters": "Wildfire perimeter — Carbon, MT",
     "wzdx": "Work zone on I-80 eastbound",
+    "tomtom_flow": "Traffic flow (primary) — 11% of free-flow",
 }
 
 

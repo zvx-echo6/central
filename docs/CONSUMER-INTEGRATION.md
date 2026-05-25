@@ -132,6 +132,7 @@ Central's archive.
 | `CENTRAL_DISASTER` | `central.disaster.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_HYDRO` | `central.hydro.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_TRAFFIC` | `central.traffic.>` | 7 | 1 GiB | ✓ | ✓ |
+| `CENTRAL_TRAFFIC_FLOW` | `central.traffic_flow.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_META` | `central.meta.>` | 1 | 1 GiB | — | ✓ |
 
 Retention and storage caps are migration-seeded defaults visible in `config.streams`;
@@ -1516,6 +1517,40 @@ road name, description, county, severity). Verified for Idaho only.
   user-ready; the geocoder fills `city` from the joined coordinates.
 - **Removal semantics:** none in v1. Events age out of the upstream feed; the
   14-day dedup sweep expires stale ids.
+
+### tomtom_flow — TomTom Orbis vector flow tiles (per-segment speed, telemetry)
+
+Per-road-segment traffic speed from TomTom Orbis **vector** flow tiles, polled for
+a configured tile coverage set (Idaho metros at z=10). Each segment is one
+telemetry Event carrying a LineString/MultiLineString geometry (drawn as a
+colored polyline on the `/telemetry` map) — green free-flowing, red jammed.
+
+- **Stream:** `CENTRAL_TRAFFIC_FLOW` (telemetry; `/telemetry` tab).
+- **Subject pattern:** `central.traffic_flow.{z}.{x}.{y}` — tile-routable (segments
+  carry no state). Distinct token from `central.traffic.>` (no overlap).
+- **GUI event_type:** `flow` (from `category = "flow.tomtom_flow"`).
+- **Cadence default:** 300s (5 min). **Retention:** 7 days (high-volume telemetry).
+- **Dedup key shape:** `{z}/{x}/{y}:{segment_index}:{minute}` — minute-bucketed so
+  an adapter poll and an on-demand passthrough fetch of the same tile in the same
+  minute don't double-store (TomTom advertises a 60s tile TTL).
+- **Event.data fields:**
+
+  | key | type | nullable | description |
+  |---|---|---|---|
+  | `relative_speed` | float | yes | 0-1 ratio of current to free-flow speed (drives severity + color) |
+  | `road_category` | str | yes | `motorway` / `trunk` / `primary` / `secondary` |
+  | `tile_z` / `tile_x` / `tile_y` | int | no | Source slippy tile |
+  | `segment_index` | int | no | Index within the tile's "Traffic flow" layer |
+  | `tier` | str | no | `orbis` |
+  | `fetched_at` | str (ISO 8601 UTC) | no | Poll timestamp |
+
+  Geometry (the road polyline) is on `geo.geometry`, persisted to the PostGIS
+  `geom` column and returned by the map as GeoJSON.
+- **Severity:** from `relative_speed` — `>=0.75`=1 (free), `0.5-0.75`=2, `0.25-0.5`=3,
+  `<0.25`=4 (jam).
+- **Decipherable as-is:** yes — speed ratio + road class + geometry are self-contained.
+- **Removal semantics:** none; time-series telemetry, one snapshot per poll, swept
+  by the 7-day retention.
 
 ### wzdx — FHWA Work Zone Data Exchange (state-DOT work zones)
 

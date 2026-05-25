@@ -1,0 +1,6 @@
+{# TomTom flow segment detail rows. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('road_category') %}<dt>Road class</dt><dd>{{ d.road_category }}</dd>{% endif %}
+{% if d.get('relative_speed') is not none %}<dt>Relative speed</dt><dd>{{ (d.relative_speed * 100) | round | int }}% of free-flow</dd>{% endif %}
+{% if d.get('tile_z') is not none %}<dt>Tile</dt><dd>{{ d.tile_z }}/{{ d.tile_x }}/{{ d.tile_y }} (segment {{ d.segment_index }})</dd>{% endif %}
+{% if d.get('fetched_at') %}<dt>Fetched</dt><dd>{{ d.fetched_at }}</dd>{% endif %}
