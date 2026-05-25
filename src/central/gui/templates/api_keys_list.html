@@ -8,6 +8,7 @@
 <p><a href="/api-keys/new" role="button">Add New Key</a></p>
 
 {% if keys %}
+<div class="table-wrap">
 <table>
     <thead>
         <tr>
@@ -28,12 +29,13 @@
             <td>{{ key.last_used_at.strftime('%Y-%m-%d %H:%M') if key.last_used_at else '(never)' }}</td>
             <td>{% if key.used_by %}{{ key.used_by | join(', ') }}{% else %}<em>(none)</em>{% endif %}</td>
             <td>
-                <a href="/api-keys/{{ key.alias }}" role="button" class="outline" style="padding: 0.3em 0.6em; font-size: 0.9em;">Manage</a>
+                <a href="/api-keys/{{ key.alias }}" role="button" class="btn-outline" style="height: 28px; padding: 0 12px;">Manage</a>
             </td>
         </tr>
         {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 <p>No API keys configured.</p>
 {% endif %}

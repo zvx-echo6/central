@@ -1,50 +1,45 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Central{% endblock %}</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="/static/css/central.css">
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
-    <nav class="container">
-        <ul>
-            <li><strong>Central</strong></li>
-        </ul>
-        <ul>
-            {% if operator %}
-            <li><a href="/">Dashboard</a></li>
-            <li><a href="/adapters">Adapters</a></li>
-            <li><a href="/events">Events</a></li>
-            <li><a href="/telemetry">Telemetry</a></li>
-            <li><a href="/streams">Streams</a></li>
-            <li><a href="/enrichment">Enrichment</a></li>
-            <li><a href="/api-keys">API Keys</a></li>
-            <li>{{ operator.username }}</li>
-            <li><a href="/change-password">Change Password</a></li>
-            <li>
-                <form action="/logout" method="post" style="margin: 0;">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="outline">Logout</button>
-                </form>
-            </li>
-            {% else %}
-            <li><a href="/login">Login</a></li>
-            {% endif %}
-        </ul>
+    <nav class="nav">
+        <div class="brand">Central</div>
+        {% if operator %}
+        <div class="nav-links">
+            <a href="/">Dashboard</a>
+            <a href="/adapters">Adapters</a>
+            <a href="/events">Events</a>
+            <a href="/telemetry">Telemetry</a>
+            <a href="/streams">Streams</a>
+            <a href="/enrichment">Enrichment</a>
+            <a href="/api-keys">API Keys</a>
+            <span class="sep">·</span>
+            <span class="who">{{ operator.username }}</span>
+            <a href="/change-password">Change Password</a>
+            <form action="/logout" method="post" style="margin: 0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="logout-btn">Logout</button>
+            </form>
+        </div>
+        {% else %}
+        <div class="nav-links">
+            <a href="/login">Login</a>
+        </div>
+        {% endif %}
     </nav>
-    <main class="container">
+    <main class="page">
         {% if error %}
-        <article aria-label="Error">
-            <p style="color: var(--pico-color-red-500);">{{ error }}</p>
-        </article>
+        <div class="flash flash-error" role="alert">{{ error }}</div>
         {% endif %}
         {% if success %}
-        <article aria-label="Success">
-            <p style="color: var(--pico-color-green-500);">{{ success }}</p>
-        </article>
+        <div class="flash flash-ok" role="status">{{ success }}</div>
         {% endif %}
         {% block content %}{% endblock %}
     </main>

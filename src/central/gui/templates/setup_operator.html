@@ -14,7 +14,7 @@
     </header>
 
     {% if error %}
-    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    <div class="flash flash-error" role="alert">{{ error }}</div>
     {% endif %}
 
     <form action="/setup/operator" method="post">

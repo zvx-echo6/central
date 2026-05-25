@@ -14,12 +14,12 @@
     </header>
 
     {% if error %}
-    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    <div class="flash flash-error" role="alert">{{ error }}</div>
     {% endif %}
 
     <h2>Summary</h2>
 
-    <table>
+    <div class="table-wrap"><table>
         <tbody>
             <tr>
                 <th>Operators</th>
@@ -34,10 +34,10 @@
                 <td style="word-break: break-all;">{{ system.map_tile_url }}</td>
             </tr>
         </tbody>
-    </table>
+    </table></div>
 
     <h3>Adapters</h3>
-    <table>
+    <div class="table-wrap"><table>
         <thead>
             <tr>
                 <th>Adapter</th>
@@ -51,21 +51,21 @@
                 <td><strong>{{ adapter.name }}</strong></td>
                 <td>
                     {% if adapter.enabled %}
-                    <span style="color: var(--pico-color-green-500);">Enabled</span>
+                    <span class="status-ok">Enabled</span>
                     {% else %}
-                    <span style="color: var(--pico-color-grey-500);">Disabled</span>
+                    <span class="muted">Disabled</span>
                     {% endif %}
                 </td>
                 <td>{{ adapter.cadence_s }}s</td>
             </tr>
             {% endfor %}
         </tbody>
-    </table>
+    </table></div>
 
     <form action="/setup/finish" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <div style="display: flex; gap: 1rem; margin-top: 2rem;">
-            <a href="/setup/adapters" role="button" class="outline">&larr; Back</a>
+        <div class="wizard-actions">
+            <a href="/setup/adapters" role="button" class="btn-outline">&larr; Back</a>
             <button type="submit">Finish Setup</button>
         </div>
     </form>

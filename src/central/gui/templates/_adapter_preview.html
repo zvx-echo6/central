@@ -1,12 +1,10 @@
 {% if preview_error %}
-<article aria-label="Preview Unavailable" style="background-color: var(--pico-del-color); margin-bottom: 1rem;">
-    <strong>{{ preview_error }}</strong>
-</article>
+<div class="flash flash-error"><strong>{{ preview_error }}</strong></div>
 {% elif preview_rows is not none %}
 <fieldset>
     <legend>Preview ({{ preview_rows|length }} rows)</legend>
     {% if preview_rows %}
-    <table class="preview-table" role="grid">
+    <div class="table-wrap"><table class="preview-table">
         <thead>
             <tr>
                 {% for col in preview_rows[0].keys() %}<th>{{ col }}</th>{% endfor %}
@@ -19,7 +17,7 @@
             </tr>
             {% endfor %}
         </tbody>
-    </table>
+    </table></div>
     {% endif %}
 </fieldset>
 {% endif %}

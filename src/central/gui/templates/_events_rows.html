@@ -1,10 +1,9 @@
 {% if filter_error %}
-<article aria-label="Filter Error" style="background-color: var(--pico-del-color); padding: 1rem; margin-bottom: 1rem;">
-    <strong>Filter Error:</strong> {{ filter_error }}
-</article>
+<div class="flash flash-error" role="alert"><strong>Filter Error:</strong> {{ filter_error }}</div>
 {% endif %}
 
 {% if events %}
+<div class="table-wrap">
 <table class="events-table">
     <thead>
         <tr>
@@ -69,6 +68,7 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 
 {# Real offset paginator (v0.7.3). Each link carries offset + the filter
    query_string (which excludes cursor/offset); limit persists via query_string. #}

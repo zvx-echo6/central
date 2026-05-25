@@ -10,9 +10,9 @@
     </header>
     
     {% if error %}
-    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    <div class="flash flash-error" role="alert">{{ error }}</div>
     {% endif %}
-    
+
     <form action="/setup" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         

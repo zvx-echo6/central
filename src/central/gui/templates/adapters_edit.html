@@ -11,25 +11,21 @@
 
 {% block content %}
 <h1>{{ adapter.display_name }}</h1>
-<p class="secondary">{{ adapter.description }}</p>
+<p class="muted">{{ adapter.description }}</p>
 
 {% if adapter.paused_at %}
-<article aria-label="Adapter Paused" style="background-color: var(--pico-mark-background-color); margin-bottom: 1rem;">
-    <strong>⏸️ Paused</strong> since {{ adapter.paused_at }}
-</article>
+<div class="flash flash-warn"><strong>⏸️ Paused</strong> since {{ adapter.paused_at }}</div>
 {% endif %}
 
 {% if adapter.last_error %}
-<article aria-label="Last Error" style="background-color: var(--pico-del-color); margin-bottom: 1rem;">
-    <strong>Last Error:</strong> {{ adapter.last_error }}
-</article>
+<div class="flash flash-error"><strong>Last Error:</strong> {{ adapter.last_error }}</div>
 {% endif %}
 
 {% if api_key_missing %}
-<article aria-label="API Key Required" style="background-color: var(--pico-mark-background-color); margin-bottom: 1rem;">
+<div class="flash flash-warn">
     <strong>⚠️ API Key Required:</strong> This adapter requires the <code>{{ requires_api_key_alias }}</code> API key to be configured before it can be enabled.
     <a href="/api-keys">Configure API Keys</a>
-</article>
+</div>
 {% endif %}
 
 <form method="post" action="/adapters/{{ adapter.name }}">
@@ -48,7 +44,7 @@
                value="{{ form_data.cadence_s if form_data else adapter.cadence_s }}"
                required>
         {% if errors and errors.cadence_s %}
-        <small style="color: var(--pico-color-red-500);">{{ errors.cadence_s }}</small>
+        <small class="field-error">{{ errors.cadence_s }}</small>
         {% endif %}
     </fieldset>
 
@@ -68,7 +64,7 @@
                 <small>{{ field.description }}</small>
                 {% endif %}
                 {% if errors and errors[field.name] %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                <small class="field-error">{{ errors[field.name] }}</small>
                 {% endif %}
 
             {% elif field.widget == "number" %}
@@ -80,7 +76,7 @@
                 <small>{{ field.description }}</small>
                 {% endif %}
                 {% if errors and errors[field.name] %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                <small class="field-error">{{ errors[field.name] }}</small>
                 {% endif %}
 
             {% elif field.widget == "checkbox" %}
@@ -95,7 +91,7 @@
                 <small>{{ field.description }}</small>
                 {% endif %}
                 {% if errors and errors[field.name] %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                <small class="field-error">{{ errors[field.name] }}</small>
                 {% endif %}
 
             {% elif field.widget == "csv" %}
@@ -105,7 +101,7 @@
                        {% if field.required %}required{% endif %}>
                 <small>Comma-separated values{% if field.description %} — {{ field.description }}{% endif %}</small>
                 {% if errors and errors[field.name] %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                <small class="field-error">{{ errors[field.name] }}</small>
                 {% endif %}
 
             {% elif field.widget == "select" %}
@@ -122,7 +118,7 @@
                 <small>{{ field.description }}</small>
                 {% endif %}
                 {% if errors and errors[field.name] %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                <small class="field-error">{{ errors[field.name] }}</small>
                 {% endif %}
 
             {% elif field.widget == "checkboxes" %}
@@ -139,7 +135,7 @@
                 <small style="display: block;">{{ field.description }}</small>
                 {% endif %}
                 {% if errors and errors[field.name] %}
-                <small style="color: var(--pico-color-red-500); display: block;">{{ errors[field.name] }}</small>
+                <small class="field-error">{{ errors[field.name] }}</small>
                 {% endif %}
 
             {% elif field.widget == "api_key_select" %}
@@ -157,7 +153,7 @@
                 <small>{{ field.description }}</small>
                 {% endif %}
                 {% if errors and errors[field.name] %}
-                <small style="color: var(--pico-color-red-500);">{{ errors[field.name] }}</small>
+                <small class="field-error">{{ errors[field.name] }}</small>
                 {% endif %}
             {% endif %}
         {% endfor %}
@@ -181,6 +177,6 @@
     {% include "_adapter_preview.html" %}
 
     <button type="submit">Save Changes</button>
-    <a href="/adapters" role="button" class="outline">Cancel</a>
+    <a href="/adapters" role="button" class="btn-outline">Cancel</a>
 </form>
 {% endblock %}

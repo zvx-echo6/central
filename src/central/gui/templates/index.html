@@ -4,7 +4,7 @@
 
 {% block content %}
 <h1>Dashboard</h1>
-<div class="grid">
+<div class="cols">
     <article>
         <header>Events (24h)</header>
         <div hx-get="/dashboard/events" hx-trigger="load, every 10s" hx-swap="innerHTML">
