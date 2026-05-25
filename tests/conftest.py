@@ -22,13 +22,23 @@ def isolate_enrichment_cache(tmp_path, monkeypatch):
     so without this fixture the suite writes to (or, for any user without write
     access to /var/lib/central, fails on) the live cache. Point it at a
     per-test temp dir so no test ever touches the production path.
+
+    Also redirects the NWIS adapter's site/stats cache (v0.8.0,
+    `central.adapters.nwis.NWIS_CACHE_DB_PATH`, same /var/lib/central prod
+    default) for the same reason — NWISAdapter.startup() opens it.
     """
     import central.supervisor as supervisor_mod
+    import central.adapters.nwis as nwis_mod
 
     monkeypatch.setattr(
         supervisor_mod,
         "ENRICHMENT_CACHE_DB_PATH",
         tmp_path / "enrichment_cache.db",
+    )
+    monkeypatch.setattr(
+        nwis_mod,
+        "NWIS_CACHE_DB_PATH",
+        tmp_path / "nwis_cache.db",
     )
 
 

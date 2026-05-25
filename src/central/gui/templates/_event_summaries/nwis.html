@@ -1,2 +1,15 @@
+{# USGS NWIS one-line summary (v0.8.0). Prefer site name + value + WaterWatch
+   band/percentile; fall back to "<site> — <value>" when stats are absent but the
+   site is named; finally to the bare "Water reading: <value>" so we never regress. #}
 {% set d = (event.data.get('data') or {}).get('data') or {} %}
-{%- if d.get('value') is not none %}Water reading: {{ d.value }}{% if d.get('unit_of_measure') %} {{ d.unit_of_measure }}{% endif %}{% endif -%}
+{% set enr = d.get('_enriched') or {} %}
+{% set site = enr.get('usgs_site') or {} %}
+{% set st = enr.get('usgs_stats') or {} %}
+{%- set p = st.get('percentile') -%}
+{%- set suf = (('th' if (p % 100) in [11, 12, 13] else {1: 'st', 2: 'nd', 3: 'rd'}.get(p % 10, 'th')) if p is not none else '') -%}
+{%- if site.get('name') and d.get('value') is not none -%}
+{{ site.name }} — {{ d.value }}{% if d.get('unit_of_measure') %} {{ d.unit_of_measure }}{% endif %}
+{%- if st.get('class_label') %} ({{ st.class_label }}{% if p is not none %}, {{ p }}{{ suf }} percentile{% endif %}){% endif -%}
+{%- elif d.get('value') is not none -%}
+Water reading: {{ d.value }}{% if d.get('unit_of_measure') %} {{ d.unit_of_measure }}{% endif %}
+{%- endif -%}

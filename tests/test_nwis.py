@@ -175,6 +175,9 @@ class TestNWISAdapter:
             tmp_path / "cursors.db",
         )
         adapter._fetch = AsyncMock(return_value=_fixture_text())
+        # Isolate polling fetches from v0.8.0 per-event site/stats enrichment
+        # (which also calls _fetch); enrichment is covered in test_nwis_enrichment.
+        adapter._enrich_event = AsyncMock(return_value=None)
         await adapter.startup()
         events = [e async for e in adapter.poll()]
         await adapter.shutdown()
@@ -215,6 +218,8 @@ class TestNWISAdapter:
             tmp_path / "cursors.db",
         )
         adapter._fetch = AsyncMock(side_effect=[json.dumps(page1), json.dumps(page2)])
+        # Isolate polling fetches from v0.8.0 per-event site/stats enrichment.
+        adapter._enrich_event = AsyncMock(return_value=None)
         await adapter.startup()
         events = [e async for e in adapter.poll()]
         await adapter.shutdown()
