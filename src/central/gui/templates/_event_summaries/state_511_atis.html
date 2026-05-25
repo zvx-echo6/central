@@ -1,0 +1,7 @@
+{# State 511 (Castle Rock ATIS) one-line subject. Lead label by layer + road +
+   cross-street location; county/state render in the generic Location column
+   (it falls back to d.county/d.state). Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{%- set labels = {'Incidents': 'Incident', 'Closures': 'Closure', 'Construction': 'Road work'} -%}
+{%- set lead = labels.get(d.get('layer'), 'Traffic event') -%}
+{{ lead }}{% if d.get('roadway_name') %} on {{ d.roadway_name }}{% endif %}{% if d.get('location_description') %} — {{ d.location_description }}{% endif %}

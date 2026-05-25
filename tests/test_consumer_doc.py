@@ -59,7 +59,7 @@ def _per_adapter_subsections(doc: str) -> list[str]:
     assert m, "doc missing '## 6. Per-adapter reference' section"
     section = m.group(1)
 
-    heading_re = re.compile(r"^### ([a-z_]+) — ", re.MULTILINE)
+    heading_re = re.compile(r"^### ([a-z0-9_]+) — ", re.MULTILINE)
     return heading_re.findall(section)
 
 
