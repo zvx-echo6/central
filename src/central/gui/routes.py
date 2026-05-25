@@ -5,8 +5,9 @@ import html
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlencode
 
 logger = logging.getLogger("central.gui.routes")
 
@@ -2616,9 +2617,158 @@ class EventsQueryResult:
         self.error = error
 
 
-def _parse_events_params(params) -> tuple[dict | None, str | None]:
+# --- v0.7.1 filtering: shared constants + pure helpers ----------------------
+
+# Map a severity label (UI) to the numeric severity values it covers. Numeric
+# scale per nws.SEVERITY_MAP (Extreme=4..Minor=1, Unknown=None). "unknown"
+# also covers NULL and sev 0 (no assessment) -- handled in the query builder.
+SEVERITY_LABELS: dict[str, list[int]] = {
+    "critical": [4], "high": [3], "moderate": [2], "low": [1], "unknown": [0],
+}
+SEVERITY_ORDER = ["critical", "high", "moderate", "low", "unknown"]
+
+TIME_PRESETS: dict[str, timedelta] = {
+    "last_15m": timedelta(minutes=15),
+    "last_1h": timedelta(hours=1),
+    "last_6h": timedelta(hours=6),
+    "last_24h": timedelta(hours=24),
+    "last_7d": timedelta(days=7),
+}
+TIME_PRESET_LABELS = {
+    "last_15m": "Last 15 min", "last_1h": "Last 1 hour", "last_6h": "Last 6 hours",
+    "last_24h": "Last 24 hours", "last_7d": "Last 7 days",
+    "active": "Active now", "all": "All time",
+}
+DEFAULT_TIME = "last_24h"
+
+# Adapter -> domain grouping for the chip-picker (registry-derived; any adapter
+# not listed here falls into "Other"). Group order is the display order.
+ADAPTER_GROUPS = {
+    "Disasters": ["gdacs", "firms", "inciweb", "wfigs_incidents", "wfigs_perimeters"],
+    "Weather": ["nws"],
+    "Space": ["swpc_alerts", "swpc_kindex", "swpc_protons"],
+    "Geophysical": ["usgs_quake", "nwis"],
+    "Earth Observation": ["eonet"],
+}
+# Same palette the map legend uses, indexed by sorted-adapter position.
+EVENTS_PALETTE = [
+    "#f59e0b", "#dc2626", "#7c3aed", "#2563eb", "#059669", "#db2777",
+    "#0891b2", "#65a30d", "#ea580c", "#4f46e5", "#9333ea", "#0d9488",
+]
+
+
+def _csv_param(params, name: str) -> list[str]:
+    """Parse a comma-separated multi-value query param into a clean list."""
+    raw = (params.get(name) or "").strip()
+    return [v.strip() for v in raw.split(",") if v.strip()] if raw else []
+
+
+def _query_items(params):
+    """(key, value) pairs from Starlette QueryParams (multi-valued) or a plain
+    dict (as used in unit tests)."""
+    if hasattr(params, "multi_items"):
+        return params.multi_items()
+    return list(params.items())
+
+
+def _ilike_escape(term: str) -> str:
+    """Escape LIKE wildcards so user input is matched literally (ESCAPE '\\')."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _resolve_time(token: str | None, now: datetime):
+    """Resolve a time token to (since, until, active, error).
+
+    'all'/None -> no time filter; 'active' -> active-now flag; presets -> since;
+    'custom:<from_iso>,<to_iso>' -> explicit range. Pure (clock injected).
+    """
+    if token in (None, "", "all"):
+        return None, None, False, None
+    if token == "active":
+        return None, None, True, None
+    if token in TIME_PRESETS:
+        return now - TIME_PRESETS[token], None, False, None
+    if token.startswith("custom:"):
+        f, _, t = token[len("custom:"):].partition(",")
+        try:
+            since = datetime.fromisoformat(f.replace("Z", "+00:00")) if f else None
+            until = datetime.fromisoformat(t.replace("Z", "+00:00")) if t else None
+        except ValueError:
+            return None, None, False, "Invalid datetime in custom time range"
+        if since and until and since > until:
+            return None, None, False, "time 'from' must be before 'to'"
+        return since, until, False, None
+    return None, None, False, f"Unknown time preset: {token}"
+
+
+def _adapter_filter_options():
+    """Registry-derived (flat, grouped) adapter options for the chip-picker.
+
+    flat: [{name, display_name, color}] sorted by name (color by sorted index,
+    matching the map legend). grouped: [(group_label, [{value,label,color}])].
+    """
+    reg = discover_adapters()
+    ordered = sorted(reg.values(), key=lambda c: c.name)
+    color_by_name = {
+        cls.name: EVENTS_PALETTE[i % len(EVENTS_PALETTE)] for i, cls in enumerate(ordered)
+    }
+    flat = [
+        {"name": cls.name, "display_name": cls.display_name, "color": color_by_name[cls.name]}
+        for cls in ordered
+    ]
+    grouped, grouped_names = [], set()
+    for group_label, names in ADAPTER_GROUPS.items():
+        items = [
+            {"value": n, "label": reg[n].display_name, "color": color_by_name[n]}
+            for n in names if n in reg
+        ]
+        if items:
+            grouped.append((group_label, items))
+            grouped_names.update(items_n["value"] for items_n in items)
+    leftover = [
+        {"value": c.name, "label": c.display_name, "color": color_by_name[c.name]}
+        for c in ordered if c.name not in grouped_names
+    ]
+    if leftover:
+        grouped.append(("Other", leftover))
+    return flat, grouped
+
+
+def _build_active_pills(parsed: dict, adapter_total: int) -> list[dict]:
+    """Server-side active-filter pills (descriptors) from parsed filter state.
+
+    Each pill: {"key": <param name to clear>, "label": <human text>}.
+    """
+    pills: list[dict] = []
+    if parsed.get("q"):
+        pills.append({"key": "q", "label": f'Search: "{parsed["q"]}"'})
+    if parsed.get("adapters"):
+        pills.append({"key": "adapter",
+                      "label": f'Adapters: {len(parsed["adapters"])} of {adapter_total}'})
+    if parsed.get("categories"):
+        pills.append({"key": "category", "label": f'Categories: {len(parsed["categories"])}'})
+    if parsed.get("event_types"):
+        pills.append({"key": "event_type",
+                      "label": "Event types: " + ", ".join(parsed["event_types"])})
+    if parsed.get("severities"):
+        rank = {lbl: i for i, lbl in enumerate(SEVERITY_ORDER)}
+        labs = sorted(parsed["severities"], key=lambda s: rank.get(s, 99))
+        pills.append({"key": "severity", "label": "Severity: " + ", ".join(labs)})
+    token = parsed.get("time_token")
+    if token and token != "all":
+        label = "Custom range" if token.startswith("custom:") else TIME_PRESET_LABELS.get(token, token)
+        pills.append({"key": "time", "label": label})
+    return pills
+
+
+def _parse_events_params(params, default_time: str | None = None) -> tuple[dict | None, str | None]:
     """
     Parse and validate events query parameters.
+
+    Multi-value filters (adapter, category, event_type, severity) are
+    comma-separated. `time` is a single token (preset / active / all /
+    custom:from,to); legacy since/until are still honored for the JSON API.
+    `default_time` (GUI only) supplies the time token when none is given.
 
     Returns:
         (parsed_params, error_message)
@@ -2634,37 +2784,42 @@ def _parse_events_params(params) -> tuple[dict | None, str | None]:
     if limit < 1 or limit > 200:
         return None, "limit must be between 1 and 200"
 
-    # Parse adapter filter
-    adapter = params.get("adapter")
-    if adapter == "":
-        adapter = None
+    # Multi-value filters (comma-separated; a single value is just a CSV of
+    # length 1, preserving the old single-value API). Unknown severity labels
+    # are ignored rather than erroring.
+    q = (params.get("q") or "").strip()[:200] or None
+    adapters = _csv_param(params, "adapter")
+    categories = _csv_param(params, "category")
+    event_types = _csv_param(params, "event_type")
+    severities = [s for s in _csv_param(params, "severity") if s in SEVERITY_LABELS]
 
-    # Parse category filter
-    category = params.get("category")
-    if category == "":
-        category = None
-
-    # Parse since/until filters
-    since = None
-    until = None
-
-    since_str = params.get("since")
-    if since_str:
-        try:
-            since = datetime.fromisoformat(since_str.replace("Z", "+00:00"))
-        except ValueError:
-            return None, f"Invalid ISO 8601 datetime for since: {since_str}"
-
-    until_str = params.get("until")
-    if until_str:
-        try:
-            until = datetime.fromisoformat(until_str.replace("Z", "+00:00"))
-        except ValueError:
-            return None, f"Invalid ISO 8601 datetime for until: {until_str}"
-
-    # Validate since <= until
-    if since and until and since > until:
-        return None, "since must be before or equal to until"
+    # Time: a single token wins; otherwise legacy since/until (JSON API); then
+    # the GUI-supplied default_time when nothing else is given.
+    time_token = params.get("time") or None
+    since = until = None
+    active = False
+    if time_token:
+        since, until, active, terr = _resolve_time(time_token, datetime.now(timezone.utc))
+        if terr:
+            return None, terr
+    else:
+        since_str = params.get("since")
+        if since_str:
+            try:
+                since = datetime.fromisoformat(since_str.replace("Z", "+00:00"))
+            except ValueError:
+                return None, f"Invalid ISO 8601 datetime for since: {since_str}"
+        until_str = params.get("until")
+        if until_str:
+            try:
+                until = datetime.fromisoformat(until_str.replace("Z", "+00:00"))
+            except ValueError:
+                return None, f"Invalid ISO 8601 datetime for until: {until_str}"
+        if since and until and since > until:
+            return None, "since must be before or equal to until"
+        if since is None and until is None and default_time:
+            time_token = default_time
+            since, until, active, _ = _resolve_time(time_token, datetime.now(timezone.utc))
 
     # Parse region bbox
     region_north = params.get("region_north")
@@ -2729,10 +2884,15 @@ def _parse_events_params(params) -> tuple[dict | None, str | None]:
 
     return {
         "limit": limit,
-        "adapter": adapter,
-        "category": category,
+        "q": q,
+        "adapters": adapters,
+        "categories": categories,
+        "event_types": event_types,
+        "severities": severities,
+        "time_token": time_token,
         "since": since,
         "until": until,
+        "active": active,
         "bbox": bbox,
         "cursor_time": cursor_time,
         "cursor_id": cursor_id,
@@ -2766,10 +2926,14 @@ async def _fetch_events(parsed_params: dict) -> EventsQueryResult:
     pool = get_pool()
 
     limit = parsed_params["limit"]
-    adapter = parsed_params["adapter"]
-    category = parsed_params["category"]
+    q = parsed_params.get("q")
+    adapters = parsed_params.get("adapters") or []
+    categories = parsed_params.get("categories") or []
+    event_types = parsed_params.get("event_types") or []
+    severities = parsed_params.get("severities") or []
     since = parsed_params["since"]
     until = parsed_params["until"]
+    active = parsed_params.get("active", False)
     bbox = parsed_params["bbox"]
     cursor_time = parsed_params["cursor_time"]
     cursor_id = parsed_params["cursor_id"]
@@ -2779,15 +2943,42 @@ async def _fetch_events(parsed_params: dict) -> EventsQueryResult:
     query_params = []
     param_idx = 1
 
-    if adapter:
-        conditions.append(f"adapter = ${param_idx}")
-        query_params.append(adapter)
+    if q:
+        # Subject and location are both derived from the inner adapter payload
+        # (payload->'data'->'data'), so a case-insensitive match over that
+        # subtree's text covers both. Parameterized + LIKE-wildcards escaped.
+        conditions.append(f"(payload->'data'->'data')::text ILIKE ${param_idx} ESCAPE '\\'")
+        query_params.append(f"%{_ilike_escape(q)}%")
         param_idx += 1
 
-    if category:
-        conditions.append(f"category = ${param_idx}")
-        query_params.append(category)
+    if adapters:
+        conditions.append(f"adapter = ANY(${param_idx})")
+        query_params.append(adapters)
         param_idx += 1
+
+    if categories:
+        conditions.append(f"category = ANY(${param_idx})")
+        query_params.append(categories)
+        param_idx += 1
+
+    if event_types:
+        conditions.append(f"split_part(category, '.', 1) = ANY(${param_idx})")
+        query_params.append(event_types)
+        param_idx += 1
+
+    if severities:
+        nums = sorted({n for lbl in severities for n in SEVERITY_LABELS.get(lbl, [])})
+        if "unknown" in severities:
+            # sev 0 and NULL both read as "unknown" (no assessment).
+            conditions.append(f"(severity = ANY(${param_idx}) OR severity IS NULL)")
+        else:
+            conditions.append(f"severity = ANY(${param_idx})")
+        query_params.append(nums)
+        param_idx += 1
+
+    if active:
+        # Active now: started and not yet ended.
+        conditions.append("time <= now() AND (expires IS NULL OR expires > now())")
 
     if since:
         conditions.append(f"time >= ${param_idx}")
@@ -2979,38 +3170,34 @@ async def events_list(request: Request) -> HTMLResponse:
 
     params = request.query_params
 
-    # Parse parameters
-    parsed, error = _parse_events_params(params)
+    # Parse parameters (GUI defaults to Last 24h when no time filter is given).
+    parsed, error = _parse_events_params(params, default_time=DEFAULT_TIME)
 
-    # Get system settings for map tiles
+    # Get system settings for map tiles + DISTINCT filter-option lists.
     pool = get_pool()
+    all_categories: list[str] = []
+    all_event_types: list[str] = []
     async with pool.acquire() as conn:
         system_row = await conn.fetchrow("SELECT map_tile_url, map_attribution FROM config.system")
+        try:
+            cat_rows = await conn.fetch("SELECT DISTINCT category FROM events ORDER BY 1")
+            all_categories = [r["category"] for r in cat_rows]
+            et_rows = await conn.fetch(
+                "SELECT DISTINCT split_part(category, '.', 1) AS et FROM events ORDER BY 1"
+            )
+            all_event_types = [r["et"] for r in et_rows]
+        except Exception:
+            logger.warning("Failed to load filter options", exc_info=True)
 
     tile_url = system_row["map_tile_url"] if system_row else "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
     tile_attribution = system_row["map_attribution"] if system_row else "OpenStreetMap"
 
-    # Prepare filter values for template
-    filter_values = {
-        "adapter": params.get("adapter", ""),
-        "category": params.get("category", ""),
-        "since": params.get("since", ""),
-        "until": params.get("until", ""),
-        "region_north": params.get("region_north", ""),
-        "region_south": params.get("region_south", ""),
-        "region_east": params.get("region_east", ""),
-        "region_west": params.get("region_west", ""),
-        "limit": params.get("limit", "50"),
-    }
-
     events = []
     next_cursor = None
-
     if error:
         # Validation error - show error banner but don't fail the page
         pass
     else:
-        # Fetch events
         result = await _fetch_events(parsed)
         if result.error:
             error = result.error
@@ -3018,15 +3205,25 @@ async def events_list(request: Request) -> HTMLResponse:
             events = result.events
             next_cursor = result.next_cursor
 
-    # Add table-only display fields (time_human, adapter_display, geometry_summary)
     _decorate_table_events(events)
 
-    # Registry-derived adapter list for the filter <select> and map legend.
-    # Sorted by name for stable ordering; index drives the legend color palette.
-    adapters = [
-        {"name": cls.name, "display_name": cls.display_name}
-        for cls in sorted(discover_adapters().values(), key=lambda c: c.name)
-    ]
+    adapters_flat, adapters_grouped = _adapter_filter_options()
+    pstate = parsed or {}
+    filter_state = {
+        "q": pstate.get("q") or "",
+        "adapters": pstate.get("adapters") or [],
+        "categories": pstate.get("categories") or [],
+        "event_types": pstate.get("event_types") or [],
+        "severities": pstate.get("severities") or [],
+        "time_token": pstate.get("time_token") or DEFAULT_TIME,
+        "region_north": params.get("region_north", ""),
+        "region_south": params.get("region_south", ""),
+        "region_east": params.get("region_east", ""),
+        "region_west": params.get("region_west", ""),
+        "limit": str(pstate.get("limit", 50)),
+    }
+    active_pills = _build_active_pills(pstate, len(adapters_flat)) if parsed else []
+    query_string = urlencode([(k, v) for k, v in _query_items(params) if k != "cursor"])
 
     return templates.TemplateResponse(
         request=request,
@@ -3036,11 +3233,19 @@ async def events_list(request: Request) -> HTMLResponse:
             "csrf_token": csrf_token,
             "events": events,
             "next_cursor": next_cursor,
-            "filter_values": filter_values,
             "filter_error": error,
             "tile_url": tile_url,
             "tile_attribution": tile_attribution,
-            "adapters": adapters,
+            "adapters": adapters_flat,
+            "adapters_grouped": adapters_grouped,
+            "all_categories": all_categories,
+            "all_event_types": all_event_types,
+            "severity_order": SEVERITY_ORDER,
+            "time_presets": [(t, TIME_PRESET_LABELS[t]) for t in
+                             ("last_15m", "last_1h", "last_6h", "last_24h", "last_7d", "active", "all")],
+            "filter_state": filter_state,
+            "active_pills": active_pills,
+            "query_string": query_string,
         },
     )
 
@@ -3052,25 +3257,11 @@ async def events_rows(request: Request) -> HTMLResponse:
 
     params = request.query_params
 
-    # Parse parameters
-    parsed, error = _parse_events_params(params)
-
-    # Prepare filter values for template
-    filter_values = {
-        "adapter": params.get("adapter", ""),
-        "category": params.get("category", ""),
-        "since": params.get("since", ""),
-        "until": params.get("until", ""),
-        "region_north": params.get("region_north", ""),
-        "region_south": params.get("region_south", ""),
-        "region_east": params.get("region_east", ""),
-        "region_west": params.get("region_west", ""),
-        "limit": params.get("limit", "50"),
-    }
+    # Parse parameters (same GUI default as the page).
+    parsed, error = _parse_events_params(params, default_time=DEFAULT_TIME)
 
     events = []
     next_cursor = None
-
     if error:
         pass
     else:
@@ -3081,16 +3272,25 @@ async def events_rows(request: Request) -> HTMLResponse:
             events = result.events
             next_cursor = result.next_cursor
 
-    # Add table-only display fields (time_human, adapter_display, geometry_summary)
     _decorate_table_events(events)
 
-    return templates.TemplateResponse(
+    adapters_flat, _ = _adapter_filter_options()
+    active_pills = _build_active_pills(parsed or {}, len(adapters_flat)) if parsed else []
+    query_string = urlencode([(k, v) for k, v in _query_items(params) if k != "cursor"])
+
+    response = templates.TemplateResponse(
         request=request,
         name="_events_rows.html",
         context={
             "events": events,
             "next_cursor": next_cursor,
-            "filter_values": filter_values,
             "filter_error": error,
+            "active_pills": active_pills,
+            "query_string": query_string,
+            "oob_pills": True,  # emit an out-of-band #active-pills update on swap
         },
     )
+    # Push the bookmarkable full-page URL (not the /events/rows fragment path),
+    # so back/forward + bookmarking land on the same filtered view.
+    response.headers["HX-Push-Url"] = "/events?" + str(request.url.query)
+    return response
