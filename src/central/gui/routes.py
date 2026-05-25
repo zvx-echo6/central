@@ -2611,10 +2611,12 @@ async def api_keys_delete(
 
 class EventsQueryResult:
     """Result from events query."""
-    def __init__(self, events: list, next_cursor: str | None, error: str | None = None):
+    def __init__(self, events: list, next_cursor: str | None, error: str | None = None,
+                 total: int | None = None):
         self.events = events
         self.next_cursor = next_cursor
         self.error = error
+        self.total = total  # filtered grand total (offset-mode only); None for cursor-mode
 
 
 # --- v0.7.1 filtering: shared constants + pure helpers ----------------------
@@ -2761,7 +2763,44 @@ def _build_active_pills(parsed: dict, adapter_total: int) -> list[dict]:
     return pills
 
 
-def _parse_events_params(params, default_time: str | None = None) -> tuple[dict | None, str | None]:
+PER_PAGE_OPTIONS = [25, 50, 100, 250]
+
+
+def _build_pagination(total: int | None, offset: int, limit: int) -> dict:
+    """Compute offset-mode paginator state for the GUI table.
+
+    Returns page/total_pages, the 1-based showing range (start..end), prev/next
+    offsets, and a windowed list of page descriptors -- {page, offset, current}
+    dicts interleaved with {"ellipsis": True} markers (1 ... 4 5 [6] 7 8 ... 47).
+    """
+    total = total or 0
+    limit = max(1, limit)
+    total_pages = max(1, (total + limit - 1) // limit)
+    page = min(offset // limit + 1, total_pages)
+    window = {1, total_pages}
+    for p in range(page - 2, page + 3):
+        if 1 <= p <= total_pages:
+            window.add(p)
+    pages, prev_p = [], 0
+    for p in sorted(window):
+        if prev_p and p - prev_p > 1:
+            pages.append({"ellipsis": True})
+        pages.append({"page": p, "offset": (p - 1) * limit, "current": p == page})
+        prev_p = p
+    return {
+        "total": total, "offset": offset, "limit": limit,
+        "page": page, "total_pages": total_pages,
+        "start": offset + 1 if total else 0,
+        "end": min(offset + limit, total),
+        "prev_offset": offset - limit if page > 1 else None,
+        "next_offset": offset + limit if page < total_pages else None,
+        "pages": pages,
+        "per_page_options": PER_PAGE_OPTIONS,
+    }
+
+
+def _parse_events_params(params, default_time: str | None = None,
+                         default_offset: int | None = None) -> tuple[dict | None, str | None]:
     """
     Parse and validate events query parameters.
 
@@ -2781,8 +2820,23 @@ def _parse_events_params(params, default_time: str | None = None) -> tuple[dict 
     except ValueError:
         return None, f"Invalid limit value: {limit_str}"
 
-    if limit < 1 or limit > 200:
-        return None, "limit must be between 1 and 200"
+    if limit < 1 or limit > 250:
+        return None, "limit must be between 1 and 250"
+
+    # Offset pagination (GUI). Presence of `offset` selects offset-mode in
+    # _fetch_events; its absence keeps the cursor path for events.json consumers.
+    offset = None
+    offset_str = params.get("offset")
+    if offset_str is not None and offset_str != "":
+        try:
+            offset = int(offset_str)
+        except ValueError:
+            return None, f"Invalid offset value: {offset_str}"
+        if offset < 0:
+            return None, "offset must be >= 0"
+    elif default_offset is not None:
+        # GUI defaults to offset-mode (page 1) even when the URL omits offset.
+        offset = default_offset
 
     # Multi-value filters (comma-separated; a single value is just a CSV of
     # length 1, preserving the old single-value API). Unknown severity labels
@@ -2892,6 +2946,7 @@ def _parse_events_params(params, default_time: str | None = None) -> tuple[dict 
 
     return {
         "limit": limit,
+        "offset": offset,
         "q": q,
         "adapters": adapters,
         "categories": categories,
@@ -2946,6 +3001,8 @@ async def _fetch_events(parsed_params: dict) -> EventsQueryResult:
     bbox = parsed_params["bbox"]
     cursor_time = parsed_params["cursor_time"]
     cursor_id = parsed_params["cursor_id"]
+    offset = parsed_params.get("offset")
+    offset_mode = offset is not None  # GUI; else cursor-mode (events.json)
 
     # Build query
     conditions = []
@@ -3016,7 +3073,20 @@ async def _fetch_events(parsed_params: dict) -> EventsQueryResult:
     if conditions:
         where_clause = "WHERE " + " AND ".join(conditions)
 
-    # Fetch limit+1 to check for next page
+    # Offset-mode (GUI): exact page slice + grand total in one roundtrip via a
+    # window count. Cursor-mode (events.json): fetch limit+1 to detect next page.
+    if offset_mode:
+        total_select = ", count(*) OVER() AS total_count"
+        limit_clause = f"LIMIT ${param_idx} OFFSET ${param_idx + 1}"
+        query_params.append(limit)
+        query_params.append(offset)
+        param_idx += 2
+    else:
+        total_select = ""
+        limit_clause = f"LIMIT ${param_idx}"
+        query_params.append(limit + 1)
+        param_idx += 1
+
     query = f"""
         SELECT
             id,
@@ -3027,13 +3097,12 @@ async def _fetch_events(parsed_params: dict) -> EventsQueryResult:
             severity,
             ST_AsGeoJSON(geom) as geometry,
             payload as data,
-            regions
+            regions{total_select}
         FROM public.events
         {where_clause}
         ORDER BY time DESC, id DESC
-        LIMIT ${param_idx}
+        {limit_clause}
     """
-    query_params.append(limit + 1)
 
     try:
         async with pool.acquire() as conn:
@@ -3042,10 +3111,14 @@ async def _fetch_events(parsed_params: dict) -> EventsQueryResult:
         logger.error(f"Database error in _fetch_events: {e}")
         return EventsQueryResult([], None, "Database error")
 
-    # Check if there is a next page
-    has_next = len(rows) > limit
-    if has_next:
-        rows = rows[:limit]
+    total = None
+    has_next = False
+    if offset_mode:
+        total = rows[0].get("total_count", 0) if rows else 0
+    else:
+        has_next = len(rows) > limit
+        if has_next:
+            rows = rows[:limit]
 
     # Build response
     events = []
@@ -3073,14 +3146,14 @@ async def _fetch_events(parsed_params: dict) -> EventsQueryResult:
         event["subject"] = _derive_subject(event)
         events.append(event)
 
-    # Build next_cursor if there are more results
+    # Build next_cursor (cursor-mode only) when there are more results.
     next_cursor = None
     if has_next and events:
         last_event = rows[-1]
         cursor_data = f"{last_event['time'].isoformat()}|{last_event['id']}"
         next_cursor = base64.b64encode(cursor_data.encode("utf-8")).decode("utf-8")
 
-    return EventsQueryResult(events, next_cursor)
+    return EventsQueryResult(events, next_cursor, total=total)
 
 
 def _geometry_summary(geometry: dict | None) -> str:
@@ -3108,14 +3181,16 @@ def _geometry_summary(geometry: dict | None) -> str:
 
 
 def _format_event_time(iso: str | None) -> str:
-    """Format an ISO-8601 timestamp as 'MM-DD-YYYY HH:MM UTC' (24h, no seconds)."""
+    """Format an ISO-8601 timestamp as 'MM-DD HH:MM UTC' (24h, no seconds, no
+    year) for a single-line, stable-height table cell. The full timestamp
+    (with year) stays available in the cell tooltip + the expanded detail row."""
     if not iso:
         return ""
     try:
         dt = datetime.fromisoformat(iso).astimezone(timezone.utc)
     except (ValueError, TypeError):
         return iso
-    return dt.strftime("%m-%d-%Y %H:%M") + " UTC"
+    return dt.strftime("%m-%d %H:%M") + " UTC"
 
 
 def _decorate_table_events(events: list[dict]) -> None:
@@ -3123,13 +3198,16 @@ def _decorate_table_events(events: list[dict]) -> None:
 
     These are for the table chrome only and are deliberately NOT added in
     _fetch_events, so the /events.json payload is unchanged. adapter_display
-    is sourced from the registry (display_name), with the bare name as fallback.
+    is sourced from the registry (display_name), with the bare name as fallback;
+    adapter_color is the same positional palette color the map + legend use.
     """
     display = {cls.name: cls.display_name for cls in discover_adapters().values()}
+    color = {a["name"]: a["color"] for a in _adapter_filter_options()[0]}
     for event in events:
         event["geometry_summary"] = _geometry_summary(event.get("geometry"))
         event["time_human"] = _format_event_time(event.get("time"))
         event["adapter_display"] = display.get(event.get("adapter"), event.get("adapter"))
+        event["adapter_color"] = color.get(event.get("adapter"), "#888")
 
 
 
@@ -3182,7 +3260,7 @@ async def events_list(request: Request) -> HTMLResponse:
     params = request.query_params
 
     # Parse parameters (GUI defaults to Last 24h when no time filter is given).
-    parsed, error = _parse_events_params(params, default_time=DEFAULT_TIME)
+    parsed, error = _parse_events_params(params, default_time=DEFAULT_TIME, default_offset=0)
 
     # Get system settings for map tiles + DISTINCT filter-option lists.
     pool = get_pool()
@@ -3205,6 +3283,7 @@ async def events_list(request: Request) -> HTMLResponse:
 
     events = []
     next_cursor = None
+    total = 0
     if error:
         # Validation error - show error banner but don't fail the page
         pass
@@ -3215,9 +3294,12 @@ async def events_list(request: Request) -> HTMLResponse:
         else:
             events = result.events
             next_cursor = result.next_cursor
+            total = result.total or 0
 
     _decorate_table_events(events)
 
+    pagination = _build_pagination(total, (parsed or {}).get("offset") or 0,
+                                   (parsed or {}).get("limit") or 50)
     adapters_flat, adapters_grouped = _adapter_filter_options()
     pstate = parsed or {}
     filter_state = {
@@ -3235,7 +3317,9 @@ async def events_list(request: Request) -> HTMLResponse:
         "limit": str(pstate.get("limit", 50)),
     }
     active_pills = _build_active_pills(pstate, len(adapters_flat)) if parsed else []
-    query_string = urlencode([(k, v) for k, v in _query_items(params) if k != "cursor"])
+    # Paginator links append offset; keep cursor + offset out of the carried qs.
+    query_string = urlencode([(k, v) for k, v in _query_items(params)
+                              if k not in ("cursor", "offset")])
 
     return templates.TemplateResponse(
         request=request,
@@ -3245,6 +3329,7 @@ async def events_list(request: Request) -> HTMLResponse:
             "csrf_token": csrf_token,
             "events": events,
             "next_cursor": next_cursor,
+            "pagination": pagination,
             "filter_error": error,
             "tile_url": tile_url,
             "tile_attribution": tile_attribution,
@@ -3270,10 +3355,11 @@ async def events_rows(request: Request) -> HTMLResponse:
     params = request.query_params
 
     # Parse parameters (same GUI default as the page).
-    parsed, error = _parse_events_params(params, default_time=DEFAULT_TIME)
+    parsed, error = _parse_events_params(params, default_time=DEFAULT_TIME, default_offset=0)
 
     events = []
     next_cursor = None
+    total = 0
     if error:
         pass
     else:
@@ -3283,12 +3369,16 @@ async def events_rows(request: Request) -> HTMLResponse:
         else:
             events = result.events
             next_cursor = result.next_cursor
+            total = result.total or 0
 
     _decorate_table_events(events)
 
+    pagination = _build_pagination(total, (parsed or {}).get("offset") or 0,
+                                   (parsed or {}).get("limit") or 50)
     adapters_flat, _ = _adapter_filter_options()
     active_pills = _build_active_pills(parsed or {}, len(adapters_flat)) if parsed else []
-    query_string = urlencode([(k, v) for k, v in _query_items(params) if k != "cursor"])
+    query_string = urlencode([(k, v) for k, v in _query_items(params)
+                              if k not in ("cursor", "offset")])
 
     response = templates.TemplateResponse(
         request=request,
@@ -3296,6 +3386,7 @@ async def events_rows(request: Request) -> HTMLResponse:
         context={
             "events": events,
             "next_cursor": next_cursor,
+            "pagination": pagination,
             "filter_error": error,
             "active_pills": active_pills,
             "query_string": query_string,
