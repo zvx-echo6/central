@@ -1,0 +1,47 @@
+{# Multi-select chip-picker (v0.7.1). Shared by the adapter / category /
+   event-type / severity filters. Selection is held in a hidden CSV input
+   (name=field); the checkboxes are synced into it by JS and the form
+   auto-applies when the panel closes. `options` is either a flat list of
+   strings/dicts {value,label,color} or, when grouped=True, a list of
+   (group_label, [dict,...]) tuples. `selected` is the list of chosen values. #}
+
+{% macro _chip_row(field, opt, selected, with_swatch) %}
+{% set val = opt.value if opt.value is defined else opt %}
+{% set lbl = opt.label if opt.label is defined else opt %}
+<label class="chip-row" data-chip-label="{{ lbl | lower }}">
+    <input type="checkbox" class="chip-cb" data-field="{{ field }}" value="{{ val }}"
+           {{ 'checked' if val in selected else '' }}>
+    {% if with_swatch and opt.color is defined %}
+    <span class="chip-swatch" style="background:{{ opt.color }}"></span>
+    {% endif %}
+    <span>{{ lbl }}</span>
+</label>
+{% endmacro %}
+
+{% macro chip_picker(field, label, options, selected, grouped=False, searchable=False, with_swatch=False) %}
+<div class="chip-picker" data-field="{{ field }}">
+    <button type="button" class="chip-picker-toggle outline" data-toggle="{{ field }}"
+            aria-haspopup="true" aria-expanded="false">
+        {{ label }}<span class="chip-count" data-count-for="{{ field }}">{{ (' (' ~ selected | length ~ ')') if selected else '' }}</span>
+    </button>
+    <input type="hidden" name="{{ field }}" id="filter-{{ field }}" value="{{ selected | join(',') }}">
+    <div class="chip-picker-panel" data-panel="{{ field }}" hidden>
+        {% if searchable %}
+        <input type="text" class="chip-picker-search" data-search-for="{{ field }}"
+               placeholder="Filter {{ label | lower }}…" autocomplete="off">
+        {% endif %}
+        <div class="chip-picker-list">
+            {% if grouped %}
+                {% for group_label, items in options %}
+                <div class="chip-group">
+                    <div class="chip-group-header">{{ group_label }}</div>
+                    {% for opt in items %}{{ _chip_row(field, opt, selected, with_swatch) }}{% endfor %}
+                </div>
+                {% endfor %}
+            {% else %}
+                {% for opt in options %}{{ _chip_row(field, opt, selected, with_swatch) }}{% endfor %}
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endmacro %}

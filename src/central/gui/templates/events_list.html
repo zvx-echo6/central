@@ -102,6 +102,42 @@
         justify-content: space-between;
         align-items: center;
     }
+    /* --- v0.7.1 filter row (functional layout; full polish in a later pass) --- */
+    .filter-search { width: 100%; margin-bottom: 0.5rem; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-start; }
+    .filter-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; justify-content: flex-end; }
+    .filter-apply { width: 120px; }
+    .chip-picker { position: relative; }
+    .chip-picker-toggle { white-space: nowrap; }
+    .chip-picker-panel {
+        position: absolute; z-index: 1000; top: 100%; left: 0; margin-top: 0.25rem;
+        min-width: 16rem; max-height: 22rem; overflow-y: auto;
+        background: var(--pico-card-background-color);
+        border: 1px solid var(--pico-muted-border-color);
+        border-radius: 0.375rem; padding: 0.5rem; box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+    }
+    .chip-picker-search { width: 100%; margin-bottom: 0.5rem; }
+    .chip-group-header { font-size: 0.75rem; font-weight: 600; color: var(--pico-muted-color);
+        text-transform: uppercase; margin: 0.4rem 0 0.2rem; }
+    .chip-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.15rem 0;
+        cursor: pointer; font-weight: 400; }
+    .chip-row input[type="checkbox"] { width: auto; margin: 0; }
+    .chip-swatch { width: 0.85rem; height: 0.85rem; border-radius: 2px; flex: 0 0 auto; }
+    .chip-row.chip-hidden { display: none; }
+    .time-preset { display: block; width: 100%; text-align: left; background: none;
+        border: none; padding: 0.35rem 0.4rem; color: var(--pico-color); cursor: pointer; }
+    .time-preset:hover, .time-preset.selected { background: var(--pico-primary-focus); }
+    .time-custom { border-top: 1px solid var(--pico-muted-border-color); margin-top: 0.4rem;
+        padding-top: 0.4rem; display: flex; flex-direction: column; gap: 0.3rem; }
+    #active-pills .active-pills { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+        margin: 0.5rem 0; }
+    .active-pills-label { font-size: 0.8rem; color: var(--pico-muted-color); }
+    .filter-pill { display: inline-flex; align-items: center; gap: 0.35rem;
+        background: var(--pico-primary-focus); border-radius: 999px; padding: 0.15rem 0.6rem;
+        font-size: 0.85rem; }
+    .pill-remove, .pill-clear-all { background: none; border: none; cursor: pointer;
+        color: var(--pico-color); padding: 0; font-size: 1rem; line-height: 1; width: auto; }
+    .pill-clear-all { font-size: 0.8rem; text-decoration: underline; }
 </style>
 {% endblock %}
 
@@ -120,52 +156,58 @@
 </article>
 {% endif %}
 
-<details open>
-    <summary>Filters</summary>
-    <form id="filter-form" class="filter-form" action="/events" method="get"
-          hx-get="/events/rows" hx-target="#events-rows" hx-push-url="true">
+{% from "_chip_picker.html" import chip_picker %}
+<form id="filter-form" class="filter-form" action="/events" method="get"
+      hx-get="/events/rows" hx-target="#events-rows" hx-push-url="true">
 
-        <div class="grid">
-            <div>
-                <label for="adapter">Adapter</label>
-                <select id="adapter" name="adapter">
-                    <option value="">All</option>
-                    {% for a in adapters %}
-                    <option value="{{ a.name }}" {% if filter_values.adapter == a.name %}selected{% endif %}>{{ a.display_name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label for="category">Category</label>
-                <input type="text" id="category" name="category" placeholder="Exact match"
-                       value="{{ filter_values.category }}">
-            </div>
-            <div>
-                <label for="since">From</label>
-                <input type="datetime-local" id="since" name="since"
-                       value="{{ filter_values.since }}">
-            </div>
-            <div>
-                <label for="until">To</label>
-                <input type="datetime-local" id="until" name="until"
-                       value="{{ filter_values.until }}">
+    {# Full-width search (server-side ILIKE over subject + location). #}
+    <input type="search" id="filter-q" name="q" class="filter-search"
+           placeholder="Search subject or location…" autocomplete="off"
+           value="{{ filter_state.q }}">
+
+    {# Chip-picker row: adapter (grouped, swatches), category, event type,
+       severity, plus the time-preset dropdown. #}
+    <div class="filter-row">
+        {{ chip_picker("adapter", "Adapters", adapters_grouped, filter_state.adapters,
+                       grouped=True, searchable=True, with_swatch=True) }}
+        {{ chip_picker("category", "Categories", all_categories, filter_state.categories,
+                       searchable=True) }}
+        {{ chip_picker("event_type", "Event Types", all_event_types, filter_state.event_types) }}
+        {{ chip_picker("severity", "Severity", severity_order, filter_state.severities) }}
+
+        {# Time preset dropdown (bespoke; not a chip-picker). #}
+        <div class="chip-picker time-picker" data-field="time">
+            <button type="button" class="chip-picker-toggle outline" aria-expanded="false"
+                    data-toggle="time" id="time-toggle">Time</button>
+            <input type="hidden" name="time" id="filter-time" value="{{ filter_state.time_token }}">
+            <div class="chip-picker-panel" data-panel="time" hidden>
+                {% for token, label in time_presets %}
+                <button type="button" class="time-preset" data-time-value="{{ token }}">{{ label }}</button>
+                {% endfor %}
+                <div class="time-custom">
+                    <label>From <input type="datetime-local" id="time-from"></label>
+                    <label>To <input type="datetime-local" id="time-to"></label>
+                    <button type="button" class="time-custom-apply" data-time-custom>Apply range</button>
+                </div>
             </div>
         </div>
+    </div>
 
-        <!-- Hidden region inputs (managed by map viewport) -->
-        <input type="hidden" id="region_north" name="region_north" value="{{ filter_values.region_north }}">
-        <input type="hidden" id="region_south" name="region_south" value="{{ filter_values.region_south }}">
-        <input type="hidden" id="region_east" name="region_east" value="{{ filter_values.region_east }}">
-        <input type="hidden" id="region_west" name="region_west" value="{{ filter_values.region_west }}">
+    {# Hidden region inputs (managed by map viewport) + limit. #}
+    <input type="hidden" id="region_north" name="region_north" value="{{ filter_state.region_north }}">
+    <input type="hidden" id="region_south" name="region_south" value="{{ filter_state.region_south }}">
+    <input type="hidden" id="region_east" name="region_east" value="{{ filter_state.region_east }}">
+    <input type="hidden" id="region_west" name="region_west" value="{{ filter_state.region_west }}">
+    <input type="hidden" name="limit" value="{{ filter_state.limit }}">
 
-        <input type="hidden" name="limit" value="{{ filter_values.limit }}">
+    <div class="filter-actions">
+        <button type="submit" class="filter-apply">Apply</button>
+        <a href="/events" role="button" class="outline" id="filter-clear-all">Clear all</a>
+    </div>
+</form>
 
-        <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-            <button type="submit">Apply</button>
-            <a href="/events" role="button" class="outline">Clear Filters</a>
-        </div>
-    </form>
-</details>
+{# Active filter pills — server-rendered; updated out-of-band on each swap. #}
+<div id="active-pills">{% include "_active_pills.html" %}</div>
 
 <div id="events-map"></div>
 <div class="map-controls">
@@ -563,6 +605,126 @@
 
     // Fix map rendering after container shows
     setTimeout(function() { map.invalidateSize(); }, 100);
+})();
+</script>
+
+<script>
+// --- v0.7.1 filter behavior (vanilla JS + HTMX; no framework) --------------
+(function () {
+    var form = document.getElementById("filter-form");
+    if (!form) return;
+
+    function submitForm() { if (window.htmx) htmx.trigger(form, "submit"); }
+
+    // Sync a chip-picker's checked checkboxes into its hidden CSV input + badge.
+    function syncField(field) {
+        var boxes = form.querySelectorAll('.chip-cb[data-field="' + field + '"]');
+        var vals = [];
+        boxes.forEach(function (b) { if (b.checked) vals.push(b.value); });
+        var hidden = document.getElementById("filter-" + field);
+        if (hidden) hidden.value = vals.join(",");
+        var badge = form.querySelector('[data-count-for="' + field + '"]');
+        if (badge) badge.textContent = vals.length ? " (" + vals.length + ")" : "";
+    }
+
+    function closeAllPanels(except) {
+        form.querySelectorAll(".chip-picker-panel").forEach(function (p) {
+            if (p !== except && !p.hidden) {
+                p.hidden = true;
+                var t = form.querySelector('[data-toggle="' + p.dataset.panel + '"]');
+                if (t) t.setAttribute("aria-expanded", "false");
+                // Auto-apply on close for the multi-select chip-pickers.
+                if (p.dataset.panel && p.dataset.panel !== "time") submitForm();
+            }
+        });
+    }
+
+    // Toggle panels open/closed.
+    form.querySelectorAll(".chip-picker-toggle").forEach(function (btn) {
+        btn.addEventListener("click", function (e) {
+            e.preventDefault();
+            var field = btn.dataset.toggle;
+            var panel = form.querySelector('.chip-picker-panel[data-panel="' + field + '"]');
+            if (!panel) return;
+            var willOpen = panel.hidden;
+            closeAllPanels(willOpen ? panel : null);
+            panel.hidden = !willOpen;
+            btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+        });
+    });
+
+    // Checkbox change -> keep hidden CSV in sync (apply happens on close).
+    form.querySelectorAll(".chip-cb").forEach(function (cb) {
+        cb.addEventListener("change", function () { syncField(cb.dataset.field); });
+    });
+
+    // In-panel search: filter visible chip rows by label substring.
+    form.querySelectorAll(".chip-picker-search").forEach(function (inp) {
+        inp.addEventListener("input", function () {
+            var field = inp.dataset.searchFor;
+            var term = inp.value.trim().toLowerCase();
+            var panel = form.querySelector('.chip-picker-panel[data-panel="' + field + '"]');
+            panel.querySelectorAll(".chip-row").forEach(function (row) {
+                var lbl = row.dataset.chipLabel || "";
+                row.classList.toggle("chip-hidden", term && lbl.indexOf(term) === -1);
+            });
+        });
+    });
+
+    // Time presets.
+    var timeHidden = document.getElementById("filter-time");
+    form.querySelectorAll(".time-preset").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+            timeHidden.value = btn.dataset.timeValue;
+            closeAllPanels(null);
+            submitForm();
+        });
+    });
+    var customBtn = form.querySelector("[data-time-custom]");
+    if (customBtn) {
+        customBtn.addEventListener("click", function () {
+            var f = document.getElementById("time-from").value;
+            var t = document.getElementById("time-to").value;
+            if (!f && !t) return;
+            timeHidden.value = "custom:" + (f || "") + "," + (t || "");
+            closeAllPanels(null);
+            submitForm();
+        });
+    }
+
+    // Debounced search box (300ms) -> auto-apply.
+    var qInput = document.getElementById("filter-q");
+    if (qInput) {
+        var qTimer = null;
+        qInput.addEventListener("input", function () {
+            if (qTimer) clearTimeout(qTimer);
+            qTimer = setTimeout(submitForm, 300);
+        });
+    }
+
+    // Close panels when clicking outside.
+    document.addEventListener("click", function (e) {
+        if (!e.target.closest(".chip-picker")) closeAllPanels(null);
+    });
+
+    // Active-pill removal + clear-all (delegated; #active-pills is OOB-swapped).
+    document.addEventListener("click", function (e) {
+        var rm = e.target.closest("[data-remove-filter]");
+        if (rm) {
+            var key = rm.dataset.removeFilter;
+            if (key === "q") { if (qInput) qInput.value = ""; }
+            else if (key === "time") { timeHidden.value = "all"; }
+            else {
+                form.querySelectorAll('.chip-cb[data-field="' + key + '"]').forEach(function (b) {
+                    b.checked = false;
+                });
+                syncField(key);
+            }
+            submitForm();
+            return;
+        }
+        if (e.target.closest("[data-clear-all]")) { window.location.href = "/events"; }
+    });
 })();
 </script>
 

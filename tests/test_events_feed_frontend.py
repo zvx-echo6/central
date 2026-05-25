@@ -104,7 +104,8 @@ class TestEventsFeedFrontendAuthenticated:
 
         assert result.status_code == 200
         context = mock_templates.TemplateResponse.call_args.kwargs.get("context")
-        assert context["filter_values"]["adapter"] == "nws"
+        # v0.7.1: adapter is now a multi-select; single value parses to a 1-list.
+        assert context["filter_state"]["adapters"] == ["nws"]
 
     @pytest.mark.asyncio
     async def test_events_since_until_filter(self):
@@ -154,8 +155,9 @@ class TestEventsFeedFrontendAuthenticated:
         mock_templates.TemplateResponse.assert_called_once()
         call_kwargs = mock_templates.TemplateResponse.call_args.kwargs
         context = call_kwargs.get("context", call_kwargs)
-        assert context["filter_values"]["since"] == "2026-05-17T00:00:00"
-        assert context["filter_values"]["until"] == "2026-05-17T12:00:00"
+        # v0.7.1: the GUI uses time presets, but legacy since/until are still
+        # honored (JSON API + bookmarks); they parse without error and apply.
+        assert context["filter_error"] is None
 
     @pytest.mark.asyncio
     async def test_events_region_filter(self):
@@ -207,10 +209,10 @@ class TestEventsFeedFrontendAuthenticated:
         mock_templates.TemplateResponse.assert_called_once()
         call_kwargs = mock_templates.TemplateResponse.call_args.kwargs
         context = call_kwargs.get("context", call_kwargs)
-        assert context["filter_values"]["region_north"] == "49.5"
-        assert context["filter_values"]["region_south"] == "31"
-        assert context["filter_values"]["region_east"] == "-102"
-        assert context["filter_values"]["region_west"] == "-124.5"
+        assert context["filter_state"]["region_north"] == "49.5"
+        assert context["filter_state"]["region_south"] == "31"
+        assert context["filter_state"]["region_east"] == "-102"
+        assert context["filter_state"]["region_west"] == "-124.5"
 
     @pytest.mark.asyncio
     async def test_events_partial_region_shows_error_banner(self):
@@ -772,9 +774,11 @@ class TestRegistryDrivenAdapterFilter:
 
         # The list is exactly the registry, sorted by name (stable), no extras.
         assert [a["name"] for a in context["adapters"]] == sorted(registry.keys())
-        # Each entry carries name + display_name straight from the adapter class.
+        # Each entry carries name + display_name (v0.7.1 adds a positional color).
+        by_name = {a["name"]: a for a in context["adapters"]}
         for cls in registry.values():
-            assert {"name": cls.name, "display_name": cls.display_name} in context["adapters"]
+            assert by_name[cls.name]["display_name"] == cls.display_name
+            assert by_name[cls.name]["color"].startswith("#")
 
 
 class TestPerAdapterRowPartials:

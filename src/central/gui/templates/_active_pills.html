@@ -1,0 +1,16 @@
+{# Active-filter pills (v0.7.1). Server-rendered from the parsed filter state so
+   the operator always sees what's applied. Each × clears that filter (JS) and
+   re-submits; this partial is re-rendered out-of-band into #active-pills. #}
+{% if active_pills %}
+<div class="active-pills">
+    <span class="active-pills-label">Active filters:</span>
+    {% for pill in active_pills %}
+    <span class="filter-pill" data-pill-key="{{ pill.key }}">
+        {{ pill.label }}
+        <button type="button" class="pill-remove" data-remove-filter="{{ pill.key }}"
+                aria-label="Remove {{ pill.label }}">&times;</button>
+    </span>
+    {% endfor %}
+    <button type="button" class="pill-clear-all" data-clear-all>Clear all</button>
+</div>
+{% endif %}
