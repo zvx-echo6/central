@@ -2866,6 +2866,14 @@ def _parse_events_params(params, default_time: str | None = None) -> tuple[dict 
         ):
             bbox = None
 
+    # Map-filter toggle (v0.7.2): the bbox only constrains the query when the
+    # operator has explicitly enabled "Filter table by map view". When off
+    # (default), ignore any region_* params (e.g. from a bookmarked URL) so the
+    # table shows all filter-matching events regardless of map zoom.
+    map_filter = (params.get("map_filter") or "").lower() in ("1", "true", "on")
+    if not map_filter:
+        bbox = None
+
     # Parse cursor
     cursor_time = None
     cursor_id = None
@@ -2893,6 +2901,7 @@ def _parse_events_params(params, default_time: str | None = None) -> tuple[dict 
         "since": since,
         "until": until,
         "active": active,
+        "map_filter": map_filter,
         "bbox": bbox,
         "cursor_time": cursor_time,
         "cursor_id": cursor_id,
@@ -3015,6 +3024,7 @@ async def _fetch_events(parsed_params: dict) -> EventsQueryResult:
             received,
             adapter,
             category,
+            severity,
             ST_AsGeoJSON(geom) as geometry,
             payload as data,
             regions
@@ -3050,6 +3060,7 @@ async def _fetch_events(parsed_params: dict) -> EventsQueryResult:
             "received": row["received"].isoformat(),
             "adapter": row["adapter"],
             "category": row["category"],
+            "severity": row.get("severity"),
             "geometry": geometry,
             "data": dict(row["data"]) if row["data"] else {},
             "regions": list(row["regions"]) if row["regions"] else [],
@@ -3220,6 +3231,7 @@ async def events_list(request: Request) -> HTMLResponse:
         "region_south": params.get("region_south", ""),
         "region_east": params.get("region_east", ""),
         "region_west": params.get("region_west", ""),
+        "map_filter": pstate.get("map_filter", False),
         "limit": str(pstate.get("limit", 50)),
     }
     active_pills = _build_active_pills(pstate, len(adapters_flat)) if parsed else []

@@ -27,9 +27,10 @@ def test_out_of_range_bbox_is_dropped_not_errored():
 
 
 def test_valid_bbox_is_preserved():
+    # v0.7.2: a bbox is only honored when the map-filter toggle is on.
     parsed, error = _parse_events_params(_params(
         region_north="42.0", region_south="31.0",
-        region_east="-102.0", region_west="-124.5",
+        region_east="-102.0", region_west="-124.5", map_filter="1",
     ))
     assert error is None
     assert parsed["bbox"] == {
