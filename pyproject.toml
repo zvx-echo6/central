@@ -12,6 +12,8 @@ license = {text = "MIT"}
 authors = [{name = "Matt Johnson"}]
 dependencies = [
     "aiohttp>=3.13.5",
+    "mapbox-vector-tile>=2.0",
+    "itsdangerous>=2.2",  # used by gui/csrf.py + gui/wizard.py (was an undeclared transitive)
     "argon2-cffi>=25.1.0",
     "asyncpg>=0.31.0",
     "cloudevents>=2.0.0",

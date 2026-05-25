@@ -10,6 +10,9 @@ from central.adapter import SourceAdapter
 from central.adapter_discovery import discover_adapters
 from central.gui import routes
 
+# Adapters with data_class="telemetry" (the pinned split; grow as telemetry adapters land).
+_TELEMETRY = ["nwis", "tomtom_flow"]
+
 
 # --- data_class defaults / registry split -----------------------------------
 
@@ -22,15 +25,15 @@ def test_registry_split_11_event_1_telemetry():
     by_class = {}
     for name, cls in reg.items():
         by_class.setdefault(getattr(cls, "data_class", "event"), []).append(name)
-    assert by_class.get("telemetry") == ["nwis"]
+    assert sorted(by_class.get("telemetry", [])) == _TELEMETRY
     # Everything else is event-class; the split must cover the whole registry.
-    assert sorted(by_class.get("event", [])) == sorted(n for n in reg if n != "nwis")
-    assert len(by_class.get("event", [])) == len(reg) - 1
+    assert sorted(by_class.get("event", [])) == sorted(n for n in reg if n not in _TELEMETRY)
+    assert len(by_class.get("event", [])) == len(reg) - len(_TELEMETRY)
 
 
 def test_class_adapter_names():
     assert "nwis" not in routes._class_adapter_names("event")
-    assert routes._class_adapter_names("telemetry") == ["nwis"]
+    assert sorted(routes._class_adapter_names("telemetry")) == _TELEMETRY
     assert "usgs_quake" in routes._class_adapter_names("event")
 
 
@@ -40,16 +43,16 @@ def test_event_options_exclude_nwis():
     flat, grouped = routes._adapter_filter_options("event")
     names = {a["name"] for a in flat}
     assert "nwis" not in names
-    assert len(flat) == len(discover_adapters()) - 1
+    assert len(flat) == len(discover_adapters()) - len(_TELEMETRY)
     grouped_values = {opt["value"] for _, items in grouped for opt in items}
     assert "nwis" not in grouped_values
 
 
 def test_telemetry_options_only_nwis():
     flat, grouped = routes._adapter_filter_options("telemetry")
-    assert [a["name"] for a in flat] == ["nwis"]
+    assert sorted(a["name"] for a in flat) == _TELEMETRY
     grouped_values = [opt["value"] for _, items in grouped for opt in items]
-    assert grouped_values == ["nwis"]
+    assert sorted(grouped_values) == _TELEMETRY
 
 
 def test_colors_stable_across_classes():

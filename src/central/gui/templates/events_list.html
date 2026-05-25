@@ -136,6 +136,11 @@
         return ADAPTER_COLORS[adapter] || "#3388ff";
     }
 
+    // tomtom_flow segments color by severity (relative_speed band): green=free
+    // flowing, red=jammed. Mirrors the green/yellow/red flow overlay.
+    var FLOW_COLOR = { "1": "#2ecc71", "2": "#f1c40f", "3": "#e67e22", "4": "#e74c3c" };
+    function flowColor(sev) { return FLOW_COLOR[sev] || "#7f8c8d"; }
+
     // Flatten arbitrarily-nested GeoJSON coordinates into a flat [lng, lat] list.
     function flattenCoords(coords, out) {
         if (coords.length && typeof coords[0] === "number") {
@@ -301,7 +306,7 @@
                 if (!geom) return;
 
                 var adapter = row.dataset.adapter || "";
-                var color = getAdapterColor(adapter);
+                var color = adapter === "tomtom_flow" ? flowColor(row.dataset.severity) : getAdapterColor(adapter);
                 var op = severityOpacity(row);
 
                 // Point-like geometries (Points + zero-extent polygons from

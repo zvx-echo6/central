@@ -30,5 +30,6 @@ STREAMS: list[StreamEntry] = [
     StreamEntry("CENTRAL_DISASTER", "central.disaster.>"),
     StreamEntry("CENTRAL_HYDRO",    "central.hydro.>"),
     StreamEntry("CENTRAL_TRAFFIC",  "central.traffic.>"),
+    StreamEntry("CENTRAL_TRAFFIC_FLOW", "central.traffic_flow.>"),
     StreamEntry("CENTRAL_META",     "central.meta.>", event_bearing=False),
 ]
