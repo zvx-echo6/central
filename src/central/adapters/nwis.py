@@ -127,6 +127,9 @@ class NWISAdapter(SourceAdapter):
     # Site lat/lon mirrored from Geo.centroid into event.data (see _build_event).
     enrichment_locations = [("latitude", "longitude")]
 
+    # Continuous high-volume water-gauge feed -> the /telemetry tab, not /events.
+    data_class = "telemetry"
+
     def __init__(
         self,
         config: AdapterConfig,

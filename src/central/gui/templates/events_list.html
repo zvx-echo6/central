@@ -203,7 +203,7 @@
     "#f59e0b", "#dc2626", "#7c3aed", "#2563eb", "#059669", "#db2777",
     "#0891b2", "#65a30d", "#ea580c", "#4f46e5", "#9333ea", "#0d9488"
 ] %}
-<h1>Events</h1>
+<h1>{{ "Telemetry" if base_path == "/telemetry" else "Events" }}</h1>
 
 {% if filter_error %}
 <article aria-label="Filter Error" style="background-color: var(--pico-del-color); padding: 1rem; margin-bottom: 1rem;">
@@ -212,8 +212,8 @@
 {% endif %}
 
 {% from "_chip_picker.html" import chip_picker %}
-<form id="filter-form" class="filter-form" action="/events" method="get"
-      hx-get="/events/rows" hx-target="#events-rows" hx-push-url="true">
+<form id="filter-form" class="filter-form" action="{{ base_path }}" method="get"
+      hx-get="{{ base_path }}/rows" hx-target="#events-rows" hx-push-url="true">
 
     {# Full-width search (server-side ILIKE over subject + location). #}
     <input type="search" id="filter-q" name="q" class="filter-search"
@@ -261,7 +261,7 @@
 
     <div class="filter-actions">
         <button type="submit" class="filter-apply">Apply</button>
-        <a href="/events" role="button" class="outline" id="filter-clear-all">Clear all</a>
+        <a href="{{ base_path }}" role="button" class="outline" id="filter-clear-all">Clear all</a>
     </div>
 </form>
 
@@ -749,6 +749,7 @@
 (function () {
     var form = document.getElementById("filter-form");
     if (!form) return;
+    var BASE_PATH = {{ base_path | tojson }};  // "/events" or "/telemetry"
 
     function submitForm() { if (window.htmx) htmx.trigger(form, "submit"); }
 
@@ -859,7 +860,7 @@
             submitForm();
             return;
         }
-        if (e.target.closest("[data-clear-all]")) { window.location.href = "/events"; }
+        if (e.target.closest("[data-clear-all]")) { window.location.href = BASE_PATH; }
     });
 
     // Legend: collapse/expand toggle.

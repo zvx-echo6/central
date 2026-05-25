@@ -211,6 +211,7 @@ Optional class attributes (default to `None` / not-in-wizard):
 | `requires_api_key` | `str \| None` | Key alias if an API key is required, else `None`. |
 | `api_key_field` | `str \| None` | Names the `settings_schema` field that holds the api_key alias reference. The GUI renders this as a select populated from `config.api_keys`; the wizard validates it against the staged `api_keys` state. |
 | `wizard_order` | `int \| None` | Position in the setup wizard. `None` excludes the adapter from the wizard. |
+| `data_class` | `Literal["event", "telemetry"]` | GUI classification. `"event"` (default) = discrete events, shown on `/events`. `"telemetry"` = continuous/high-volume feeds (e.g. NWIS) shown on `/telemetry` instead, so they don't drown discrete-event signal. GUI-only — does not affect publishing or the `events.json` contract. |
 
 ### 4.2 Required methods
 
