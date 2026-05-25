@@ -1,6 +1,13 @@
-{# USGS NWIS water observations. Fields from payload->data->data. #}
+{# USGS NWIS water observations + v0.8.0 site/stats enrichment. payload->data->data. #}
 {% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% set enr = d.get('_enriched') or {} %}
+{% set site = enr.get('usgs_site') or {} %}
+{% set st = enr.get('usgs_stats') or {} %}
+{% if site.get('name') %}<dt>Site name</dt><dd>{{ site.name }}</dd>{% endif %}
 {% if d.get('parameter_code') is not none %}<dt>Parameter</dt><dd>{{ d.parameter_code }}</dd>{% endif %}
 {% if d.get('value') is not none %}<dt>Value</dt><dd>{{ d.value }} {{ d.get('unit_of_measure', '') }}</dd>{% endif %}
-{% if d.get('monitoring_location_id') is not none %}<dt>Site</dt><dd><code>{{ d.monitoring_location_id }}</code></dd>{% endif %}
+{% if st.get('class_label') %}<dt>Normalcy</dt><dd>{{ st.class_label }}{% if st.get('percentile') is not none %} (~{{ st.percentile }} percentile){% endif %}</dd>{% endif %}
+{% if st.get('p50') is not none %}<dt>Typical (this day)</dt><dd>median {{ st.p50 }} {{ d.get('unit_of_measure', '') }}{% if st.get('period') %} · {{ st.period }}{% if st.get('count') %} ({{ st.count }} yrs){% endif %}{% endif %}</dd>{% endif %}
+{% if site.get('county') or site.get('state') %}<dt>Location</dt><dd>{{ [site.county, site.state] | select | join(', ') }}</dd>{% endif %}
+{% if d.get('monitoring_location_id') is not none %}<dt>Site ID</dt><dd><code>{{ d.monitoring_location_id }}</code></dd>{% endif %}
 {% if d.get('statistic_id') is not none %}<dt>Statistic</dt><dd>{{ d.statistic_id }}</dd>{% endif %}

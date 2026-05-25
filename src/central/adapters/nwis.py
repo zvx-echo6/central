@@ -19,6 +19,12 @@ from tenacity import (
 )
 
 from central.adapter import SourceAdapter
+from central.adapters import nwis_enrich
+from central.adapters.nwis_enrich import (
+    USGS_SITE_TTL_S,
+    USGS_STATS_TTL_S,
+    SiteStatsCache,
+)
 from central.config_models import AdapterConfig, RegionConfig
 from central.config_store import ConfigStore
 from central.models import Event, Geo
@@ -31,6 +37,13 @@ NWIS_LATEST_CONTINUOUS_URL = (
 NWIS_MONITORING_LOCATIONS_URL = (
     "https://api.waterdata.usgs.gov/ogcapi/v0/collections/monitoring-locations/items"
 )
+# v0.8.0 enrichment endpoints: site metadata via OGC item-by-id; daily stats via
+# the legacy RDB stat service (the OGC API exposes no statistics endpoint).
+NWIS_SITE_ITEM_URL = NWIS_MONITORING_LOCATIONS_URL
+NWIS_STATS_URL = "https://waterservices.usgs.gov/nwis/stat/"
+# Site/stats enrichment cache (monkeypatched off the prod path in tests, like
+# the supervisor's ENRICHMENT_CACHE_DB_PATH).
+NWIS_CACHE_DB_PATH = Path("/var/lib/central/nwis_cache.db")
 # Per-render cap for the settings-driven preview (PR G.5). Keep small so the
 # /adapters/<name> edit page renders quickly.
 _PREVIEW_LIMIT = 50
@@ -140,6 +153,7 @@ class NWISAdapter(SourceAdapter):
         self._cursor_db_path = cursor_db_path
         self._session: aiohttp.ClientSession | None = None
         self._db: sqlite3.Connection | None = None
+        self._enrich_cache: SiteStatsCache | None = None
         self.parameter_codes: list[str] = list(
             config.settings.get("parameter_codes", _DEFAULT_PARAMETER_CODES)
         )
@@ -167,6 +181,7 @@ class NWISAdapter(SourceAdapter):
             ON published_ids (last_seen)
         """)
         self._db.commit()
+        self._enrich_cache = SiteStatsCache(NWIS_CACHE_DB_PATH)
         if self.region is None:
             logger.warning(
                 "NWIS started without region bbox — upstream will return CONUS-wide records on every poll. "
@@ -313,6 +328,12 @@ class NWISAdapter(SourceAdapter):
                     )
                     if self.is_published(dedup_key):
                         continue
+                    # Site + stats enrichment (v0.8.0) on new events only. Sets
+                    # _enriched.usgs_site / usgs_stats in event.data and derives
+                    # severity from the WaterWatch band (None when no stats).
+                    severity = await self._enrich_event(event)
+                    if severity != event.severity:
+                        event = event.model_copy(update={"severity": severity})
                     yield event
                     self.mark_published(dedup_key)
                     events_yielded += 1
@@ -393,6 +414,84 @@ class NWISAdapter(SourceAdapter):
             geo=Geo(centroid=centroid),
             data=data,
         )
+
+    async def _site_bundle(self, site_id: str) -> dict[str, Any]:
+        """usgs_site bundle from the OGC monitoring-locations item. Cache-first;
+        all-null (never raises) on lookup failure so the event still publishes."""
+        if self._enrich_cache is not None:
+            cached = await self._enrich_cache.get("site", site_id, USGS_SITE_TTL_S)
+            if cached is not None:
+                return cached
+        try:
+            text = await self._fetch(f"{NWIS_SITE_ITEM_URL}/{site_id}?f=json")
+            bundle = nwis_enrich.parse_site_feature(json.loads(text))
+        except Exception as e:
+            logger.warning(
+                "NWIS site enrichment failed",
+                extra={"site": site_id, "error": str(e)},
+            )
+            return nwis_enrich.site_null_bundle()
+        if self._enrich_cache is not None:
+            await self._enrich_cache.set("site", site_id, bundle)
+        return bundle
+
+    async def _stats_bundle(
+        self,
+        site_id: str,
+        bare_site_no: str,
+        parameter_code: str,
+        value: float | None,
+        event_time: datetime,
+    ) -> dict[str, Any]:
+        """usgs_stats bundle from the legacy RDB daily-percentile service.
+
+        Caches the parsed day-of-year table per (site, parameter_code) so a
+        single fetch classifies every reading at that site for the TTL window.
+        All-null (value echoed; never raises) on failure / no data.
+        """
+        key = f"{site_id}:{parameter_code}"
+        table = None
+        if self._enrich_cache is not None:
+            table = await self._enrich_cache.get("stats", key, USGS_STATS_TTL_S)
+        if table is None:
+            params = {
+                "sites": bare_site_no,
+                "statReportType": "daily",
+                "statTypeCd": "P10,P25,P50,P75,P90,max",
+                "parameterCd": parameter_code,
+                "format": "rdb",
+            }
+            try:
+                text = await self._fetch(f"{NWIS_STATS_URL}?{urlencode(params)}")
+                table = nwis_enrich.parse_stats_rdb(text)
+            except Exception as e:
+                logger.warning(
+                    "NWIS stats enrichment failed",
+                    extra={"site": site_id, "parameter_code": parameter_code, "error": str(e)},
+                )
+                return {**nwis_enrich.stats_null_bundle(), "value": value}
+            if self._enrich_cache is not None:
+                await self._enrich_cache.set("stats", key, table)
+        return nwis_enrich.build_stats_bundle(
+            value, table, event_time.month, event_time.day
+        )
+
+    async def _enrich_event(self, event: Event) -> int | None:
+        """Attach _enriched.usgs_site + _enriched.usgs_stats in place; return the
+        stats-derived severity (0-4, or None when no usable stats)."""
+        data = event.data
+        site_id = data.get("monitoring_location_id")
+        if not site_id:
+            return event.severity
+        _agency, bare_site_no = _subject_tokens_for_id(site_id)
+        site = await self._site_bundle(site_id)
+        stats = await self._stats_bundle(
+            site_id, bare_site_no, data.get("parameter_code"), data.get("value"), event.time
+        )
+        enriched = data.setdefault("_enriched", {})
+        enriched["usgs_site"] = site
+        enriched["usgs_stats"] = stats
+        return stats.get("severity_band")
 
     async def _fetch_preview_text(self, url: str) -> str:
         """One-shot GET for the preview render.

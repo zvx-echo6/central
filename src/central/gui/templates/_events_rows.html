@@ -20,14 +20,24 @@
            fallback (no hardcoded list). Captured once so it serves both the
            Subject cell and the map popup (via data-subject). #}
         {% set subject_summary %}{% include ["_event_summaries/" ~ event.adapter ~ ".html", "_event_summaries/_default.html"] %}{% endset %}
-        {# Location: generic _enriched.geocoder reader, then top-level named
-           fields, then coordinates. No adapter-specific logic. #}
+        {# Location: geocoder-first, then top-level named fields. When the
+           geocoder resolved no named place, fall back generically to ANY other
+           _enriched.<source> carrying county/state (e.g. usgs_site, v0.8.0) so
+           the pattern works for future enrichers without per-adapter logic. #}
         {% set d = (event.data.get('data') or {}).get('data') or {} %}
-        {% set gc = (d.get('_enriched') or {}).get('geocoder') or {} %}
-        {% set loc_local = gc.get('city') or d.get('city') or gc.get('county') or d.get('county') %}
-        {% set loc_state = gc.get('state') or d.get('state') %}
-        {% set loc_country = gc.get('country') or d.get('country') %}
-        {% set loc_parts = [loc_local, loc_state, loc_country] | select | list %}
+        {% set enr = d.get('_enriched') or {} %}
+        {% set gc = enr.get('geocoder') or {} %}
+        {% set ns = namespace(
+            local=(gc.get('city') or gc.get('county') or d.get('city') or d.get('county')),
+            state=(gc.get('state') or d.get('state')),
+            country=(gc.get('country') or d.get('country'))) %}
+        {% if not (ns.local or ns.state) %}
+        {% for _src, b in enr.items() if _src != 'geocoder' and b is mapping %}
+        {% if not ns.local %}{% set ns.local = b.get('county') or b.get('city') %}{% endif %}
+        {% if not ns.state %}{% set ns.state = b.get('state') %}{% endif %}
+        {% endfor %}
+        {% endif %}
+        {% set loc_parts = [ns.local, ns.state, ns.country] | select | list %}
         <tr class="event-row" data-row-idx="{{ loop.index0 }}"
             data-event-id="{{ event.id }}"
             data-adapter="{{ event.adapter }}"

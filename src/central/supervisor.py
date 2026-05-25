@@ -79,9 +79,12 @@ async def apply_enrichment(
     a non-null coordinate pair in event.data. If no declared pair resolves to
     coordinates, still attaches an all-null bundle so that every event from an
     enriched adapter carries _enriched (consumers get a stable field set).
-    Each enricher's result is keyed by enricher.name. Mutates the data dict in
-    place (Event is frozen, but its data dict is not — this avoids a
-    model_copy on every published event).
+    Each enricher's result is keyed by enricher.name. Results are MERGED into
+    event.data["_enriched"] (not overwritten) so an adapter that populated its
+    own bundles before yielding — e.g. NWIS's usgs_site/usgs_stats (v0.8.0) —
+    keeps them alongside the framework's location-keyed bundles. Mutates the
+    data dict in place (Event is frozen, but its data dict is not — this avoids
+    a model_copy on every published event).
     """
     if not enrichment_locations or not enrichers:
         return
@@ -91,20 +94,18 @@ async def apply_enrichment(
         if lat is None or lon is None:
             continue
         location = {"lat": float(lat), "lon": float(lon)}
-        enriched: dict[str, Any] = {}
+        target = event.data.setdefault("_enriched", {})
         for enricher in enrichers:
-            enriched[enricher.name] = await enricher.enrich(location)
-        event.data["_enriched"] = enriched
+            target[enricher.name] = await enricher.enrich(location)
         return
     # No declared pair resolved to coordinates. Still attach _enriched: each
     # enricher resolves the null location to its own all-null bundle (per the
     # never-raise contract), so coordless events (e.g. removal tombstones)
     # carry the same shape as enriched ones.
     null_location = {"lat": None, "lon": None}
-    enriched = {}
+    target = event.data.setdefault("_enriched", {})
     for enricher in enrichers:
-        enriched[enricher.name] = await enricher.enrich(null_location)
-    event.data["_enriched"] = enriched
+        target[enricher.name] = await enricher.enrich(null_location)
 
 # Stream subject mappings -- derived from the registry; every stream is included
 # (META too: supervisor must create it in JetStream even though archive skips it).
