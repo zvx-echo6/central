@@ -1,0 +1,7 @@
+{# WZDx work-zone one-line subject (v0.9.0). "Work zone on <road> <dir>"; the
+   Location column (geocoder city/county/state) renders separately. Falls back to
+   a bare "Work zone" so we never regress to "—". Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{%- set roads = d.get('road_names') or [] -%}
+{%- set road = roads[0] if roads else None -%}
+Work zone{% if road %} on {{ road }}{% endif %}{% if d.get('direction') %} {{ d.direction }}{% endif %}

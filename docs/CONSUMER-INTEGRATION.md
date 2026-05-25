@@ -131,6 +131,7 @@ Central's archive.
 | `CENTRAL_SPACE` | `central.space.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_DISASTER` | `central.disaster.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_HYDRO` | `central.hydro.>` | 7 | 1 GiB | ✓ | ✓ |
+| `CENTRAL_TRAFFIC` | `central.traffic.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_META` | `central.meta.>` | 1 | 1 GiB | — | ✓ |
 
 Retention and storage caps are migration-seeded defaults visible in `config.streams`;
@@ -1474,6 +1475,48 @@ already running can disable those overlap categories via `EONETSettings.category
     "centralschemaversion": "1.0"
 }
 ```
+
+### wzdx — FHWA Work Zone Data Exchange (state-DOT work zones)
+
+Active road work zones discovered from the federal WZDx Feed Registry and each
+eligible state-DOT GeoJSON feed. One event per WZDx RoadEventFeature.
+
+- **Stream:** `CENTRAL_TRAFFIC`
+- **Subject pattern:** `central.traffic.work_zone.<state>`
+  - `<state>` is the lowercased 2-letter code from the registry row (geocoder
+    state as fallback), else `unknown`
+- **GUI event_type:** `work_zone` — from `category = "work_zone.wzdx"`; the GUI
+  derives event_type as the first dotted segment of the category
+- **Cadence default:** 600s (10 min)
+- **Feed filter:** registry rows with `format=geojson`, `active=true`,
+  `needapikey=false`, `version` 4.x (~21 feeds at author time)
+- **Dedup key shape:** composite `<data_source_id>:<feature_id>`
+  (e.g. `UDOT-Construction:2365_eastbound`); reused as the inner `Event.id`
+- **Event.data fields:**
+
+  | key | type | nullable | description |
+  |---|---|---|---|
+  | `road_names` | list[str] | no | Affected road name(s); may be empty |
+  | `direction` | str | yes | Travel direction of the work zone |
+  | `description` | str | yes | Operator-readable narrative |
+  | `vehicle_impact` | str | yes | `all-lanes-open` / `some-lanes-closed` / `all-lanes-closed` / `unknown`; drives severity |
+  | `event_status` | str | yes | e.g. `active` (Utah carries it; Iowa omits it) |
+  | `start_date` | str (ISO 8601) | yes | Work-zone start |
+  | `end_date` | str (ISO 8601) | yes | Work-zone end; also sets `Event.expires` |
+  | `data_source_id` | str | no | WZDx `core_details.data_source_id` |
+  | `feed_name` | str | yes | Registry feed identifier |
+  | `feed_state` | str | yes | Registry state name |
+  | `feed_state_code` | str | yes | 2-letter code used for the subject |
+  | `latitude` | float | yes | First geometry coordinate (enrichment input) |
+  | `longitude` | float | yes | First geometry coordinate (enrichment input) |
+
+- **Severity:** derived from `vehicle_impact` (`all-lanes-closed`=3,
+  `some-lanes-closed`=2, `all-lanes-open`=1, `unknown`/missing=1) — WZDx has no
+  normalcy class.
+- **Decipherable as-is:** mostly. Road + direction + impact + description are
+  user-ready; city/county/state come from geocoder enrichment.
+- **Removal semantics:** none in v1. Work zones age out of upstream feeds; the
+  14-day dedup sweep expires stale ids. Watch `end_date` / `Event.expires`.
 
 ### nwis — USGS NWIS streamflow / gage height / water-temperature gauges
 

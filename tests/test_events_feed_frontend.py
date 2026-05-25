@@ -1142,6 +1142,7 @@ _SAMPLE_INNER = {
     "usgs_quake": {"magnitude": 1.009682538298, "place": "17 km W of Searles Valley, CA"},
     "wfigs_incidents": {"county": "Montezuma", "state": "CO"},
     "wfigs_perimeters": {"county": "Carbon", "state": "MT"},
+    "wzdx": {"road_names": ["I-80"], "direction": "eastbound"},
 }
 
 # Exact expected subjects for the deterministic adapters. swpc_alerts is omitted
@@ -1160,6 +1161,7 @@ _EXPECTED_SUBJECT = {
     "usgs_quake": "Magnitude 1.0 — 17 km W of Searles Valley, CA",
     "wfigs_incidents": "Wildfire incident — Montezuma, CO",
     "wfigs_perimeters": "Wildfire perimeter — Carbon, MT",
+    "wzdx": "Work zone on I-80 eastbound",
 }
 
 

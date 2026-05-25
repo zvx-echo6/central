@@ -1,0 +1,12 @@
+{# WZDx work-zone detail rows. Fields from payload->data->data; every block is
+   guarded so the Iowa shape (lanes/types_of_work, no event_status) and the Utah
+   shape (event_status, no lanes) both render without error. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% set roads = d.get('road_names') or [] %}
+{% if roads %}<dt>Road</dt><dd>{{ roads | join(', ') }}{% if d.get('direction') %} ({{ d.direction }}){% endif %}</dd>{% endif %}
+{% if d.get('vehicle_impact') is not none %}<dt>Vehicle impact</dt><dd>{{ d.vehicle_impact }}</dd>{% endif %}
+{% if d.get('event_status') is not none %}<dt>Status</dt><dd>{{ d.event_status }}</dd>{% endif %}
+{% if d.get('start_date') is not none %}<dt>Starts</dt><dd>{{ d.start_date }}</dd>{% endif %}
+{% if d.get('end_date') is not none %}<dt>Ends</dt><dd>{{ d.end_date }}</dd>{% endif %}
+{% if d.get('description') is not none %}<dt>Description</dt><dd>{{ d.description | truncate(200) }}</dd>{% endif %}
+{% if d.get('feed_name') is not none %}<dt>Source feed</dt><dd>{{ d.feed_name }}{% if d.get('feed_state') %} ({{ d.feed_state }}){% endif %}</dd>{% endif %}
