@@ -3,7 +3,7 @@
    shape (event_status, no lanes) both render without error. #}
 {% set d = (event.data.get('data') or {}).get('data') or {} %}
 {% set roads = d.get('road_names') or [] %}
-{% if roads %}<dt>Road</dt><dd>{{ roads | join(', ') }}{% if d.get('direction') %} ({{ d.direction }}){% endif %}</dd>{% endif %}
+{% if roads %}<dt>Road</dt><dd>{{ roads | join(', ') }}{% if d.get('direction') and d.direction != 'unknown' %} ({{ d.direction }}){% endif %}</dd>{% endif %}
 {% if d.get('vehicle_impact') is not none %}<dt>Vehicle impact</dt><dd>{{ d.vehicle_impact }}</dd>{% endif %}
 {% if d.get('event_status') is not none %}<dt>Status</dt><dd>{{ d.event_status }}</dd>{% endif %}
 {% if d.get('start_date') is not none %}<dt>Starts</dt><dd>{{ d.start_date }}</dd>{% endif %}

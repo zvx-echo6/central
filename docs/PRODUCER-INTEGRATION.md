@@ -270,6 +270,19 @@ class implements the standard `published_ids` bump; adapters using that table
 inherit it and need not override. It is a safe no-op when the adapter has no
 `_db` handle.
 
+**`def is_published(self, event_id: str) -> bool`** — Optional. Returns whether
+`event_id` is already in the `published_ids` dedup table. The base class
+implements the standard query; adapters using that table inherit it. Safe
+(returns `False`) when the adapter has no `_db` handle.
+
+**`def mark_published(self, event_id: str) -> None`** — Optional. Records
+`event_id` as published (refreshing `last_seen` on re-publish). Base-class
+default operates on `published_ids`; safe no-op without `_db`.
+
+**`def sweep_old_ids(self) -> int`** — Optional. Purges dedup rows older than
+`dedup_sweep_days` (default 14; NWIS overrides to 30) and returns the count
+deleted. Base-class default; safe no-op (returns 0) without `_db`.
+
 **`async def preview_for_settings(self, settings: BaseModel) -> list[dict] | None`** —
 Optional. The settings-page preview hook. The default returns `None` (no
 preview). See [§11](#11-settings-preview-hook) for the contract.

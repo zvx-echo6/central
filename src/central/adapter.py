@@ -1,5 +1,6 @@
 """Base adapter interface for event sources."""
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Literal
@@ -10,6 +11,8 @@ if TYPE_CHECKING:
     from central.config_models import AdapterConfig
 
 from central.models import Event
+
+logger = logging.getLogger(__name__)
 
 
 class SourceAdapter(ABC):
@@ -91,6 +94,56 @@ class SourceAdapter(ABC):
     async def shutdown(self) -> None:
         """Optional lifecycle hook called on graceful shutdown."""
         pass
+
+    dedup_sweep_days: int = 14
+    """Retention window (days) for the ``published_ids`` dedup table; the
+    inherited ``sweep_old_ids`` deletes rows older than this. Override per
+    adapter (NWIS uses 30; most use the 14-day default)."""
+
+    def is_published(self, event_id: str) -> bool:
+        """True if ``event_id`` is already recorded. No-op-safe without ``_db``."""
+        db = getattr(self, "_db", None)
+        if db is None:
+            return False
+        cur = db.execute(
+            "SELECT 1 FROM published_ids WHERE adapter = ? AND event_id = ?",
+            (self.name, event_id),
+        )
+        return cur.fetchone() is not None
+
+    def mark_published(self, event_id: str) -> None:
+        """Record ``event_id`` as published; refresh ``last_seen`` on re-publish."""
+        db = getattr(self, "_db", None)
+        if db is None:
+            return
+        db.execute(
+            """
+            INSERT INTO published_ids (adapter, event_id, first_seen, last_seen)
+            VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (adapter, event_id) DO UPDATE SET last_seen = CURRENT_TIMESTAMP
+            """,
+            (self.name, event_id),
+        )
+        db.commit()
+
+    def sweep_old_ids(self) -> int:
+        """Purge dedup rows older than ``dedup_sweep_days``; returns count deleted."""
+        db = getattr(self, "_db", None)
+        if db is None:
+            return 0
+        cur = db.execute(
+            "DELETE FROM published_ids WHERE adapter = ? "
+            "AND last_seen < datetime('now', ?)",
+            (self.name, f"-{self.dedup_sweep_days} days"),
+        )
+        db.commit()
+        count = cur.rowcount
+        if count > 0:
+            logger.info(
+                "Swept old dedup entries",
+                extra={"adapter": self.name, "count": count},
+            )
+        return count
 
     def bump_last_seen(self, event_id: str) -> None:
         """Refresh the dedup ``last_seen`` for an already-published event.
