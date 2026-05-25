@@ -710,6 +710,7 @@ def _events_context(events):
     return {
         "events": events,
         "next_cursor": None,
+        "base_path": "/events",
         "query_string": "",
         "pagination": {
             "total": n, "offset": 0, "limit": 50, "page": 1, "total_pages": 1,
@@ -781,13 +782,17 @@ class TestRegistryDrivenAdapterFilter:
 
         context = mock_templates.TemplateResponse.call_args.kwargs.get("context")
 
-        # The list is exactly the registry, sorted by name (stable), no extras.
-        assert [a["name"] for a in context["adapters"]] == sorted(registry.keys())
+        # v0.7.4: /events shows event-class adapters only (telemetry-class, e.g.
+        # nwis, moved to /telemetry). Registry-derived, sorted, no extras.
+        event_names = sorted(n for n, c in registry.items()
+                             if getattr(c, "data_class", "event") == "event")
+        assert [a["name"] for a in context["adapters"]] == event_names
         # Each entry carries name + display_name (v0.7.1 adds a positional color).
         by_name = {a["name"]: a for a in context["adapters"]}
-        for cls in registry.values():
-            assert by_name[cls.name]["display_name"] == cls.display_name
-            assert by_name[cls.name]["color"].startswith("#")
+        for name in event_names:
+            cls = registry[name]
+            assert by_name[name]["display_name"] == cls.display_name
+            assert by_name[name]["color"].startswith("#")
 
 
 class TestPerAdapterRowPartials:

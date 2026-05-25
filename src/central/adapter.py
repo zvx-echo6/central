@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel
 
@@ -47,6 +47,12 @@ class SourceAdapter(ABC):
     enrichment. Each tuple names top-level keys in Event.data holding a
     latitude and longitude; the supervisor extracts them, runs registered
     enrichers, and attaches results under Event.data["_enriched"]."""
+
+    data_class: Literal["event", "telemetry"] = "event"
+    """How the GUI classifies this source. "event" (default) = discrete events,
+    shown on /events. "telemetry" = continuous/high-volume feeds (e.g. NWIS water
+    gauges) that would drown discrete-event signal; shown on /telemetry instead.
+    GUI-only — does not affect publishing or the events.json contract."""
 
     @abstractmethod
     async def poll(self) -> AsyncIterator[Event]:

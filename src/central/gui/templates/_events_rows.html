@@ -72,20 +72,21 @@
 
 {# Real offset paginator (v0.7.3). Each link carries offset + the filter
    query_string (which excludes cursor/offset); limit persists via query_string. #}
-{% macro page_link(off, label, cls, extra) %}
+{# base_path passed into the macro (macros don't see render-context vars). #}
+{% macro page_link(base, off, label, cls) %}
 {% set qs = "offset=" ~ off ~ ("&" ~ query_string if query_string else "") %}
-<a href="/events?{{ qs }}" role="button" class="page-link {{ cls }}"
-   hx-get="/events/rows?{{ qs }}" hx-target="#events-rows" hx-push-url="true" {{ extra }}>{{ label }}</a>
+<a href="{{ base }}?{{ qs }}" role="button" class="page-link {{ cls }}"
+   hx-get="{{ base }}/rows?{{ qs }}" hx-target="#events-rows" hx-push-url="true">{{ label }}</a>
 {% endmacro %}
 <nav class="paginator" aria-label="Pagination">
     <div class="paginator-pages">
-        {% if pagination.prev_offset is not none %}{{ page_link(pagination.prev_offset, "‹ Previous", "page-prev", "") }}{% else %}<span class="page-link disabled">‹ Previous</span>{% endif %}
+        {% if pagination.prev_offset is not none %}{{ page_link(base_path, pagination.prev_offset, "‹ Previous", "page-prev") }}{% else %}<span class="page-link disabled">‹ Previous</span>{% endif %}
         {% for p in pagination.pages %}
             {% if p.ellipsis %}<span class="page-ellipsis">…</span>
             {% elif p.current %}<span class="page-link current" aria-current="page">{{ p.page }}</span>
-            {% else %}{{ page_link(p.offset, p.page, "", "") }}{% endif %}
+            {% else %}{{ page_link(base_path, p.offset, p.page, "") }}{% endif %}
         {% endfor %}
-        {% if pagination.next_offset is not none %}{{ page_link(pagination.next_offset, "Next ›", "page-next", "") }}{% else %}<span class="page-link disabled">Next ›</span>{% endif %}
+        {% if pagination.next_offset is not none %}{{ page_link(base_path, pagination.next_offset, "Next ›", "page-next") }}{% else %}<span class="page-link disabled">Next ›</span>{% endif %}
     </div>
     <div class="paginator-meta">
         {% if pagination.total %}
