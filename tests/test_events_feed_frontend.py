@@ -248,14 +248,14 @@ class TestEventsFeedFrontendAuthenticated:
         assert context["events"] == []
 
     @pytest.mark.asyncio
-    async def test_events_with_limit_shows_next_button(self):
-        """GET /events?limit=5 shows Next button when more events exist."""
+    async def test_events_with_limit_builds_pagination(self):
+        """GET /events?limit=5 (offset-mode): pagination reflects total/next page."""
         mock_request = MagicMock()
         mock_request.state.operator = MagicMock(id=1, username="admin")
         mock_request.state.csrf_token = "test_csrf_token"
         mock_request.query_params = {"limit": "5"}
 
-        # Return 6 events (limit+1) to trigger pagination
+        # 5 rows for page 1; total_count=12 (the window count) => 3 pages.
         mock_events = [
             {
                 "id": f"event_{i}",
@@ -267,8 +267,9 @@ class TestEventsFeedFrontendAuthenticated:
                 "geometry": None,
                 "data": {},
                 "regions": [],
+                "total_count": 12,
             }
-            for i in range(6)
+            for i in range(5)
         ]
 
         mock_conn = AsyncMock()
@@ -291,8 +292,11 @@ class TestEventsFeedFrontendAuthenticated:
 
         assert result.status_code == 200
         context = mock_templates.TemplateResponse.call_args.kwargs.get("context")
-        assert context["next_cursor"] is not None
-        assert len(context["events"]) == 5  # Should be trimmed to limit
+        pg = context["pagination"]
+        assert pg["total"] == 12 and pg["total_pages"] == 3 and pg["page"] == 1
+        assert pg["next_offset"] == 5 and pg["prev_offset"] is None
+        assert context["next_cursor"] is None  # offset-mode (GUI) doesn't use cursor
+        assert len(context["events"]) == 5
 
 
 class TestEventsRowsFragment:
@@ -531,8 +535,9 @@ class TestCrossEndpointParity:
         assert html_context["events"][0]["category"] == "Weather Alert"
 
     @pytest.mark.asyncio
-    async def test_cursor_pagination_both_endpoints(self):
-        """Cursor pagination works identically on both endpoints."""
+    async def test_pagination_modes_split_cleanly_by_endpoint(self):
+        """v0.7.3: events.json keeps CURSOR pagination (next_cursor set); the
+        GUI events page uses OFFSET pagination (next_cursor None + pagination)."""
         first_page = [
             {
                 "id": f"event_{i}",
@@ -585,9 +590,10 @@ class TestCrossEndpointParity:
                 await events_list(html_request)
 
         html_context = mock_templates.TemplateResponse.call_args.kwargs.get("context")
-        html_cursor = html_context["next_cursor"]
-
-        assert json_cursor == html_cursor
+        # events.json paginates by cursor; the GUI by offset (no cursor, has paginator).
+        assert json_cursor is not None
+        assert html_context["next_cursor"] is None
+        assert "pagination" in html_context
 
 
 class TestErrorSemantics:
@@ -700,15 +706,18 @@ class TestEventRowDataAttributes:
 
 def _events_context(events):
     """Minimal context for rendering _events_rows.html as a standalone fragment."""
+    n = len(events)
     return {
         "events": events,
         "next_cursor": None,
-        "filter_error": None,
-        "filter_values": {
-            "adapter": "", "category": "", "since": "", "until": "",
-            "region_north": "", "region_south": "", "region_east": "",
-            "region_west": "", "limit": "50",
+        "query_string": "",
+        "pagination": {
+            "total": n, "offset": 0, "limit": 50, "page": 1, "total_pages": 1,
+            "start": 1 if n else 0, "end": n, "prev_offset": None, "next_offset": None,
+            "pages": [{"page": 1, "offset": 0, "current": True}] if n else [],
+            "per_page_options": [25, 50, 100, 250],
         },
+        "filter_error": None,
     }
 
 
@@ -873,27 +882,28 @@ def _first_row_cells(html):
 
 
 class TestEventTimeFormat:
-    """(A) Server-side 'MM-DD-YYYY HH:MM UTC' formatting (24h, no seconds)."""
+    """(A) Server-side 'MM-DD HH:MM UTC' formatting (24h, no seconds, no year;
+    v0.7.3 dropped the year from the cell for single-line stable rows)."""
 
     def test_format_basic_utc(self):
         from central.gui.routes import _format_event_time
-        assert _format_event_time("2026-05-21T06:00:00+00:00") == "05-21-2026 06:00 UTC"
+        assert _format_event_time("2026-05-21T06:00:00+00:00") == "05-21 06:00 UTC"
 
     def test_format_converts_offset_to_utc(self):
         from central.gui.routes import _format_event_time
         # 19:30 at -06:00 is 01:30 UTC the next day.
-        assert _format_event_time("2026-05-20T19:30:00-06:00") == "05-21-2026 01:30 UTC"
+        assert _format_event_time("2026-05-20T19:30:00-06:00") == "05-21 01:30 UTC"
 
     def test_format_empty_and_none(self):
         from central.gui.routes import _format_event_time
         assert _format_event_time("") == ""
         assert _format_event_time(None) == ""
 
-    def test_format_no_seconds_no_offset_suffix(self):
+    def test_format_no_seconds_no_year_no_offset_suffix(self):
         from central.gui.routes import _format_event_time
         out = _format_event_time("2026-01-02T03:04:59+00:00")
-        assert out == "01-02-2026 03:04 UTC"
-        assert ":59" not in out and "+00" not in out
+        assert out == "01-02 03:04 UTC"
+        assert ":59" not in out and "+00" not in out and "2026" not in out
 
 
 class TestTableDisplayDecoration:
@@ -1084,8 +1094,11 @@ class TestTableRendersThroughHTTP:
             resp = self._client().get("/events")
         assert resp.status_code == 200
         cells = _first_row_cells(resp.text)
-        assert cells[1].endswith("UTC") and "2026" in cells[1]   # Time non-empty
-        assert cells[4] == self._expected_adapter_display()       # Adapter display_name
+        # v0.7.3: single-line MM-DD HH:MM UTC (no year in the cell).
+        assert cells[1].endswith("UTC") and "2026" not in cells[1] and len(cells[1].split()) == 3
+        # Adapter cell is now a chip showing the short name; display_name is the tooltip.
+        assert cells[4] == "usgs_quake"
+        assert self._expected_adapter_display() in resp.text   # display_name in title=
 
     def test_events_rows_fragment_time_and_adapter_cells_populated(self):
         mock_pool = self._mock_pool()
@@ -1094,8 +1107,9 @@ class TestTableRendersThroughHTTP:
             resp = self._client().get("/events/rows")
         assert resp.status_code == 200
         cells = _first_row_cells(resp.text)
-        assert cells[1].endswith("UTC") and "2026" in cells[1]   # Time non-empty
-        assert cells[4] == self._expected_adapter_display()       # Adapter display_name
+        assert cells[1].endswith("UTC") and "2026" not in cells[1] and len(cells[1].split()) == 3
+        assert cells[4] == "usgs_quake"
+        assert self._expected_adapter_display() in resp.text
 
 
 # --- feat(events-json-subject): JSON subject derivation ------------------

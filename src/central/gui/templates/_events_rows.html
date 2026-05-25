@@ -38,16 +38,18 @@
             data-subject="{{ subject_summary | trim }}"
             {% if event.geometry %}data-geometry='{{ event.geometry | tojson }}'{% endif %}>
             <td><button type="button" class="expand-row" aria-label="Expand">&#9656;</button></td>
-            <td title="{{ event.time }}">{{ event.time_human }}</td>
+            <td class="cell-time" title="{{ event.time }}">{{ event.time_human }}</td>
             <td>{% if loc_parts %}{{ loc_parts | join(', ') }}{% elif gc.get('landclass') %}{{ gc.landclass }}{% else %}—{% endif %}</td>
             <td>{{ subject_summary | trim or '—' }}</td>
-            <td>{{ event.adapter_display }}</td>
+            <td><span class="adapter-chip" title="{{ event.adapter_display }}"><span class="adapter-chip-swatch" style="background:{{ event.adapter_color }}"></span>{{ event.adapter }}</span></td>
         </tr>
         <tr class="event-detail" hidden>
             <td colspan="5">
                 <dl class="event-detail-list">
                     <dt>Event ID</dt>
                     <dd><code>{{ event.id }}</code></dd>
+                    <dt>Time</dt>
+                    <dd>{{ event.time }}</dd>
                     <dt>Received</dt>
                     <dd>{{ event.received }}</dd>
                     {% if event.regions %}
@@ -68,21 +70,37 @@
     </tbody>
 </table>
 
-<div class="pagination-info">
-    <span>Showing {{ events | length }} event{{ 's' if events | length != 1 else '' }}.</span>
-    {% if next_cursor %}
-    {% set next_qs = "cursor=" ~ next_cursor ~ ("&" ~ query_string if query_string else "") %}
-    <a href="/events?{{ next_qs }}"
-       role="button"
-       hx-get="/events/rows?{{ next_qs }}"
-       hx-target="#events-rows"
-       hx-push-url="true">
-        Next &rarr;
-    </a>
-    {% else %}
-    <span><em>End of results</em></span>
-    {% endif %}
-</div>
+{# Real offset paginator (v0.7.3). Each link carries offset + the filter
+   query_string (which excludes cursor/offset); limit persists via query_string. #}
+{% macro page_link(off, label, cls, extra) %}
+{% set qs = "offset=" ~ off ~ ("&" ~ query_string if query_string else "") %}
+<a href="/events?{{ qs }}" role="button" class="page-link {{ cls }}"
+   hx-get="/events/rows?{{ qs }}" hx-target="#events-rows" hx-push-url="true" {{ extra }}>{{ label }}</a>
+{% endmacro %}
+<nav class="paginator" aria-label="Pagination">
+    <div class="paginator-pages">
+        {% if pagination.prev_offset is not none %}{{ page_link(pagination.prev_offset, "‹ Previous", "page-prev", "") }}{% else %}<span class="page-link disabled">‹ Previous</span>{% endif %}
+        {% for p in pagination.pages %}
+            {% if p.ellipsis %}<span class="page-ellipsis">…</span>
+            {% elif p.current %}<span class="page-link current" aria-current="page">{{ p.page }}</span>
+            {% else %}{{ page_link(p.offset, p.page, "", "") }}{% endif %}
+        {% endfor %}
+        {% if pagination.next_offset is not none %}{{ page_link(pagination.next_offset, "Next ›", "page-next", "") }}{% else %}<span class="page-link disabled">Next ›</span>{% endif %}
+    </div>
+    <div class="paginator-meta">
+        {% if pagination.total %}
+        <span>Page {{ pagination.page }} of {{ pagination.total_pages }} (showing {{ "{:,}".format(pagination.start) }}–{{ "{:,}".format(pagination.end) }} of {{ "{:,}".format(pagination.total) }})</span>
+        {% else %}<span>No events.</span>{% endif %}
+        <label class="per-page">Per page:
+            {# JS-only: syncs the form's hidden #filter-limit and re-submits at page 1. #}
+            <select id="per-page-select">
+                {% for n in pagination.per_page_options %}
+                <option value="{{ n }}" {{ 'selected' if n == pagination.limit else '' }}>{{ n }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </div>
+</nav>
 {% else %}
 <article>
     <p>No events match the filters.</p>
