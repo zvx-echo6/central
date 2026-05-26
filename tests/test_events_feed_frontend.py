@@ -1227,3 +1227,38 @@ class TestEventsJsonSubject:
     def test_missing_source_fields_yields_none(self):
         """An event lacking its adapter's source fields derives no subject."""
         assert _derive_subject(_subject_event("usgs_quake", {})) is None
+
+
+class TestShowRemovedToggle:
+    """v0.9.11 — tombstone visibility wiring. filter_state.show_removed drives
+    the 'Show removed' checkbox in events_list.html; defaults to hidden."""
+
+    def _pool(self):
+        conn = AsyncMock()
+        conn.fetch.return_value = []
+        conn.fetchrow.return_value = {
+            "map_tile_url": "https://t/{z}/{x}/{y}.png", "map_attribution": "OSM"}
+        pool = MagicMock()
+        pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+        pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+        return pool
+
+    async def _filter_state(self, query_params):
+        req = MagicMock()
+        req.state.operator = MagicMock(id=1, username="admin")
+        req.state.csrf_token = "t"
+        req.query_params = query_params
+        templates = MagicMock()
+        templates.TemplateResponse.return_value = MagicMock(status_code=200)
+        with patch("central.gui.routes._get_templates", return_value=templates):
+            with patch("central.gui.routes.get_pool", return_value=self._pool()):
+                await events_list(req)
+        return templates.TemplateResponse.call_args.kwargs["context"]["filter_state"]
+
+    @pytest.mark.asyncio
+    async def test_default_hides_removed(self):
+        assert (await self._filter_state({}))["show_removed"] is False
+
+    @pytest.mark.asyncio
+    async def test_show_removed_true_reflected(self):
+        assert (await self._filter_state({"show_removed": "true"}))["show_removed"] is True
