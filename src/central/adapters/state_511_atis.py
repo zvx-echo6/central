@@ -47,14 +47,20 @@ LAYER_EVENT_TYPE: dict[str, str] = {
     "Construction": "work_zone",
 }
 
-# DataTables server-side body. POST is required (GET returns an empty data array);
-# length covers Idaho's largest layer today (~114) with headroom — warn if exceeded.
-_LIST_PAGE_LENGTH = 1000
-_LIST_BODY = {
-    "draw": "1", "start": "0", "length": str(_LIST_PAGE_LENGTH),
-    "columns[0][data]": "0", "order[0][column]": "0",
-    "order[0][dir]": "asc", "search[value]": "",
-}
+# DataTables server-side body. POST is required (GET returns an empty data array).
+# Castle Rock caps each page at 100 rows regardless of `length`, so we paginate.
+_LIST_PAGE_LENGTH = 100
+_MAX_PAGES = 50  # defensive ceiling (~5,000 rows/layer)
+
+
+def _list_body(start: int) -> dict[str, str]:
+    return {
+        "draw": "1", "start": str(start), "length": str(_LIST_PAGE_LENGTH),
+        "columns[0][data]": "0", "order[0][column]": "0",
+        "order[0][dir]": "asc", "search[value]": "",
+    }
+
+
 _XHR = {"X-Requested-With": "XMLHttpRequest"}
 
 _FETCH_CONCURRENCY = 4
@@ -175,24 +181,50 @@ class State511ATISAdapter(SourceAdapter):
                 out[str(m["itemId"])] = (float(loc[0]), float(loc[1]))
         return out
 
-    async def _fetch_details(self, base_url: str, layer: str) -> list[dict[str, Any]]:
-        """POST /List/GetData/<Layer> (DataTables) -> rich rows. [] on failure."""
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential_jitter(initial=1, max=30),
+        retry=retry_if_exception_type((aiohttp.ClientError, TimeoutError)),
+    )
+    async def _fetch_page(self, base_url: str, layer: str, start: int) -> dict[str, Any]:
         assert self._session is not None
-        try:
-            async with self._session.post(
-                f"{base_url}/List/GetData/{layer}", data=_LIST_BODY, headers=_XHR
-            ) as resp:
-                resp.raise_for_status()
-                doc = await resp.json(content_type=None)
-        except (aiohttp.ClientError, TimeoutError, asyncio.TimeoutError, ValueError) as exc:
-            logger.warning("state_511_atis detail fetch failed",
-                           extra={"layer": layer, "base_url": base_url, "error": str(exc)})
-            return []
-        total = doc.get("recordsTotal") or 0
-        rows = doc.get("data") or []
-        if total > _LIST_PAGE_LENGTH:
-            logger.warning("state_511_atis layer exceeds page length; add pagination",
-                           extra={"layer": layer, "recordsTotal": total, "length": _LIST_PAGE_LENGTH})
+        async with self._session.post(
+            f"{base_url}/List/GetData/{layer}", data=_list_body(start), headers=_XHR
+        ) as resp:
+            resp.raise_for_status()
+            return await resp.json(content_type=None)
+
+    async def _fetch_details(self, base_url: str, layer: str) -> list[dict[str, Any]]:
+        """POST /List/GetData/<Layer> (DataTables), paginated -> all rows. [] on failure.
+
+        Castle Rock caps each page at 100 rows regardless of `length`, so we loop
+        until recordsFiltered is collected or a page returns empty, with a
+        defensive _MAX_PAGES ceiling. A mid-pagination failure returns the rows
+        gathered so far (retried next poll).
+        """
+        rows: list[dict[str, Any]] = []
+        start = 0
+        total: int | None = None
+        for _ in range(_MAX_PAGES):
+            try:
+                doc = await self._fetch_page(base_url, layer, start)
+            except (aiohttp.ClientError, TimeoutError, asyncio.TimeoutError, ValueError) as exc:
+                logger.warning("state_511_atis detail fetch failed",
+                               extra={"layer": layer, "base_url": base_url, "start": start, "error": str(exc)})
+                break
+            if total is None:
+                total = doc.get("recordsFiltered") or doc.get("recordsTotal") or 0
+            page = doc.get("data") or []
+            if not page:
+                break
+            rows.extend(page)
+            start += _LIST_PAGE_LENGTH
+            if len(rows) >= total:
+                break
+        else:
+            logger.warning("state_511_atis pagination hit max_pages cap",
+                           extra={"layer": layer, "max_pages": _MAX_PAGES,
+                                  "collected": len(rows), "recordsFiltered": total})
         return rows
 
     def _build_event(
