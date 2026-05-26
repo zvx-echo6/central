@@ -12,11 +12,11 @@ from central.gui.db import get_pool
 logger = logging.getLogger(__name__)
 
 # Paths that don't require setup to be complete
-SETUP_EXEMPT_PREFIXES = ("/static/", "/setup")
+SETUP_EXEMPT_PREFIXES = ("/static/", "/setup", "/api/traffic/flow/")
 
 # Paths that don't require authentication
 AUTH_EXEMPT_PATHS = {"/setup/operator", "/login", "/health"}
-AUTH_EXEMPT_PREFIXES = ("/static/", "/setup/")
+AUTH_EXEMPT_PREFIXES = ("/static/", "/setup/", "/api/traffic/flow/")
 
 # Browser-noise paths that trigger CSRF race conditions
 BROWSER_NOISE_PATHS = {
