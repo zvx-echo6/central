@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}Central — Monitoring Area{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" integrity="sha512-gc3xjCmIy673V6MyOAZhIW93xhM9ei1I+gLbmFjUHIjocENRsLX/QUE1htk5q1XV2D/iie/VQ8DXI6Vu8bexvQ==" crossorigin="anonymous">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js" integrity="sha512-ozq8xQKq6urvuU6jNgkfqAmT7jKN2XumbrX1JiB3TnF7tI48DPI4Gy1GXKD/V3EExgAs1V+pRO7vwtS1LHg0Gw==" crossorigin="anonymous"></script>
+{% endblock %}
+
+{% block content %}
+<h1>Monitoring Area</h1>
+<p class="muted">
+    Events whose geometry falls entirely outside this box are dropped by the
+    archive before they reach the events table. Events with no geometry (e.g.
+    space-weather alerts, removal tombstones) are always kept. Changes apply
+    within about a minute — no restart required.
+</p>
+
+<form method="post" action="/monitoring-area">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div id="region-picker-container"
+         data-north="{{ area.north }}"
+         data-south="{{ area.south }}"
+         data-east="{{ area.east }}"
+         data-west="{{ area.west }}"
+         data-tile-url="{{ tile_url }}"
+         data-tile-attr="{{ tile_attribution }}">
+
+        <div id="region-map" style="height: 420px; margin-bottom: 1rem; border: 1px solid var(--rule); border-radius: var(--radius);"></div>
+
+        <div class="cols">
+            <div>
+                <label for="monitor_north">North</label>
+                <input type="number" id="monitor_north" name="monitor_north" step="0.0001" min="-90" max="90" readonly value="{{ area.north }}">
+                {% if errors and errors.north %}<small class="field-error">{{ errors.north }}</small>{% endif %}
+            </div>
+            <div>
+                <label for="monitor_south">South</label>
+                <input type="number" id="monitor_south" name="monitor_south" step="0.0001" min="-90" max="90" readonly value="{{ area.south }}">
+                {% if errors and errors.south %}<small class="field-error">{{ errors.south }}</small>{% endif %}
+            </div>
+            <div>
+                <label for="monitor_east">East</label>
+                <input type="number" id="monitor_east" name="monitor_east" step="0.0001" min="-180" max="180" readonly value="{{ area.east }}">
+                {% if errors and errors.east %}<small class="field-error">{{ errors.east }}</small>{% endif %}
+            </div>
+            <div>
+                <label for="monitor_west">West</label>
+                <input type="number" id="monitor_west" name="monitor_west" step="0.0001" min="-180" max="180" readonly value="{{ area.west }}">
+                {% if errors and errors.west %}<small class="field-error">{{ errors.west }}</small>{% endif %}
+            </div>
+        </div>
+
+        <button type="button" id="region-reset-btn" class="btn-secondary" style="margin-top: 12px;">Reset to Saved</button>
+    </div>
+
+    <div style="margin-top: 1rem;">
+        <button type="submit" class="btn-primary">Save Monitoring Area</button>
+    </div>
+</form>
+
+<script>
+(function() {
+    const container = document.getElementById('region-picker-container');
+    const savedNorth = parseFloat(container.dataset.north);
+    const savedSouth = parseFloat(container.dataset.south);
+    const savedEast = parseFloat(container.dataset.east);
+    const savedWest = parseFloat(container.dataset.west);
+    const tileUrl = container.dataset.tileUrl || 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    const tileAttr = container.dataset.tileAttr || '&copy; OpenStreetMap contributors';
+
+    const centerLat = (savedNorth + savedSouth) / 2;
+    const centerLng = (savedEast + savedWest) / 2;
+    const map = L.map('region-map').setView([centerLat, centerLng], 5);
+
+    L.tileLayer(tileUrl, { attribution: tileAttr, maxZoom: 18 }).addTo(map);
+    setTimeout(function() { map.invalidateSize(); }, 100);
+
+    const bounds = L.latLngBounds(
+        L.latLng(savedSouth, savedWest),
+        L.latLng(savedNorth, savedEast)
+    );
+    map.fitBounds(bounds.pad(0.1));
+
+    let rectangle = L.rectangle(bounds, { color: '#3388ff', weight: 2, fillOpacity: 0.2 });
+
+    const drawnItems = new L.FeatureGroup();
+    drawnItems.addLayer(rectangle);
+    map.addLayer(drawnItems);
+
+    const drawControl = new L.Control.Draw({
+        draw: {
+            rectangle: { shapeOptions: { color: '#3388ff', weight: 2, fillOpacity: 0.2 } },
+            polyline: false, polygon: false, circle: false, marker: false, circlemarker: false
+        },
+        edit: { featureGroup: drawnItems, edit: false, remove: false }
+    });
+    map.addControl(drawControl);
+    rectangle.editing.enable();
+
+    const northInput = document.getElementById('monitor_north');
+    const southInput = document.getElementById('monitor_south');
+    const eastInput = document.getElementById('monitor_east');
+    const westInput = document.getElementById('monitor_west');
+
+    function updateInputs() {
+        const b = rectangle.getBounds();
+        northInput.value = b.getNorth().toFixed(4);
+        southInput.value = b.getSouth().toFixed(4);
+        eastInput.value = b.getEast().toFixed(4);
+        westInput.value = b.getWest().toFixed(4);
+    }
+
+    rectangle.on('edit', updateInputs);
+
+    map.on(L.Draw.Event.CREATED, function(e) {
+        drawnItems.clearLayers();
+        rectangle = e.layer;
+        rectangle.setStyle({ color: '#3388ff', weight: 2, fillOpacity: 0.2 });
+        drawnItems.addLayer(rectangle);
+        rectangle.editing.enable();
+        rectangle.on('edit', updateInputs);
+        updateInputs();
+    });
+
+    document.getElementById('region-reset-btn').addEventListener('click', function() {
+        const originalBounds = L.latLngBounds(
+            L.latLng(savedSouth, savedWest),
+            L.latLng(savedNorth, savedEast)
+        );
+        drawnItems.clearLayers();
+        rectangle = L.rectangle(originalBounds, { color: '#3388ff', weight: 2, fillOpacity: 0.2 });
+        drawnItems.addLayer(rectangle);
+        rectangle.editing.enable();
+        rectangle.on('edit', updateInputs);
+        updateInputs();
+    });
+
+    updateInputs();
+})();
+</script>
+{% endblock %}

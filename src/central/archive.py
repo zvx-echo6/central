@@ -9,11 +9,13 @@ import json
 import logging
 import signal
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
 import nats
+from shapely.geometry import box as _shapely_box, shape
 from nats.js import JetStreamContext
 from nats.js.api import ConsumerConfig, DeliverPolicy, AckPolicy
 from nats.js.errors import NotFoundError
@@ -28,6 +30,9 @@ STREAMS = [(s.name, s.subject_filter) for s in STREAM_REGISTRY if s.event_bearin
 BATCH_SIZE = 100
 FETCH_TIMEOUT = 5.0
 ACK_WAIT = 30
+# How often the archive re-reads the monitoring-area bbox from config.system so
+# GUI edits take effect without a service restart (~this many seconds latency).
+MONITORING_AREA_REFRESH_S = 60
 
 
 def consumer_name_for(stream: str) -> str:
@@ -108,6 +113,45 @@ def _build_geom_sql(geo_data: dict[str, Any] | None) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class MonitoringArea:
+    """System-level bounding box that events must intersect to be archived."""
+
+    north: float
+    south: float
+    east: float
+    west: float
+
+    def as_box(self):
+        # shapely box(minx, miny, maxx, maxy) -> (west, south, east, north)
+        return _shapely_box(self.west, self.south, self.east, self.north)
+
+
+def _classify_geom(geom_json: str | None, area: "MonitoringArea | None") -> str:
+    """Classify an event geometry against the monitoring area (archive bbox filter).
+
+    Returns one of:
+      'null-geom'     -- no geometry; always archived (SWPC trio, .removed tombstones)
+      'no-area'       -- no monitoring area configured; archive everything
+      'in-bounds'     -- geometry intersects the area; archive
+      'out-of-bounds' -- geometry lies entirely outside the area; drop
+      'invalid-geom'  -- geometry could not be evaluated; archived (fail-open) + warn
+
+    Uses intersects() so border-straddlers are kept (matches PostGIS ST_Intersects).
+    The filter must never drop an event because of a parse failure: when in doubt,
+    keep it.
+    """
+    if geom_json is None:
+        return "null-geom"
+    if area is None:
+        return "no-area"
+    try:
+        geom = shape(json.loads(geom_json))
+        return "in-bounds" if geom.intersects(area.as_box()) else "out-of-bounds"
+    except Exception:
+        return "invalid-geom"
+
+
 class ArchiveConsumer:
     """Archive consumer process."""
 
@@ -118,6 +162,8 @@ class ArchiveConsumer:
         self._js: JetStreamContext | None = None
         self._pool: asyncpg.Pool | None = None
         self._shutdown_event = asyncio.Event()
+        self._monitoring_area: MonitoringArea | None = None
+        self._dropped: dict[str, int] = {}
 
     async def connect(self) -> None:
         """Connect to NATS and PostgreSQL."""
@@ -143,6 +189,49 @@ class ArchiveConsumer:
             self._nc = None
             self._js = None
         logger.info("Disconnected")
+
+    async def _load_monitoring_area(self) -> None:
+        """Load (or refresh) the system monitoring-area bbox from config.system.
+
+        On any error keep the last-known value and warn -- the filter must never
+        block archiving because a config read failed."""
+        if not self._pool:
+            return
+        try:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT monitor_north, monitor_south, monitor_east, monitor_west "
+                    "FROM config.system WHERE id = true"
+                )
+            cols = ("monitor_north", "monitor_south", "monitor_east", "monitor_west")
+            if row and all(row[c] is not None for c in cols):
+                self._monitoring_area = MonitoringArea(
+                    north=row["monitor_north"], south=row["monitor_south"],
+                    east=row["monitor_east"], west=row["monitor_west"],
+                )
+            else:
+                self._monitoring_area = None
+        except Exception as e:
+            logger.warning(
+                "Could not load monitoring area; keeping previous value",
+                extra={"error": str(e)},
+            )
+
+    async def _refresh_monitoring_area_loop(self) -> None:
+        """Periodically refresh the monitoring area so GUI edits propagate without
+        a restart, and log a rolling summary of dropped (out-of-bounds) events."""
+        while not self._shutdown_event.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(), timeout=MONITORING_AREA_REFRESH_S
+                )
+            except asyncio.TimeoutError:
+                await self._load_monitoring_area()
+                if self._dropped:
+                    logger.info(
+                        "bbox filter drop summary (cumulative)",
+                        extra={"dropped_by_adapter": dict(self._dropped)},
+                    )
 
     async def _cleanup_orphaned_consumer(self) -> None:
         """Remove orphaned 'archive' consumer from CENTRAL_WX if it exists.
@@ -233,6 +322,21 @@ class ArchiveConsumer:
             return
 
         geom_json = _build_geom_sql(geo_data)
+
+        verdict = _classify_geom(geom_json, self._monitoring_area)
+        if verdict == "out-of-bounds":
+            self._dropped[adapter] = self._dropped.get(adapter, 0) + 1
+            logger.debug(
+                "Dropped out-of-bounds event (archive bbox filter)",
+                extra={"id": event_id, "adapter": adapter, "category": category},
+            )
+            await msg.ack()
+            return
+        if verdict == "invalid-geom":
+            logger.warning(
+                "Geom could not be evaluated for bbox filter; archiving",
+                extra={"id": event_id, "adapter": adapter},
+            )
 
         try:
             if geom_json:
@@ -335,11 +439,25 @@ class ArchiveConsumer:
         """Start the consumer."""
         await self.connect()
         await self._cleanup_orphaned_consumer()
-        logger.info("Archive consumer ready")
+        await self._load_monitoring_area()
+        area = self._monitoring_area
+        logger.info(
+            "Archive consumer ready",
+            extra={"monitoring_area": (
+                {"north": area.north, "south": area.south,
+                 "east": area.east, "west": area.west} if area else None
+            )},
+        )
 
     async def run(self) -> None:
         """Run consume loops for all streams until shutdown."""
         tasks = []
+        tasks.append(
+            asyncio.create_task(
+                self._refresh_monitoring_area_loop(),
+                name="refresh-monitoring-area",
+            )
+        )
         for stream_name, subject_filter in STREAMS:
             consumer_name = consumer_name_for(stream_name)
             task = asyncio.create_task(
