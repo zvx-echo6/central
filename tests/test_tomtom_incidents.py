@@ -98,7 +98,7 @@ def test_subject_for_idaho(adapter):
 
 
 def test_subject_unknown(adapter):
-    e = adapter._build_event(INC[0], BBox(name="x", min_lon=0, min_lat=0, max_lon=1, max_lat=1, state_code=""))
+    e = adapter._build_event(INC[0], BBox(name="x", min_lon=0, min_lat=0, max_lon=0.5, max_lat=0.5, state_code=""))
     assert adapter.subject_for(e) == "central.traffic.incident.unknown"
 
 
@@ -143,7 +143,7 @@ def test_inherits_dedup_mixin():
 # --- v0.9.5.1 per-bbox cadence -----------------------------------------------
 
 def _b(name, cadence_s=None):
-    return BBox(name=name, min_lon=0, min_lat=0, max_lon=1, max_lat=1,
+    return BBox(name=name, min_lon=0, min_lat=0, max_lon=0.5, max_lat=0.5,
                 state_code="ID", cadence_s=cadence_s)
 
 

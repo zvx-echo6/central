@@ -1,0 +1,97 @@
+{# Generic repeatable-row editor for a list[<BaseModel>] settings field.
+   Driven entirely by field.sub_fields — no adapter-name branching.
+   Vanilla IIFE JS, matching _region_picker.html. #}
+{% set rows = (form_data[field.name] if form_data and field.name in form_data else field.current_value) or [] %}
+<div class="model-list" data-field="{{ field.name }}">
+    <label>{{ field.label }}</label>
+    {% if field.description %}<small>{{ field.description }}</small>{% endif %}
+    {% if errors and errors[field.name] %}
+    <small class="field-error">{{ errors[field.name] }}</small>
+    {% endif %}
+
+    <div class="table-wrap"><table class="model-list-table">
+        <thead><tr>
+            {% for sub in field.sub_fields %}<th>{{ sub.label }}</th>{% endfor %}<th></th>
+        </tr></thead>
+        <tbody class="model-list-body">
+            {% for row in rows %}{% set ridx = loop.index0 %}
+            <tr class="model-list-row">
+                {% for sub in field.sub_fields %}
+                <td>
+                    {% if sub.widget == "select" %}
+                    <select data-sub="{{ sub.name }}" name="{{ field.name }}-{{ ridx }}-{{ sub.name }}">
+                        {% for opt in sub.options %}<option value="{{ opt }}" {% if row.get(sub.name)|string == opt %}selected{% endif %}>{{ opt }}</option>{% endfor %}
+                    </select>
+                    {% elif sub.widget == "number" %}
+                    <input type="number" step="any" data-sub="{{ sub.name }}"
+                           name="{{ field.name }}-{{ ridx }}-{{ sub.name }}"
+                           value="{{ row.get(sub.name) if row.get(sub.name) is not none else '' }}">
+                    {% else %}
+                    <input type="text" data-sub="{{ sub.name }}"
+                           name="{{ field.name }}-{{ ridx }}-{{ sub.name }}"
+                           value="{{ row.get(sub.name) if row.get(sub.name) is not none else '' }}">
+                    {% endif %}
+                </td>
+                {% endfor %}
+                <td><button type="button" class="btn-outline model-list-del">Remove</button></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table></div>
+
+    <button type="button" class="btn-secondary model-list-add">+ Add row</button>
+
+    <template class="model-list-template"><tr class="model-list-row">
+        {% for sub in field.sub_fields %}
+        <td>
+            {% if sub.widget == "select" %}
+            <select data-sub="{{ sub.name }}">{% for opt in sub.options %}<option value="{{ opt }}">{{ opt }}</option>{% endfor %}</select>
+            {% elif sub.widget == "number" %}
+            <input type="number" step="any" data-sub="{{ sub.name }}">
+            {% else %}
+            <input type="text" data-sub="{{ sub.name }}">
+            {% endif %}
+        </td>
+        {% endfor %}
+        <td><button type="button" class="btn-outline model-list-del">Remove</button></td>
+    </tr></template>
+</div>
+
+{% if quota %}
+<div class="quota-panel flash {% if quota.blocked %}flash-error{% elif quota.warn %}flash-warn{% endif %}">
+    <strong>API quota:</strong> {{ quota.detail }}
+    {% if quota.blocked %}<br>⛔ Over free-tier cap — reduce calls before saving.
+    {% elif quota.warn %}<br>⚠️ Approaching free-tier cap.{% endif %}
+</div>
+{% endif %}
+
+<script>
+(function() {
+    document.querySelectorAll('.model-list').forEach(function(container) {
+        var field = container.dataset.field;
+        var body = container.querySelector('.model-list-body');
+        var tmpl = container.querySelector('.model-list-template');
+        var addBtn = container.querySelector('.model-list-add');
+        function renumber() {
+            body.querySelectorAll('.model-list-row').forEach(function(row, i) {
+                row.querySelectorAll('[data-sub]').forEach(function(el) {
+                    el.name = field + '-' + i + '-' + el.dataset.sub;
+                });
+            });
+        }
+        function wireDelete(row) {
+            var del = row.querySelector('.model-list-del');
+            if (del) del.addEventListener('click', function() { row.remove(); renumber(); });
+        }
+        body.querySelectorAll('.model-list-row').forEach(wireDelete);
+        addBtn.addEventListener('click', function() {
+            var frag = tmpl.content.cloneNode(true);
+            var row = frag.querySelector('.model-list-row');
+            body.appendChild(frag);
+            wireDelete(row);
+            renumber();
+        });
+        renumber();
+    });
+})();
+</script>

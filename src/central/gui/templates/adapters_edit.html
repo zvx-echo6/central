@@ -155,6 +155,8 @@
                 {% if errors and errors[field.name] %}
                 <small class="field-error">{{ errors[field.name] }}</small>
                 {% endif %}
+            {% elif field.widget == "model_list" %}
+                {% include "_partials/model_list.html" %}
             {% endif %}
         {% endfor %}
     </fieldset>

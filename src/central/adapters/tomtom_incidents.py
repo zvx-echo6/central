@@ -12,6 +12,7 @@ Dedup is inherited from SourceAdapter; ids use the upstream-stable TomTom id.
 
 import asyncio
 import logging
+import math
 import sqlite3
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
@@ -19,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -51,6 +52,21 @@ _DEDUP_DDL = (
     "last_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
     "PRIMARY KEY (adapter, event_id))"
 )
+
+_MAX_BBOX_AREA_KM2 = 10_000.0   # TomTom incidentDetails hard cap per bbox
+_MIN_BBOX_CADENCE_S = 60        # per-bbox poll-interval floor
+_EARTH_RADIUS_KM = 6371.0
+_SECONDS_PER_MONTH = 30 * 24 * 3600  # 2_592_000, for quota estimation
+# TomTom Orbis free tier: 2,500 incidentDetails calls/month. A paid-tier
+# operator can raise this ceiling (v0.9.9 follow-up hook).
+TOMTOM_FREE_TIER_CALLS_PER_MONTH = 2500
+
+
+def _bbox_area_km2(min_lon: float, min_lat: float, max_lon: float, max_lat: float) -> float:
+    """Spherical area of a lon/lat bbox in km^2."""
+    lat1, lat2 = math.radians(min_lat), math.radians(max_lat)
+    dlon = math.radians(max_lon - min_lon)
+    return _EARTH_RADIUS_KM ** 2 * abs(math.sin(lat2) - math.sin(lat1)) * abs(dlon)
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -85,12 +101,40 @@ class BBox(BaseModel):
     state_code: str
     cadence_s: int | None = None  # per-bbox poll interval; None -> adapter default_cadence_s
 
+    @field_validator("cadence_s")
+    @classmethod
+    def _cadence_floor(cls, v: int | None) -> int | None:
+        if v is not None and v < _MIN_BBOX_CADENCE_S:
+            raise ValueError(f"cadence_s must be >= {_MIN_BBOX_CADENCE_S} seconds")
+        return v
+
+    @model_validator(mode="after")
+    def _validate_box(self) -> "BBox":
+        if not (-180.0 <= self.min_lon < self.max_lon <= 180.0):
+            raise ValueError("require -180 <= min_lon < max_lon <= 180")
+        if not (-90.0 <= self.min_lat < self.max_lat <= 90.0):
+            raise ValueError("require -90 <= min_lat < max_lat <= 90")
+        area = _bbox_area_km2(self.min_lon, self.min_lat, self.max_lon, self.max_lat)
+        if area > _MAX_BBOX_AREA_KM2:
+            raise ValueError(
+                f"bbox area {area:.0f} km^2 exceeds TomTom limit of {_MAX_BBOX_AREA_KM2:.0f} km^2"
+            )
+        return self
+
 
 class TomTomIncidentsSettings(BaseModel):
     """bboxes: metro boxes to poll (each <= 10,000 km^2). api_key_alias: config key."""
 
     bboxes: list[BBox] = []
     api_key_alias: str = "tomtom"
+
+    @model_validator(mode="after")
+    def _unique_names(self) -> "TomTomIncidentsSettings":
+        names = [b.name for b in self.bboxes]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            raise ValueError(f"duplicate bbox names: {', '.join(dupes)}")
+        return self
 
 
 class TomTomIncidentsAdapter(SourceAdapter):
@@ -273,3 +317,27 @@ class TomTomIncidentsAdapter(SourceAdapter):
     def subject_for(self, event: Event) -> str:
         code = (event.data.get("state_code") or "").lower() or "unknown"
         return f"central.traffic.incident.{code}"
+
+    @classmethod
+    def quota_estimate(cls, settings: BaseModel, cadence_s: int) -> dict | None:
+        bboxes = getattr(settings, "bboxes", None) or []
+        if not bboxes:
+            return None
+        calls = sum(
+            _SECONDS_PER_MONTH / max(cadence_s, b.cadence_s or cls.default_cadence_s)
+            for b in bboxes
+        )
+        calls_per_month = round(calls)
+        cap = TOMTOM_FREE_TIER_CALLS_PER_MONTH
+        percent = (calls_per_month / cap * 100) if cap else 0.0
+        return {
+            "calls_per_month": calls_per_month,
+            "cap": cap,
+            "percent": percent,
+            "warn": percent >= 80.0,
+            "blocked": percent >= 100.0,
+            "detail": (
+                f"{calls_per_month:,} est. calls/month across {len(bboxes)} "
+                f"bbox(es) vs {cap:,}/month free tier ({percent:.0f}%)"
+            ),
+        }
