@@ -131,3 +131,77 @@ def test_inherits_dedup_mixin():
     for m in ("is_published", "mark_published", "sweep_old_ids"):
         assert m not in State511ATISAdapter.__dict__, f"redefines {m}"
         assert getattr(State511ATISAdapter, m) is getattr(SourceAdapter, m)
+
+
+# --- v0.9.7 pagination ------------------------------------------------------
+
+def _rec(i):
+    return {"id": i, "type": "Roadwork", "roadwayName": "SH-1", "location": f"loc {i}"}
+
+
+def _page(records, records_filtered):
+    return {"draw": 1, "recordsTotal": records_filtered,
+            "recordsFiltered": records_filtered, "data": records}
+
+
+@pytest.mark.asyncio
+async def test_pagination_collects_all_pages(adapter):
+    await adapter.startup()
+    pages = {0: _page([_rec(i) for i in range(100)], 114),
+             100: _page([_rec(i) for i in range(100, 114)], 114)}
+
+    async def fake_page(base_url, layer, start):
+        return pages[start]
+
+    adapter._fetch_page = fake_page
+    rows = await adapter._fetch_details("https://511.idaho.gov", "Construction")
+    await adapter.shutdown()
+    assert len(rows) == 114  # 100 + 14, not truncated at the 100-row cap
+    assert {r["id"] for r in rows} == set(range(114))
+
+
+@pytest.mark.asyncio
+async def test_pagination_handles_short_final_page(adapter):
+    await adapter.startup()
+    pages = {0: _page([_rec(i) for i in range(100)], 130),
+             100: _page([_rec(i) for i in range(100, 130)], 130)}
+
+    async def fake_page(base_url, layer, start):
+        return pages[start]
+
+    adapter._fetch_page = fake_page
+    rows = await adapter._fetch_details("https://511.idaho.gov", "Construction")
+    await adapter.shutdown()
+    assert len(rows) == 130  # short 30-row final page collected
+
+
+@pytest.mark.asyncio
+async def test_pagination_empty_page_breaks(adapter):
+    # recordsFiltered overstates the set; an empty page must stop the loop (no hang).
+    await adapter.startup()
+    pages = {0: _page([_rec(i) for i in range(100)], 250), 100: _page([], 250)}
+
+    async def fake_page(base_url, layer, start):
+        return pages.get(start, _page([], 250))
+
+    adapter._fetch_page = fake_page
+    rows = await adapter._fetch_details("https://511.idaho.gov", "Construction")
+    await adapter.shutdown()
+    assert len(rows) == 100  # empty page 2 terminates cleanly
+
+
+@pytest.mark.asyncio
+async def test_pagination_loop_cap(adapter, caplog):
+    # recordsFiltered never satisfied -> loop must stop at _MAX_PAGES and warn.
+    await adapter.startup()
+
+    async def fake_page(base_url, layer, start):
+        return _page([_rec(start + i) for i in range(100)], 999_999)
+
+    adapter._fetch_page = fake_page
+    with caplog.at_level("WARNING"):
+        rows = await adapter._fetch_details("https://511.idaho.gov", "Construction")
+    await adapter.shutdown()
+    from central.adapters.state_511_atis import _MAX_PAGES
+    assert len(rows) == _MAX_PAGES * 100  # capped, not infinite
+    assert "max_pages" in caplog.text
