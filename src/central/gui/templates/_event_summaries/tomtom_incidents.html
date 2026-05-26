@@ -1,0 +1,5 @@
+{# TomTom incident one-line subject. "<description> on <from> -> <to>". Location
+   column shows geocoded city/county. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{%- set desc = d.get('description') or 'Traffic incident' -%}
+{{ desc }}{% if d.get('from') %} on {{ d.get('from') }}{% if d.get('to') %} → {{ d.get('to') }}{% endif %}{% endif %}
