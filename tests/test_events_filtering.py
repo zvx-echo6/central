@@ -251,3 +251,45 @@ async def test_select_includes_severity_column():
     parsed, _ = routes._parse_events_params({"time": "all"})
     cap = await _capture(parsed)
     assert "severity" in cap["query"]
+
+
+# --- show_removed / tombstone visibility (v0.9.11) --------------------------
+
+@pytest.mark.asyncio
+async def test_gui_default_excludes_removed():
+    """GUI passes default_show_removed=False -> *.removed hidden by default."""
+    parsed, _ = routes._parse_events_params(
+        {"time": "all"}, default_time="last_24h", default_show_removed=False)
+    assert parsed["show_removed"] is False
+    cap = await _capture(parsed)
+    assert "category NOT LIKE '%.removed'" in cap["query"]
+
+
+@pytest.mark.asyncio
+async def test_show_removed_true_includes_all():
+    """?show_removed=true -> no tombstone exclusion in the query."""
+    parsed, _ = routes._parse_events_params(
+        {"time": "all", "show_removed": "true"}, default_show_removed=False)
+    assert parsed["show_removed"] is True
+    cap = await _capture(parsed)
+    assert ".removed" not in cap["query"]
+
+
+@pytest.mark.asyncio
+async def test_json_api_includes_removed_by_default():
+    """events.json calls the parser bare (default True) -> API output unchanged."""
+    parsed, _ = routes._parse_events_params({"time": "all"})
+    assert parsed["show_removed"] is True
+    cap = await _capture(parsed)
+    assert ".removed" not in cap["query"]
+
+
+@pytest.mark.asyncio
+async def test_show_removed_composes_with_other_filters():
+    """The tombstone exclusion coexists with adapter/time filters."""
+    parsed, _ = routes._parse_events_params(
+        {"adapter": "wfigs_perimeters", "time": "all"}, default_show_removed=False)
+    cap = await _capture(parsed)
+    assert "adapter = ANY($" in cap["query"]
+    assert "category NOT LIKE '%.removed'" in cap["query"]
+    assert ["wfigs_perimeters"] in cap["params"]

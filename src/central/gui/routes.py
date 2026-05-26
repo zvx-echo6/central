@@ -2896,7 +2896,8 @@ def _build_pagination(total: int | None, offset: int, limit: int) -> dict:
 
 
 def _parse_events_params(params, default_time: str | None = None,
-                         default_offset: int | None = None) -> tuple[dict | None, str | None]:
+                         default_offset: int | None = None,
+                         default_show_removed: bool = True) -> tuple[dict | None, str | None]:
     """
     Parse and validate events query parameters.
 
@@ -3040,8 +3041,17 @@ def _parse_events_params(params, default_time: str | None = None,
         except Exception:
             return None, "Invalid cursor"
 
+    # Tombstone visibility: the GUI default-hides `*.removed` events; the JSON
+    # API default-includes them. An explicit ?show_removed= overrides the default.
+    sr = params.get("show_removed")
+    if sr is not None and sr != "":
+        show_removed = sr.lower() in ("1", "true", "on")
+    else:
+        show_removed = default_show_removed
+
     return {
         "limit": limit,
+        "show_removed": show_removed,
         "offset": offset,
         "q": q,
         "adapters": adapters,
@@ -3171,6 +3181,11 @@ async def _fetch_events(parsed_params: dict) -> EventsQueryResult:
         query_params.append(cursor_time)
         query_params.append(cursor_id)
         param_idx += 2
+
+    # GUI hides tombstones by default (events.json includes them). Static
+    # literal pattern, no bound param; NULL-category rows are kept.
+    if not parsed_params.get("show_removed", True):
+        conditions.append("(category IS NULL OR category NOT LIKE '%.removed')")
 
     where_clause = ""
     if conditions:
@@ -3361,7 +3376,8 @@ async def _events_query(request: Request, data_class: str):
     which _fetch_events applies as an `adapter = ANY(...)` condition.
     """
     params = request.query_params
-    parsed, error = _parse_events_params(params, default_time=DEFAULT_TIME, default_offset=0)
+    parsed, error = _parse_events_params(params, default_time=DEFAULT_TIME, default_offset=0,
+                                         default_show_removed=False)
     class_adapters = _class_adapter_names(data_class)
     if parsed is not None:
         parsed["class_adapters"] = class_adapters
@@ -3392,6 +3408,7 @@ def _events_filter_state(parsed: dict | None, params) -> dict:
         "region_west": params.get("region_west", ""),
         "map_filter": pstate.get("map_filter", False),
         "limit": str(pstate.get("limit", 50)),
+        "show_removed": pstate.get("show_removed", False),
     }
 
 

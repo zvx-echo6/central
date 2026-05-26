@@ -68,8 +68,16 @@
        map-controls checkbox below syncs + enables it. #}
     <input type="hidden" name="map_filter" id="filter-map_filter" value="1"
            {{ '' if filter_state.map_filter else 'disabled' }}>
+    {# Tombstone visibility: enabled only when "Show removed" is on, so it's
+       omitted from the URL by default (GUI default-hides *.removed events). #}
+    <input type="hidden" name="show_removed" id="filter-show_removed" value="1"
+           {{ '' if filter_state.show_removed else 'disabled' }}>
 
     <div class="filter-actions">
+        <label class="show-removed-toggle">
+            <input type="checkbox" id="show-removed-toggle" {{ 'checked' if filter_state.show_removed else '' }}>
+            Show removed
+        </label>
         <a href="{{ base_path }}" role="button" class="btn-outline" id="filter-clear-all">Clear all</a>
         <button type="submit" class="filter-apply">Apply</button>
     </div>
@@ -714,6 +722,18 @@
             submitForm();
         }
     });
+
+    // "Show removed" toggle: enable the hidden input only when checked (so it's
+    // omitted from the URL by default), then re-query. The rows fragment's
+    // HX-Push-Url preserves the choice in a shared link.
+    var showRemovedToggle = document.getElementById("show-removed-toggle");
+    var showRemovedHidden = document.getElementById("filter-show_removed");
+    if (showRemovedToggle && showRemovedHidden) {
+        showRemovedToggle.addEventListener("change", function () {
+            showRemovedHidden.disabled = !showRemovedToggle.checked;
+            submitForm();
+        });
+    }
 })();
 </script>
 
