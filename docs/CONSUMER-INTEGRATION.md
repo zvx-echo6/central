@@ -133,6 +133,7 @@ Central's archive.
 | `CENTRAL_HYDRO` | `central.hydro.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_TRAFFIC` | `central.traffic.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_TRAFFIC_FLOW` | `central.traffic_flow.>` | 7 | 1 GiB | ✓ | ✓ |
+| `CENTRAL_TRAFFIC_CAMERAS` | `central.traffic_cameras.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_META` | `central.meta.>` | 1 | 1 GiB | — | ✓ |
 
 Retention and storage caps are migration-seeded defaults visible in `config.streams`;
@@ -1517,6 +1518,44 @@ road name, description, county, severity). Verified for Idaho only.
   user-ready; the geocoder fills `city` from the joined coordinates.
 - **Removal semantics:** none in v1. Events age out of the upstream feed; the
   14-day dedup sweep expires stale ids.
+
+### state_511_atis_cameras — State 511 traffic cameras (Castle Rock ATIS, telemetry)
+
+State-DOT 511 traffic cameras (Idaho). One telemetry event per camera per UTC day;
+the `/telemetry` detail drawer renders the live image inline (`<img>` fetched
+direct from the source -- Central stores the URL, never the image bytes). Pairs
+with state_511_atis incidents: see an incident, click a nearby camera, see road
+conditions.
+
+- **Stream:** `CENTRAL_TRAFFIC_CAMERAS` (telemetry; `/telemetry` tab).
+- **Subject pattern:** `central.traffic_cameras.<state>.<camera_id>` -- subscribe to
+  one camera or `central.traffic_cameras.id.>` for all Idaho.
+- **GUI event_type:** `camera` (from `category = "camera.state_511_atis_cameras"`).
+- **Source:** full state list via `POST /List/GetData/Cameras` (DataTables,
+  **paginated** at 100/page; Idaho ~455). Public-unauth. **Cadence 600s.**
+- **Dedup key shape:** `<state_code>:cam:<camera_id>:<YYYY-MM-DD>` -- one event per
+  camera per UTC day. The table always shows today's cameras; no per-poll flooding
+  and no dedup-window/retention coordination needed.
+- **Event.data fields:**
+
+  | key | type | nullable | description |
+  |---|---|---|---|
+  | `camera_id` | int | no | Stable upstream id |
+  | `roadway_name` | str | yes | e.g. `I-84` |
+  | `location_description` | str | yes | e.g. `I-84 Mountain Home` (embeds the roadway) |
+  | `direction` | str | yes | `North` / `Unknown` / ... |
+  | `source` | str | yes | Owning agency: `Idaho511`, `ITDNET`, `RWIS`, `UDOT`, `ODOT`, ... (border cameras Idaho 511 surfaces) |
+  | `image_url` | str | yes | Full live image URL (`<base_url>/map/Cctv/<id>`); browser fetches direct |
+  | `image_count` | int | no | Number of camera angles (1-4) |
+  | `record_updated` | str | yes | Camera config edit time (NOT image-capture time) |
+  | `state_code` | str | no | Routing |
+  | `latitude` / `longitude` | float | yes | From the WKT `POINT (lon lat)` |
+
+- **Severity:** always `1` (cameras have no severity signal; telemetry styling).
+- **Decipherable as-is:** yes -- location + source are user-ready; the live image
+  is one click away. **No image-capture timestamp** is available upstream (the
+  `lastUpdated` field is camera-config time), so the drawer shows no "captured at".
+- **Removal semantics:** none; offline cameras serve an empty image but stay listed.
 
 ### tomtom_incidents — TomTom real-time traffic incidents (commercial coverage)
 

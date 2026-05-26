@@ -1146,6 +1146,7 @@ _SAMPLE_INNER = {
     "state_511_atis": {"layer": "Incidents", "roadway_name": "US-95", "location_description": "Ponderosa Mobile Home Park"},
     "tomtom_flow": {"road_category": "primary", "relative_speed": 0.11},
     "tomtom_incidents": {"description": "Roadworks", "from": "Early Road", "to": "Slade Road"},
+    "state_511_atis_cameras": {"location_description": "I-84 Mountain Home", "camera_id": 42},
 }
 
 # Exact expected subjects for the deterministic adapters. swpc_alerts is omitted
@@ -1167,6 +1168,7 @@ _EXPECTED_SUBJECT = {
     "wzdx": "Work zone on I-80 eastbound",
     "tomtom_flow": "Traffic flow (primary) — 11% of free-flow",
     "tomtom_incidents": "Roadworks on Early Road → Slade Road",
+    "state_511_atis_cameras": "Camera: I-84 Mountain Home",
 }
 
 

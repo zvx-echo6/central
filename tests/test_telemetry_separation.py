@@ -11,7 +11,7 @@ from central.adapter_discovery import discover_adapters
 from central.gui import routes
 
 # Adapters with data_class="telemetry" (the pinned split; grow as telemetry adapters land).
-_TELEMETRY = ["nwis", "tomtom_flow"]
+_TELEMETRY = ["nwis", "state_511_atis_cameras", "tomtom_flow"]
 
 
 # --- data_class defaults / registry split -----------------------------------

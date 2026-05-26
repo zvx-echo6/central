@@ -1,0 +1,4 @@
+{# State 511 camera one-line subject. The `location` field already embeds the
+   roadway (e.g. "I-84 Mountain Home"), so it stands alone. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+Camera: {{ d.get('location_description') or d.get('roadway_name') or ('#' ~ d.get('camera_id')) }}
