@@ -2,12 +2,20 @@
    Driven entirely by field.sub_fields — no adapter-name branching.
    Vanilla IIFE JS, matching _region_picker.html. #}
 {% set rows = (form_data[field.name] if form_data and field.name in form_data else field.current_value) or [] %}
+{# Auto-detect a bbox row model (min/max lon+lat) to show a read-only map
+   preview; non-bbox model_lists (StateConfig, TileCoord) render no map. #}
+{% set _bbox_keys = ['min_lon', 'min_lat', 'max_lon', 'max_lat'] %}
+{% set _ns = namespace(hits=0) %}
+{% for sub in field.sub_fields %}{% if sub.name in _bbox_keys %}{% set _ns.hits = _ns.hits + 1 %}{% endif %}{% endfor %}
+{% set is_bbox = _ns.hits == 4 %}
 <div class="model-list" data-field="{{ field.name }}">
     <label>{{ field.label }}</label>
     {% if field.description %}<small>{{ field.description }}</small>{% endif %}
     {% if errors and errors[field.name] %}
     <small class="field-error">{{ errors[field.name] }}</small>
     {% endif %}
+
+    {% if is_bbox %}{% include "_partials/bbox_map.html" %}{% endif %}
 
     <div class="table-wrap"><table class="model-list-table">
         <thead><tr>

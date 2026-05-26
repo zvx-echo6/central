@@ -190,3 +190,25 @@ class TestGetRoute:
         ctx = tmpl.TemplateResponse.call_args.kwargs["context"]
         assert ctx["quota"]["calls_per_month"] == 1920  # 720+480+720
         assert ctx["quota"]["blocked"] is False
+
+
+class TestBboxMapPreview:
+    """v0.9.10 — read-only Leaflet preview of bbox rows in the model_list editor."""
+
+    def test_tomtom_renders_bbox_map(self):
+        """bbox row model (min/max lon+lat) → map div + Leaflet init present."""
+        fields = describe_fields(TomTomIncidentsAdapter.settings_schema, _SETTINGS)
+        quota = TomTomIncidentsAdapter.quota_estimate(TomTomIncidentsSettings(**_SETTINGS), 1800)
+        out = _render("adapters_edit.html", _ctx(_SETTINGS, fields, quota))
+        assert "bbox-map" in out                            # map container present
+        assert "L.map(" in out and "L.rectangle(" in out    # Leaflet init present
+
+    def test_state_511_atis_no_bbox_map(self):
+        """Non-bbox model_list (StateConfig) → generic editor, no map (no regression)."""
+        from central.adapters.state_511_atis import State511ATISAdapter
+        s = {"states": [{"code": "ID", "base_url": "https://511.idaho.gov"}]}
+        out = _render("adapters_edit.html",
+                      _ctx(s, describe_fields(State511ATISAdapter.settings_schema, s), None,
+                           name="state_511_atis", display="511 ATIS"))
+        assert "model-list" in out      # generic editor still renders
+        assert "bbox-map" not in out    # but no map div

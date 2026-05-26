@@ -1,0 +1,78 @@
+{# Read-only Leaflet preview of every bbox row in a model_list whose row model
+   exposes min_lon/min_lat/max_lon/max_lat (e.g. TomTom incidents). Passive:
+   no drag-to-edit, no click-to-draw — precise tuning stays in the per-row coord
+   inputs below. Mirrors _region_picker.html's init (tile layer, invalidateSize,
+   fitBounds). Rectangles redraw live as inputs change; the viewport only fits
+   on initial render so typing never makes the map jump.
+
+   The map div is rendered ABOVE the row table, so init() is deferred until the
+   DOM is parsed — otherwise the inline script would run before .model-list-body
+   exists and the rows would be unreadable. #}
+<div class="bbox-map-wrap" data-field="{{ field.name }}"
+     data-tile-url="{{ tile_url if tile_url is defined and tile_url else '' }}"
+     data-tile-attr="{{ tile_attribution if tile_attribution is defined and tile_attribution else '' }}">
+    <div id="bbox-map-{{ field.name }}" class="bbox-map"
+         style="height: 360px; margin-bottom: 1rem; border: 1px solid var(--rule); border-radius: var(--radius);"></div>
+</div>
+
+<script>
+(function() {
+    function init() {
+        var wrap = document.querySelector('.bbox-map-wrap[data-field="{{ field.name }}"]');
+        if (!wrap) return;
+        var field = wrap.dataset.field;
+        var container = document.querySelector('.model-list[data-field="' + field + '"]');
+        if (!container) return;
+        var body = container.querySelector('.model-list-body');
+        if (!body) return;
+        var tileUrl = wrap.dataset.tileUrl || 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+        var tileAttr = wrap.dataset.tileAttr || '&copy; OpenStreetMap contributors';
+
+        var map = L.map('bbox-map-' + field).setView([44.0, -114.5], 6);
+        L.tileLayer(tileUrl, { attribution: tileAttr, maxZoom: 18 }).addTo(map);
+        // Container may not be laid out yet at init; nudge Leaflet once it is.
+        setTimeout(function() { map.invalidateSize(); }, 100);
+
+        var layer = L.featureGroup().addTo(map);
+
+        function num(row, sub) {
+            var el = row.querySelector('[data-sub="' + sub + '"]');
+            return el ? parseFloat(el.value) : NaN;
+        }
+
+        // (Re)build all rectangles from the current row inputs. fit=true only on
+        // the first render so live edits never jolt the viewport.
+        function redraw(fit) {
+            layer.clearLayers();
+            body.querySelectorAll('.model-list-row').forEach(function(row) {
+                var s = num(row, 'min_lat'), w = num(row, 'min_lon'),
+                    n = num(row, 'max_lat'), e = num(row, 'max_lon');
+                if ([s, w, n, e].some(isNaN)) return;   // skip blank/partial rows
+                var nameEl = row.querySelector('[data-sub="name"]');
+                var name = (nameEl && nameEl.value) ? nameEl.value : '(unnamed)';
+                var rect = L.rectangle(L.latLngBounds(L.latLng(s, w), L.latLng(n, e)),
+                                       { color: '#3388ff', weight: 2, fillOpacity: 0.2 });
+                rect.bindTooltip(name, { sticky: true });
+                layer.addLayer(rect);
+            });
+            if (fit && layer.getLayers().length) {
+                map.fitBounds(layer.getBounds().pad(0.1));
+            }
+        }
+
+        // Live redraw: typing in any coord/name input, and row add/remove.
+        body.addEventListener('input', function() { redraw(false); });
+        new MutationObserver(function() { redraw(false); }).observe(body, { childList: true });
+
+        redraw(true);
+    }
+
+    // The include sits above the row table, so the rows aren't parsed yet when
+    // this runs mid-parse. Defer to DOMContentLoaded so body/rows exist.
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+</script>
