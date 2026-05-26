@@ -1,5 +1,6 @@
 """WFIGS Perimeters adapter for wildfire perimeter polygons."""
 
+import json
 import logging
 import sqlite3
 from collections.abc import AsyncIterator
@@ -38,6 +39,19 @@ from central.config_store import ConfigStore
 from central.models import Event, Geo
 
 logger = logging.getLogger(__name__)
+
+
+def _as_geometry(geometry: Any) -> dict[str, Any] | None:
+    """Coerce upstream geometry to a GeoJSON dict for Geo.geometry; None if absent/malformed."""
+    if isinstance(geometry, dict):
+        return geometry
+    if isinstance(geometry, str):
+        try:
+            parsed = json.loads(geometry)
+            return parsed if isinstance(parsed, dict) else None
+        except (ValueError, TypeError):
+            return None
+    return None
 
 LAYER_NAME = "perimeters"
 
@@ -305,6 +319,7 @@ class WFIGSPerimetersAdapter(SourceAdapter):
             geo = Geo(
                 centroid=centroid,
                 bbox=bbox,
+                geometry=_as_geometry(geometry),
                 regions=regions,
                 primary_region=primary_region,
             )

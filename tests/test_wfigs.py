@@ -450,6 +450,20 @@ class TestWFIGSIncidentsAdapter:
         assert adapter.region.south == 35.0
 
 
+SAMPLE_PERIMETERS_MULTIPOLYGON = {
+    "type": "FeatureCollection",
+    "features": [{
+        "type": "Feature",
+        "geometry": {"type": "MultiPolygon", "coordinates": [
+            [[[-113.6, 48.4], [-113.4, 48.4], [-113.4, 48.6], [-113.6, 48.4]]],
+            [[[-114.0, 48.0], [-113.8, 48.0], [-113.8, 48.2], [-114.0, 48.0]]]]},
+        "properties": {"attr_IrwinID": "GUID-002-MULTI", "attr_IncidentTypeCategory": "WF",
+                       "attr_POOState": "US-MT", "attr_POOCounty": "Glacier",
+                       "attr_FireDiscoveryDateTime": 1716000000000},
+    }],
+}
+
+
 class TestWFIGSPerimetersAdapter:
     """Tests for WFIGS Perimeters adapter."""
 
@@ -532,3 +546,54 @@ class TestWFIGSPerimetersAdapter:
         subject = adapter.subject_for(event)
         # Subject uses normalized state: mt.glacier not us-mt.glacier
         assert subject == "central.fire.perimeter.mt.glacier"
+
+    async def _poll_once(self, adapter, response):
+        resp = AsyncMock()
+        resp.raise_for_status = MagicMock()
+        resp.json = AsyncMock(return_value=response)
+        with patch.object(adapter._session, "get", return_value=AsyncMock(__aenter__=AsyncMock(return_value=resp), __aexit__=AsyncMock())):
+            return [e async for e in adapter.poll()]
+
+    @pytest.mark.asyncio
+    async def test_geometry_field_set_from_upstream_polygon(self, mock_config, mock_config_store, cursor_db_path):
+        """geo.geometry carries the full upstream Polygon (v0.9.3 framework)."""
+        from central.adapters.wfigs_perimeters import WFIGSPerimetersAdapter
+        adapter = WFIGSPerimetersAdapter(mock_config, mock_config_store, cursor_db_path)
+        await adapter.startup()
+        events = await self._poll_once(adapter, SAMPLE_PERIMETERS_RESPONSE)
+        await adapter.shutdown()
+        geom = events[0].geo.geometry
+        assert geom is not None and geom["type"] == "Polygon"
+        assert geom["coordinates"] == SAMPLE_PERIMETERS_RESPONSE["features"][0]["geometry"]["coordinates"]
+
+    @pytest.mark.asyncio
+    async def test_geometry_field_set_from_multipolygon(self, mock_config, mock_config_store, cursor_db_path):
+        """geo.geometry carries a MultiPolygon intact (archive ST_GeomFromGeoJSON handles it)."""
+        from central.adapters.wfigs_perimeters import WFIGSPerimetersAdapter
+        adapter = WFIGSPerimetersAdapter(mock_config, mock_config_store, cursor_db_path)
+        await adapter.startup()
+        events = await self._poll_once(adapter, SAMPLE_PERIMETERS_MULTIPOLYGON)
+        await adapter.shutdown()
+        geom = events[0].geo.geometry
+        assert geom is not None and geom["type"] == "MultiPolygon"
+        assert len(geom["coordinates"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_fall_off_geometry_stays_none(self, mock_config, mock_config_store, cursor_db_path):
+        """Synthetic removal events carry no geometry."""
+        from central.adapters.wfigs_perimeters import WFIGSPerimetersAdapter
+        adapter = WFIGSPerimetersAdapter(mock_config, mock_config_store, cursor_db_path)
+        await adapter.startup()
+        await self._poll_once(adapter, SAMPLE_PERIMETERS_RESPONSE)
+        events = await self._poll_once(adapter, {"type": "FeatureCollection", "features": []})
+        await adapter.shutdown()
+        removed = [e for e in events if e.category == "fire.perimeter.removed"]
+        assert removed and removed[0].geo.geometry is None
+
+    def test_geometry_coercion_handles_malformed_and_none(self):
+        """_as_geometry: dict passthrough, JSON-string coercion, malformed/absent -> None."""
+        from central.adapters.wfigs_perimeters import _as_geometry
+        assert _as_geometry({"type": "Polygon"})["type"] == "Polygon"
+        assert _as_geometry('{"type": "Point"}')["type"] == "Point"
+        assert _as_geometry("not json") is None
+        assert _as_geometry(None) is None
