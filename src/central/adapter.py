@@ -185,3 +185,17 @@ class SourceAdapter(ABC):
           matched zero rows — the framework renders that distinctly from None.
         """
         return None
+
+    @classmethod
+    def quota_estimate(cls, settings: BaseModel, cadence_s: int) -> dict | None:
+        """Optional. Override to surface a read-only API-quota panel on the edit
+        page and to hard-block saves that would exceed a provider's free tier.
+
+        Pure function of (settings, cadence_s) — no I/O, no instance state — so
+        the framework calls it on the class in both the GET (render) and POST
+        (pre-persist gate) paths. Return None to skip (default).
+
+        Return dict with: calls_per_month:int, cap:int, percent:float,
+        warn:bool (>=80%), blocked:bool (>=100% -> POST refused 422), detail:str.
+        """
+        return None

@@ -1392,6 +1392,39 @@ async def adapters_list(
     return response
 
 
+def _parse_model_list(form, field) -> list[dict]:
+    """Reconstruct a list[dict] from indexed form keys ``<field>-<i>-<sub>``.
+    Coerces numeric sub-fields; omits blank optional numbers (model default
+    applies); drops fully-empty rows (e.g. a blank cloned template row)."""
+    sub_widgets = {sf.name: sf.widget for sf in (field.sub_fields or [])}
+    rows: dict[int, dict] = {}
+    prefix = f"{field.name}-"
+    for key, value in form.multi_items():
+        if not key.startswith(prefix):
+            continue
+        idx_str, _, sub = key[len(prefix):].partition("-")
+        if not sub or not idx_str.isdigit():
+            continue
+        rows.setdefault(int(idx_str), {})[sub] = value
+    out: list[dict] = []
+    for idx in sorted(rows):
+        row: dict = {}
+        for sub, raw in rows[idx].items():
+            val = (raw or "").strip()
+            if sub_widgets.get(sub) == "number":
+                if val == "":
+                    continue  # -> use model default (e.g. cadence_s=None)
+                try:
+                    row[sub] = float(val) if "." in val or "e" in val.lower() else int(val)
+                except ValueError:
+                    row[sub] = val  # let Pydantic raise a typed error
+            else:
+                row[sub] = val
+        if any(v != "" for v in row.values()):
+            out.append(row)
+    return out
+
+
 @router.get("/adapters/{name}", response_class=HTMLResponse)
 async def adapters_edit_form(
     request: Request,
@@ -1484,6 +1517,16 @@ async def adapters_edit_form(
         except Exception as exc:
             preview_error = f"Preview unavailable: {exc}"
 
+    # Read-only API-quota panel (adapters opt in via quota_estimate; duck-typed).
+    quota: dict | None = None
+    if adapter_cls is not None and hasattr(adapter_cls, "settings_schema"):
+        try:
+            quota = adapter_cls.quota_estimate(
+                adapter_cls.settings_schema(**settings), row["cadence_s"]
+            )
+        except Exception:
+            quota = None
+
     csrf_token = request.state.csrf_token
     response = templates.TemplateResponse(
         request=request,
@@ -1502,6 +1545,7 @@ async def adapters_edit_form(
             "requires_api_key_alias": requires_api_key_alias,
             "preview_rows": preview_rows,
             "preview_error": preview_error,
+            "quota": quota,
         },
     )
     return response
@@ -1613,6 +1657,10 @@ async def adapters_edit_submit(
                     # API key select - validate against existing keys
                     value = raw.strip() if raw else None
                     parsed_values[field.name] = value
+                elif field.widget == "model_list":
+                    rows = _parse_model_list(form, field)
+                    form_data[field.name] = rows
+                    parsed_values[field.name] = rows
                 elif field.widget == "region":
                     # Region handled separately below
                     pass
@@ -1661,10 +1709,24 @@ async def adapters_edit_submit(
                     validated_data = {k: v for k, v in parsed_values.items() if v is not None}
                     validated = schema(**validated_data)
                     new_settings = validated.model_dump(mode="json")
+
+                    # Hard-block a save that would blow the provider free tier.
+                    q = adapter_cls.quota_estimate(validated, cadence_s)
+                    if q and q.get("blocked"):
+                        ml = next((f.name for f in fields if f.widget == "model_list"), "quota")
+                        errors[ml] = (
+                            f"Estimated {q['calls_per_month']:,} calls/month exceeds the "
+                            f"{q['cap']:,}/month free-tier cap — raise cadence or remove rows."
+                        )
                 except ValidationError as e:
+                    ml_name = next((f.name for f in fields if f.widget == "model_list"), None)
                     for err in e.errors():
-                        field_name = err["loc"][0] if err["loc"] else "unknown"
-                        errors[str(field_name)] = err["msg"]
+                        loc = err["loc"]
+                        key = str(loc[0]) if loc else (ml_name or "unknown")
+                        if len(loc) >= 2 and isinstance(loc[1], int):
+                            errors[key] = f"Row {loc[1] + 1}: {err['msg']}"
+                        else:
+                            errors[key] = err["msg"]
         else:
             # No schema - just preserve existing settings
             new_settings = dict(current_settings)
@@ -1709,6 +1771,18 @@ async def adapters_edit_submit(
             )
             api_key_missing = not has_key
 
+            quota = None
+            if adapter_cls and hasattr(adapter_cls, "settings_schema"):
+                try:
+                    quota = adapter_cls.quota_estimate(
+                        adapter_cls.settings_schema(**(new_settings or current_settings)),
+                        cadence_s,
+                    )
+                except Exception:
+                    quota = None
+            # list-of-model validation failures are a 422; single-region stays 200.
+            status = 422 if any(f.widget == "model_list" for f in fields) else 200
+
             csrf_token = request.state.csrf_token
             response = templates.TemplateResponse(
                 request=request,
@@ -1725,8 +1799,9 @@ async def adapters_edit_submit(
                     "tile_attribution": tile_attribution,
                     "api_key_missing": api_key_missing,
                     "requires_api_key_alias": requires_api_key_alias,
+                    "quota": quota,
                 },
-                status_code=200,
+                status_code=status,
             )
             return response
 

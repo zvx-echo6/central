@@ -25,6 +25,7 @@ class FieldDescriptor:
     description: str
     required: bool
     options: list[str] | None = None  # For select/checkboxes widgets
+    sub_fields: list["FieldDescriptor"] | None = None  # For model_list: per-column descriptors
 
 
 def _is_literal(tp: type) -> bool:
@@ -86,6 +87,11 @@ def _type_to_widget_and_options(field_name: str, field_type: type) -> tuple[str,
         if inner_type is str:
             return "csv", None
 
+        # list[<BaseModel>] -> repeatable per-row editor (sub-columns resolved
+        # by describe_fields, which recurses into the row model).
+        if isinstance(inner_type, type) and issubclass(inner_type, BaseModel):
+            return "model_list", None
+
         raise NotImplementedError(
             f"Field '{field_name}' has unsupported list type: list[{inner_type.__name__ if inner_type else '?'}]"
         )
@@ -118,6 +124,21 @@ def _is_undefined(value: Any) -> bool:
     return value is PydanticUndefined
 
 
+def _list_row_model(field_type: type) -> type[BaseModel] | None:
+    """Row model M for a ``list[M]`` (or ``Optional[list[M]]``) field where M is
+    a BaseModel subclass; else None."""
+    origin = get_origin(field_type)
+    args = get_args(field_type)
+    if origin is Union or (origin is not None and type(None) in args):
+        non_none = [a for a in args if a is not type(None)]
+        return _list_row_model(non_none[0]) if non_none else None
+    if origin is list:
+        inner = args[0] if args else None
+        if isinstance(inner, type) and issubclass(inner, BaseModel):
+            return inner
+    return None
+
+
 def describe_fields(model_cls: type[BaseModel], current: dict) -> list[FieldDescriptor]:
     """Generate field descriptors for a Pydantic model.
 
@@ -136,6 +157,13 @@ def describe_fields(model_cls: type[BaseModel], current: dict) -> list[FieldDesc
 
         # Determine widget and options
         widget, options = _type_to_widget_and_options(field_name, field_type)
+
+        # For a list-of-model field, recurse once to get column descriptors.
+        sub_fields = None
+        if widget == "model_list":
+            row_model = _list_row_model(field_type)
+            if row_model is not None:
+                sub_fields = describe_fields(row_model, {})
 
         # Get current value, falling back to default
         if field_name in current:
@@ -165,6 +193,7 @@ def describe_fields(model_cls: type[BaseModel], current: dict) -> list[FieldDesc
             description=description,
             required=required,
             options=options,
+            sub_fields=sub_fields,
         ))
 
     return descriptors
