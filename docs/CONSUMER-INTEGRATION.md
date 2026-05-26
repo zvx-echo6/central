@@ -1533,6 +1533,12 @@ coverage. One event per incident.
   larger). Ships with Treasure Valley (Boise). **Cadence 1800s (30 min)** ->
   1 bbox = 1,440 calls/mo, 58% of the 2,500/mo free-tier cap. Adding bboxes must
   respect `N * (43200/cadence_min) <= 2500`.
+- **Per-bbox cadence:** each bbox may set an optional `cadence_s` (else falls back
+  to the adapter's `default_cadence_s`). The supervisor wakes the adapter at the
+  adapter-level cadence; `poll()` fetches only bboxes whose per-bbox interval has
+  elapsed (in-memory `_last_polled`, per process; first poll after restart fetches
+  all). Set the adapter cadence to the GCD of the per-bbox cadences for exact
+  intervals -- extra wakeups cost zero API calls.
 - **Dedup key shape:** `<state_code>:tomtom:<tomtom_id>` (e.g.
   `ID:tomtom:TTI-5df75143-...`); the upstream id is stable across polls.
 - **Severity:** from `magnitudeOfDelay` (0->1, 1->1, 2->2, 3->3, 4->4; 4 ==

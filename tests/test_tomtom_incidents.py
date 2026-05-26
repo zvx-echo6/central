@@ -9,7 +9,7 @@ mixin); polling is stateless.
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -138,3 +138,88 @@ def test_inherits_dedup_mixin():
     for m in ("is_published", "mark_published", "sweep_old_ids"):
         assert m not in TomTomIncidentsAdapter.__dict__, f"redefines {m}"
         assert getattr(TomTomIncidentsAdapter, m) is getattr(SourceAdapter, m)
+
+
+# --- v0.9.5.1 per-bbox cadence -----------------------------------------------
+
+def _b(name, cadence_s=None):
+    return BBox(name=name, min_lon=0, min_lat=0, max_lon=1, max_lat=1,
+                state_code="ID", cadence_s=cadence_s)
+
+
+def _cadence_adapter(tmp_path, bboxes):
+    cfg = AdapterConfig(
+        name="tomtom_incidents", enabled=True, cadence_s=1800,
+        settings={"api_key_alias": "tomtom", "bboxes": [b.model_dump() for b in bboxes]},
+        updated_at=datetime.now(timezone.utc),
+    )
+    cs = MagicMock()
+    cs.get_api_key = AsyncMock(return_value="testkey")
+    return TomTomIncidentsAdapter(cfg, cs, tmp_path / "cursors.db")
+
+
+def test_bbox_cadence_field_defaults_none():
+    assert _b("x").cadence_s is None
+    assert _b("y", 3600).cadence_s == 3600
+
+
+def test_bbox_due_first_poll(adapter):
+    assert adapter._bbox_due(_b("never", 3600), datetime.now(timezone.utc)) is True
+
+
+def test_bbox_due_respects_per_bbox_cadence(adapter):
+    now = datetime.now(timezone.utc)
+    b60 = _b("b60", 3600)
+    adapter._last_polled["b60"] = now - timedelta(minutes=31)
+    assert adapter._bbox_due(b60, now) is False          # 31 < 60
+    adapter._last_polled["b60"] = now - timedelta(minutes=60)
+    assert adapter._bbox_due(b60, now) is True           # 60 >= 60 boundary
+
+
+def test_bbox_due_fallback_to_default(adapter):
+    now = datetime.now(timezone.utc)
+    bd = _b("bd")  # cadence_s None -> default_cadence_s == 1800 (30 min)
+    adapter._last_polled["bd"] = now - timedelta(minutes=29)
+    assert adapter._bbox_due(bd, now) is False
+    adapter._last_polled["bd"] = now - timedelta(minutes=31)
+    assert adapter._bbox_due(bd, now) is True
+
+
+@pytest.mark.asyncio
+async def test_poll_only_fetches_due_bboxes(tmp_path):
+    # Matt's 60/90/60: seed all polled 70 min ago -> 60-min due, 90-min not.
+    bboxes = [_b("treasure_valley_ext", 3600), _b("mountain_home_corridor", 5400),
+              _b("magic_valley_burley", 3600)]
+    a = _cadence_adapter(tmp_path, bboxes)
+    await a.startup()
+    seed = datetime.now(timezone.utc) - timedelta(minutes=70)
+    for b in bboxes:
+        a._last_polled[b.name] = seed
+    fetched = []
+
+    async def fake_fetch(bbox):
+        fetched.append(bbox.name)
+        return []
+
+    a._fetch_bbox = fake_fetch
+    [e async for e in a.poll()]
+    await a.shutdown()
+    assert set(fetched) == {"treasure_valley_ext", "magic_valley_burley"}  # 60-min due
+    assert "mountain_home_corridor" not in fetched                          # 90-min not due
+    assert a._last_polled["treasure_valley_ext"] > seed                     # advanced
+    assert a._last_polled["mountain_home_corridor"] == seed                 # untouched
+
+
+@pytest.mark.asyncio
+async def test_failed_fetch_does_not_update_last_polled(tmp_path):
+    import aiohttp
+    a = _cadence_adapter(tmp_path, [_b("bf", 3600)])
+    await a.startup()
+
+    async def boom(bbox):
+        raise aiohttp.ClientError("upstream down")
+
+    a._fetch_bbox = boom
+    [e async for e in a.poll()]
+    await a.shutdown()
+    assert "bf" not in a._last_polled  # failed fetch -> not recorded -> still due next cycle
