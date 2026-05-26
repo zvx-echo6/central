@@ -2267,6 +2267,134 @@ async def enrichment_update(request: Request) -> Response:
     return RedirectResponse(url="/enrichment", status_code=302)
 
 
+# --- Monitoring area (system-level archive bbox filter) --------------------
+
+_DEFAULT_MONITOR = {"north": 44.5, "south": 41.8, "east": -111.0, "west": -117.5}
+
+
+async def _read_monitoring_area(conn) -> dict[str, Any]:
+    """Read the monitoring-area bbox + map tile settings from config.system."""
+    row = await conn.fetchrow(
+        "SELECT monitor_north, monitor_south, monitor_east, monitor_west, "
+        "map_tile_url, map_attribution FROM config.system WHERE id = true"
+    )
+    if row is None:
+        return {
+            **_DEFAULT_MONITOR,
+            "tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+            "tile_attribution": "&copy; OpenStreetMap contributors",
+        }
+    return {
+        "north": row["monitor_north"], "south": row["monitor_south"],
+        "east": row["monitor_east"], "west": row["monitor_west"],
+        "tile_url": row["map_tile_url"],
+        "tile_attribution": row["map_attribution"],
+    }
+
+
+@router.get("/monitoring-area", response_class=HTMLResponse)
+async def monitoring_area_form(request: Request) -> HTMLResponse:
+    """Render the system monitoring-area editor (one draggable Leaflet rectangle).
+
+    Events whose geometry falls entirely outside this box are dropped by the
+    archive-level bbox filter; null-geom events are always kept."""
+    templates = _get_templates()
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        area = await _read_monitoring_area(conn)
+    return templates.TemplateResponse(
+        request=request,
+        name="monitoring_area.html",
+        context={
+            "operator": getattr(request.state, "operator", None),
+            "csrf_token": request.state.csrf_token,
+            "area": area,
+            "tile_url": area["tile_url"],
+            "tile_attribution": area["tile_attribution"],
+        },
+    )
+
+
+@router.post("/monitoring-area")
+async def monitoring_area_update(request: Request) -> Response:
+    """Validate + persist the monitoring-area bbox. The archive applies the new
+    bounds within ~60s via its background refresh (no restart needed)."""
+    templates = _get_templates()
+    pool = get_pool()
+
+    form = await request.form()
+    if not form.get("csrf_token") or form.get("csrf_token") != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
+
+    errors: dict[str, str] = {}
+    vals: dict[str, float] = {}
+    for key, lo, hi in (
+        ("north", -90.0, 90.0), ("south", -90.0, 90.0),
+        ("east", -180.0, 180.0), ("west", -180.0, 180.0),
+    ):
+        raw = form.get(f"monitor_{key}", "")
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            errors[key] = f"{key.title()} must be a number"
+            continue
+        if not (lo <= v <= hi):
+            errors[key] = f"{key.title()} must be between {lo:g} and {hi:g}"
+        else:
+            vals[key] = v
+
+    if not errors:
+        if vals["north"] <= vals["south"]:
+            errors["north"] = "North must be greater than South"
+        if vals["east"] <= vals["west"]:
+            errors["east"] = "East must be greater than West"
+
+    if errors:
+        async with pool.acquire() as conn:
+            saved = await _read_monitoring_area(conn)
+        render_area = {
+            "north": form.get("monitor_north") or saved["north"],
+            "south": form.get("monitor_south") or saved["south"],
+            "east": form.get("monitor_east") or saved["east"],
+            "west": form.get("monitor_west") or saved["west"],
+        }
+        return templates.TemplateResponse(
+            request=request,
+            name="monitoring_area.html",
+            context={
+                "operator": getattr(request.state, "operator", None),
+                "csrf_token": request.state.csrf_token,
+                "area": render_area,
+                "tile_url": saved["tile_url"],
+                "tile_attribution": saved["tile_attribution"],
+                "errors": errors,
+            },
+            status_code=200,
+        )
+
+    async with pool.acquire() as conn:
+        old = await conn.fetchrow(
+            "SELECT monitor_north, monitor_south, monitor_east, monitor_west "
+            "FROM config.system WHERE id = true"
+        )
+        await conn.execute(
+            "UPDATE config.system SET monitor_north=$1, monitor_south=$2, "
+            "monitor_east=$3, monitor_west=$4 WHERE id = true",
+            vals["north"], vals["south"], vals["east"], vals["west"],
+        )
+        operator = getattr(request.state, "operator", None)
+        await write_audit(
+            conn, SYSTEM_UPDATE,
+            operator_id=operator.id if operator else None,
+            target="monitoring_area",
+            before=dict(old) if old else None,
+            after={"monitor_north": vals["north"], "monitor_south": vals["south"],
+                   "monitor_east": vals["east"], "monitor_west": vals["west"]},
+        )
+
+    return RedirectResponse(url="/monitoring-area", status_code=302)
+
+
 # Alias validation regex
 ALIAS_REGEX = re.compile(r'^[a-zA-Z0-9_]+$')
 
