@@ -1,0 +1,10 @@
+{# TomTom incident detail rows. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('description') %}<dt>Incident</dt><dd>{{ d.description }}</dd>{% endif %}
+{% if d.get('from') %}<dt>From</dt><dd>{{ d.get('from') }}{% if d.get('to') %} → {{ d.get('to') }}{% endif %}</dd>{% endif %}
+{% if d.get('magnitude_of_delay') is not none %}<dt>Delay magnitude</dt><dd>{{ d.magnitude_of_delay }}/4</dd>{% endif %}
+{% if d.get('delay') is not none %}<dt>Delay</dt><dd>{{ d.delay }} s</dd>{% endif %}
+{% if d.get('length') is not none %}<dt>Length</dt><dd>{{ d.length | round | int }} m</dd>{% endif %}
+{% if d.get('road_numbers') %}<dt>Roads</dt><dd>{{ d.road_numbers | join(', ') }}</dd>{% endif %}
+{% if d.get('start_time') %}<dt>Started</dt><dd>{{ d.start_time }}</dd>{% endif %}
+{% if d.get('end_time') is not none %}<dt>Ends</dt><dd>{{ d.end_time }}</dd>{% endif %}

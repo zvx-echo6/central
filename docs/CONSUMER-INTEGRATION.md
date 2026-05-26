@@ -1518,6 +1518,47 @@ road name, description, county, severity). Verified for Idaho only.
 - **Removal semantics:** none in v1. Events age out of the upstream feed; the
   14-day dedup sweep expires stale ids.
 
+### tomtom_incidents — TomTom real-time traffic incidents (commercial coverage)
+
+Real-time incidents (closures, jams, hazards, road work, accidents) from TomTom
+Orbis `incidentDetails`, polled per metro bbox. Complements wzdx (federal work
+zones) and state_511_atis (state-DOT reports) with commercial vehicle-telematics
+coverage. One event per incident.
+
+- **Stream:** `CENTRAL_TRAFFIC` (event class). **event_type:** `incident` (from
+  `category = "incident.tomtom_incidents"`); shares the type with state_511_atis.
+- **Subject pattern:** `central.traffic.incident.<state>` (e.g.
+  `central.traffic.incident.id`); `<state>` is the per-bbox `state_code`.
+- **Coverage:** configured metro bboxes, **each <= 10,000 km^2** (TomTom rejects
+  larger). Ships with Treasure Valley (Boise). **Cadence 1800s (30 min)** ->
+  1 bbox = 1,440 calls/mo, 58% of the 2,500/mo free-tier cap. Adding bboxes must
+  respect `N * (43200/cadence_min) <= 2500`.
+- **Dedup key shape:** `<state_code>:tomtom:<tomtom_id>` (e.g.
+  `ID:tomtom:TTI-5df75143-...`); the upstream id is stable across polls.
+- **Severity:** from `magnitudeOfDelay` (0->1, 1->1, 2->2, 3->3, 4->4; 4 ==
+  closure/blocking). Never None.
+- **Event.data fields:**
+
+  | key | type | nullable | description |
+  |---|---|---|---|
+  | `description` | str | yes | Event text, e.g. `Roadworks`, `Closed` |
+  | `from` / `to` | str | yes | Affected segment endpoints |
+  | `magnitude_of_delay` | int | yes | 0-4 (drives severity) |
+  | `icon_category` | int | yes | TomTom icon enum (8=closed, 9=roadworks, 6=jam, ...) |
+  | `length` / `delay` | float | yes | Affected length (m) / delay (s) |
+  | `road_numbers` | list[str] | yes | Route numbers if known |
+  | `start_time` / `end_time` | str (ISO 8601) | yes | Incident window; `end_time` also sets `Event.expires` |
+  | `time_validity` | str | yes | e.g. `present` |
+  | `state_code` / `bbox_name` | str | no | Routing + source bbox |
+  | `latitude` / `longitude` | float | yes | First geometry vertex (enrichment input) |
+
+  The affected-road geometry (Point or LineString) rides on `geo.geometry` and
+  renders as a polyline on the map (v0.9.3 framework).
+- **Decipherable as-is:** yes -- description + from/to + magnitude are user-ready;
+  geocoder fills city/county.
+- **Removal semantics:** none in v1; incidents drop out of the feed when cleared,
+  swept by the 14-day dedup window.
+
 ### tomtom_flow — TomTom Orbis vector flow tiles (per-segment speed, telemetry)
 
 Per-road-segment traffic speed from TomTom Orbis **vector** flow tiles, polled for
