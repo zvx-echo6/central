@@ -83,6 +83,7 @@ class BBox(BaseModel):
     max_lon: float
     max_lat: float
     state_code: str
+    cadence_s: int | None = None  # per-bbox poll interval; None -> adapter default_cadence_s
 
 
 class TomTomIncidentsSettings(BaseModel):
@@ -122,6 +123,7 @@ class TomTomIncidentsAdapter(SourceAdapter):
         self._bboxes: list[BBox] = self._read_bboxes(config)
         self._api_key_alias: str = config.settings.get("api_key_alias", "tomtom")
         self._api_key: str | None = None
+        self._last_polled: dict[str, datetime] = {}  # bbox name -> last successful fetch (in-memory)
 
     @staticmethod
     def _read_bboxes(config: AdapterConfig) -> list[BBox]:
@@ -129,6 +131,14 @@ class TomTomIncidentsAdapter(SourceAdapter):
 
     def _redact(self, text: str) -> str:
         return text.replace(self._api_key, "<KEY>") if self._api_key else text
+
+    def _bbox_due(self, bbox: "BBox", now: datetime) -> bool:
+        """True if this bbox is due to poll (never polled this process, or its
+        per-bbox cadence_s -- falling back to default_cadence_s -- has elapsed)."""
+        last = self._last_polled.get(bbox.name)
+        if last is None:
+            return True
+        return (now - last).total_seconds() >= (bbox.cadence_s or self.default_cadence_s)
 
     async def startup(self) -> None:
         self._session = aiohttp.ClientSession(
@@ -226,6 +236,8 @@ class TomTomIncidentsAdapter(SourceAdapter):
                            extra={"alias": self._api_key_alias})
             return
         sem = asyncio.Semaphore(_FETCH_CONCURRENCY)
+        now = datetime.now(timezone.utc)
+        due = [b for b in self._bboxes if self._bbox_due(b, now)]
 
         async def _one(bbox: BBox) -> list[Event]:
             async with sem:
@@ -235,6 +247,7 @@ class TomTomIncidentsAdapter(SourceAdapter):
                     logger.warning("tomtom_incidents bbox fetch failed",
                                    extra={"bbox": bbox.name, "error": self._redact(str(exc))})
                     return []
+                self._last_polled[bbox.name] = now  # only after a successful fetch
                 out: list[Event] = []
                 for inc in incidents:
                     try:
@@ -246,7 +259,7 @@ class TomTomIncidentsAdapter(SourceAdapter):
                         out.append(ev)
                 return out
 
-        results = await asyncio.gather(*[_one(b) for b in self._bboxes])
+        results = await asyncio.gather(*[_one(b) for b in due])
         yielded = 0
         for evs in results:
             for ev in evs:
