@@ -56,6 +56,27 @@ class TestModelListRender:
         assert "model-list" in out and 'name="bboxes-0-name"' in out
         assert "free tier" in out  # quota panel rendered
 
+    def test_quota_panel_exposes_client_recompute_constants(self):
+        # v0.9.15: data-quota-* attrs let the client JS mirror the server
+        # formula with no hardcoded magic numbers.
+        fields = describe_fields(TomTomIncidentsAdapter.settings_schema, _SETTINGS)
+        quota = TomTomIncidentsAdapter.quota_estimate(TomTomIncidentsSettings(**_SETTINGS), 1800)
+        out = _render("adapters_edit.html", _ctx(_SETTINGS, fields, quota))
+        assert 'data-quota-cap="2500"' in out
+        assert 'data-quota-spm="2592000"' in out
+        assert 'data-quota-default="1800"' in out
+
+    def test_quota_panel_wraps_detail_and_msg_for_live_update(self):
+        # v0.9.15: detail/msg split into spans so the IIFE can rewrite the text
+        # and warn/block state live. JS exec needs a browser, so this is
+        # structural only -- live behaviour (cadence edit + Add/Delete row)
+        # was eyeballed manually against /adapters/tomtom_incidents.
+        fields = describe_fields(TomTomIncidentsAdapter.settings_schema, _SETTINGS)
+        quota = TomTomIncidentsAdapter.quota_estimate(TomTomIncidentsSettings(**_SETTINGS), 1800)
+        out = _render("adapters_edit.html", _ctx(_SETTINGS, fields, quota))
+        assert '<span class="quota-detail">' in out
+        assert '<span class="quota-msg">' in out
+
     def test_nws_region_intact_no_model_list(self):
         from central.adapters.nws import NWSSettings
         s = {"contact_email": "a@b.com",
