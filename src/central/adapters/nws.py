@@ -211,6 +211,7 @@ class NWSAdapter(SourceAdapter):
     requires_api_key = None
     wizard_order = 1
     default_cadence_s = 60
+    dedup_sweep_days = 8
 
     # Alerts cover forecast zones/counties (polygons), not a single point.
     enrichment_locations = []
@@ -392,42 +393,6 @@ class NWSAdapter(SourceAdapter):
             (self.name, last_modified)
         )
         self._db.commit()
-
-    def is_published(self, event_id: str) -> bool:
-        """Check if an event has already been published."""
-        if not self._db:
-            return False
-        cur = self._db.execute(
-            "SELECT 1 FROM published_ids WHERE adapter = ? AND event_id = ?",
-            (self.name, event_id)
-        )
-        return cur.fetchone() is not None
-
-    def mark_published(self, event_id: str) -> None:
-        """Mark an event as published."""
-        if not self._db:
-            return
-        self._db.execute(
-            """
-            INSERT INTO published_ids (adapter, event_id, first_seen, last_seen)
-            VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (adapter, event_id) DO UPDATE SET
-                last_seen = CURRENT_TIMESTAMP
-            """,
-            (self.name, event_id)
-        )
-        self._db.commit()
-
-    # TODO(v0.9.19.1): unscoped global DELETE -- clobbers other adapters' dedup rows; scope to adapter + move to base.
-    def sweep_old_ids(self) -> int:
-        """Remove published_ids older than 8 days. Returns count deleted."""
-        if not self._db:
-            return 0
-        cur = self._db.execute(
-            "DELETE FROM published_ids WHERE last_seen < datetime('now', '-8 days')"
-        )
-        self._db.commit()
-        return cur.rowcount
 
     @retry(
         stop=stop_after_attempt(5),

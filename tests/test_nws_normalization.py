@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from pathlib import Path
+import sqlite3
 from unittest.mock import MagicMock
 
 import pytest
@@ -352,6 +353,36 @@ class TestDeduplication:
         assert event1 is not None
         assert event2 is not None
         assert event1.id == event2.id
+
+    def test_sweep_only_deletes_own_adapter_rows(
+        self, adapter: NWSAdapter, tmp_path: Path
+    ) -> None:
+        """Regression (v0.9.19.1): sweep_old_ids must be adapter-scoped.
+
+        NWS previously ran an unscoped global DELETE that purged *every*
+        adapter's published_ids older than 8 days; the inherited base method
+        scopes the delete to ``adapter = ?``.
+        """
+        adapter._db = sqlite3.connect(tmp_path / "dedup.db")
+        adapter._db.execute(
+            "CREATE TABLE published_ids (adapter TEXT, event_id TEXT, "
+            "first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+            "last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+            "PRIMARY KEY (adapter, event_id))"
+        )
+        for adp in ("nws", "eonet"):
+            adapter._db.execute(
+                "INSERT INTO published_ids (adapter, event_id, last_seen) "
+                "VALUES (?, 'old', datetime('now', '-9 days'))",
+                (adp,),
+            )
+        adapter._db.commit()
+        assert adapter.dedup_sweep_days == 8
+        assert adapter.sweep_old_ids() == 1  # only the nws row
+        survivors = {
+            r[0] for r in adapter._db.execute("SELECT adapter FROM published_ids")
+        }
+        assert survivors == {"eonet"}  # foreign adapter's row survives
 
 
 class TestGeometry:
