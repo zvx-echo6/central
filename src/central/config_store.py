@@ -202,6 +202,62 @@ class ConfigStore:
             )
         return [StreamConfig(**dict(row)) for row in rows]
 
+    # -------------------------------------------------------------------------
+    # Archived-events retention (v0.9.13) -- DML on public.events, keyed by the
+    # per-stream max_age_s above. Lives here because this is the supervisor's
+    # Postgres gateway; the events table shares the database.
+    # -------------------------------------------------------------------------
+
+    async def delete_events_older_than(
+        self, category_domains: list[str], max_age_s: int, batch: int = 10000
+    ) -> int:
+        """Delete archived events whose category first-token is in
+        ``category_domains`` and whose ``time`` is older than ``max_age_s`` seconds.
+
+        Deletes in batches (default 10k) so the initial bulk reclaim can't take a
+        long table lock. Returns the total number of rows deleted."""
+        if not category_domains:
+            return 0
+        total = 0
+        async with self._pool.acquire() as conn:
+            while True:
+                # NOTE: events is a TimescaleDB hypertable -- ctid is only unique
+                # WITHIN a chunk, so batching on ctid would delete same-ctid rows in
+                # other chunks. Batch on the composite primary key (id, time), which
+                # is globally unique.
+                result = await conn.execute(
+                    """
+                    DELETE FROM events WHERE (id, time) IN (
+                        SELECT id, time FROM events
+                        WHERE split_part(category, '.', 1) = ANY($1::text[])
+                          AND time < now() - ($2 * interval '1 second')
+                        LIMIT $3
+                    )
+                    """,
+                    category_domains, max_age_s, batch,
+                )
+                n = int(result.split()[-1])
+                total += n
+                if n < batch:
+                    break
+        return total
+
+    async def unmapped_event_domains(self, mapped: list[str]) -> list[str]:
+        """Return distinct ``events.category`` first-token domains NOT in ``mapped``.
+
+        Used to surface category domains that no stream's retention map covers, so
+        a new adapter's events can't silently dodge retention."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT split_part(category, '.', 1) AS domain
+                FROM events
+                WHERE split_part(category, '.', 1) <> ALL($1::text[])
+                """,
+                mapped,
+            )
+        return [r["domain"] for r in rows]
+
     async def upsert_stream(self, name: str, max_age_s: int) -> None:
         """Insert or update a stream's max_age_s (operator-facing)."""
         async with self._pool.acquire() as conn:

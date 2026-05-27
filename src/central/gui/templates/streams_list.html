@@ -4,6 +4,9 @@
 
 {% block content %}
 <h1>Streams</h1>
+<p class="muted">Max age is the source-of-truth retention horizon: it bounds both how
+long messages live in NATS and how long archived events are kept in the events table
+(swept hourly by the supervisor).</p>
 
 <div class="cols">
 {% for stream in streams %}
