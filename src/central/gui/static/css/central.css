@@ -29,6 +29,9 @@
   --shadow-pop: 0 4px 16px rgba(0,0,0,0.08);
   --radius: 6px;
   --radius-sm: 4px;
+  /* Fused fire view (v0.9.14): retune here without touching JS. */
+  --fire-confirmed: #d7261e;   /* perimeter + hotspots */
+  --fire-unconfirmed: #f59e0b; /* hotspots only -- possible new fire */
 }
 
 /* ─── element base ──────────────────────────────────────────────────────── */
@@ -578,6 +581,9 @@ table tbody tr:hover { background: var(--bg-soft); }
 .evt-triangle { border: none; clip-path: polygon(50% 0%, 100% 100%, 0% 100%); }
 .evt-star { border: none; clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%); }
 .evt-marker.evt-hl { filter: drop-shadow(0 0 4px #ff3333); transform: scale(1.35); }
+/* Fused-fire centroid glyph: larger, with a soft glow to read as 'a fire'. */
+.evt-marker.fire-glyph { width: 17px; height: 17px; border-color: rgba(0,0,0,0.7);
+  box-shadow: 0 0 6px 1px rgba(215,38,30,0.55); }
 
 /* pagination */
 .paginator { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 16px; font-size: 13px; }

@@ -20,7 +20,7 @@ logger = logging.getLogger("central.gui.routes")
 
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from central.bootstrap_config import get_settings
 from central.gui.csrf import (
     reuse_or_generate_pre_auth_csrf,
@@ -3455,6 +3455,126 @@ def _decorate_table_events(events: list[dict]) -> None:
         event["adapter_display"] = display.get(event.get("adapter"), event.get("adapter"))
         event["adapter_color"] = color.get(event.get("adapter"), "#888")
 
+
+
+# --- Fused fire view (v0.9.14): WFIGS perimeters + nearby FIRMS hotspots -----
+# FIRMS hotspots carry no IrwinID, so the link is spatial+temporal: a hotspot is
+# "confirmed" (part of a known fire) when it lies within FIRE_FUSE_RADIUS_M of a
+# live perimeter AND within FIRE_FUSE_WINDOW_H of it. Hotspots matching no
+# perimeter are "unconfirmed" (possible new fire ahead of an official perimeter).
+# Read-only: SELECT-only, no DML.
+FIRE_FUSE_RADIUS_M = 1000
+FIRE_FUSE_WINDOW_H = 72
+
+
+def _fused_bbox(params: dict) -> tuple[float, float, float, float] | None:
+    """Parse optional north/south/east/west into (west, south, east, north), or
+    None if absent/degenerate/out-of-range (mirrors _parse_events_params)."""
+    try:
+        n = float(params["north"]); so = float(params["south"])
+        e = float(params["east"]); w = float(params["west"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if -90 <= so < n <= 90 and -180 <= w < e <= 180:
+        return (w, so, e, n)
+    return None
+
+
+def _shape_fused_fire(row) -> dict[str, Any]:
+    """Shape a confirmed-fire row (perimeter + aggregated hotspots) for JSON."""
+    return {
+        "id": row["id"],
+        "time": row["time"].isoformat(),
+        "incident_name": row["incident_name"],
+        "irwin_id": row["irwin_id"],
+        "acres": row["acres"],
+        "cause": row["cause"],
+        "geometry": row["geometry"],
+        "hotspot_count": row["hotspot_count"],
+        "max_frp": row["max_frp"],
+        "hotspots": row["hotspots"] or [],
+    }
+
+
+def _shape_unconfirmed_hotspot(row) -> dict[str, Any]:
+    """Shape an unconfirmed FIRMS hotspot (no nearby perimeter) for JSON."""
+    return {
+        "id": row["id"],
+        "time": row["time"].isoformat(),
+        "geometry": row["geometry"],
+        "frp": row["frp"],
+        "confidence": row["confidence"],
+        "satellite": row["satellite"],
+    }
+
+
+@router.get("/events/fire-fused.json")
+async def fire_fused(request: Request) -> Response:
+    """Fused fire view: each live WFIGS perimeter with its nearby/contemporaneous
+    FIRMS hotspots, plus standalone ("unconfirmed") hotspots. Honors an optional
+    north/south/east/west viewport bbox. Read-only."""
+    pool = get_pool()
+    bbox = _fused_bbox(dict(request.query_params))
+
+    confirmed_sql = """
+        SELECT p.id, p.time,
+            p.payload->'data'->'data'->'raw'->>'poly_IncidentName' AS incident_name,
+            p.payload->'data'->'data'->'raw'->>'attr_IrwinID' AS irwin_id,
+            (p.payload->'data'->'data'->'raw'->>'poly_GISAcres')::float AS acres,
+            p.payload->'data'->'data'->'raw'->>'attr_FireCause' AS cause,
+            ST_AsGeoJSON(p.geom)::jsonb AS geometry,
+            count(h.id) AS hotspot_count,
+            max((h.payload->'data'->'data'->>'frp')::float) AS max_frp,
+            COALESCE(jsonb_agg(jsonb_build_object(
+                'geometry', ST_AsGeoJSON(h.geom)::jsonb,
+                'frp', h.payload->'data'->'data'->>'frp',
+                'confidence', h.payload->'data'->'data'->>'confidence',
+                'satellite', h.payload->'data'->'data'->>'satellite',
+                'time', h.time
+            ) ORDER BY h.time DESC) FILTER (WHERE h.id IS NOT NULL), '[]'::jsonb) AS hotspots
+        FROM events p
+        LEFT JOIN events h
+            ON h.adapter = 'firms' AND h.category NOT LIKE '%.removed' AND h.geom IS NOT NULL
+            AND ST_DWithin(p.geom::geography, h.geom::geography, $1)
+            AND h.time > p.time - ($2 * interval '1 hour')
+        WHERE p.adapter = 'wfigs_perimeters' AND p.category NOT LIKE '%.removed'
+            AND p.geom IS NOT NULL{p_bbox}
+        GROUP BY p.id, p.time
+        ORDER BY hotspot_count DESC
+    """
+    unconfirmed_sql = """
+        SELECT h.id, h.time,
+            ST_AsGeoJSON(h.geom)::jsonb AS geometry,
+            h.payload->'data'->'data'->>'frp' AS frp,
+            h.payload->'data'->'data'->>'confidence' AS confidence,
+            h.payload->'data'->'data'->>'satellite' AS satellite
+        FROM events h
+        WHERE h.adapter = 'firms' AND h.category NOT LIKE '%.removed'
+            AND h.geom IS NOT NULL{h_bbox}
+            AND NOT EXISTS (
+                SELECT 1 FROM events p
+                WHERE p.adapter = 'wfigs_perimeters' AND p.category NOT LIKE '%.removed'
+                    AND p.geom IS NOT NULL
+                    AND ST_DWithin(p.geom::geography, h.geom::geography, $1)
+                    AND h.time > p.time - ($2 * interval '1 hour')
+            )
+        ORDER BY h.time DESC
+    """
+    args: list[Any] = [FIRE_FUSE_RADIUS_M, FIRE_FUSE_WINDOW_H]
+    p_bbox = h_bbox = ""
+    if bbox:
+        p_bbox = "\n            AND ST_Intersects(p.geom, ST_MakeEnvelope($3, $4, $5, $6, 4326))"
+        h_bbox = "\n            AND ST_Intersects(h.geom, ST_MakeEnvelope($3, $4, $5, $6, 4326))"
+        args.extend(bbox)
+
+    async with pool.acquire() as conn:
+        confirmed = await conn.fetch(confirmed_sql.format(p_bbox=p_bbox), *args)
+        unconfirmed = await conn.fetch(unconfirmed_sql.format(h_bbox=h_bbox), *args)
+
+    return JSONResponse({
+        "fires": [_shape_fused_fire(r) for r in confirmed],
+        "unconfirmed": [_shape_unconfirmed_hotspot(r) for r in unconfirmed],
+    })
 
 
 @router.get("/events.json")

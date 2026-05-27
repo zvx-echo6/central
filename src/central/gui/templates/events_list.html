@@ -96,6 +96,10 @@
             <input type="checkbox" id="map-filter-toggle" {{ 'checked' if filter_state.map_filter else '' }}>
             Filter table by map view
         </label>
+        <label class="map-filter-toggle tb" title="Pair WFIGS perimeters with nearby FIRMS hotspots into a single fire; lone hotspots show amber as possible new fires.">
+            <input type="checkbox" id="fuse-fire-toggle" checked>
+            Fuse fire layers
+        </label>
     </div>
 </div>
 
@@ -203,6 +207,7 @@
         spiderfyOnMaxZoom: true
     }).addTo(map);
     var polyGroup = L.featureGroup().addTo(map);
+    var fireFusedGroup = L.featureGroup().addTo(map);  // v0.9.14 fused fire view
     var highlightedRow = null;
     var highlightedLayer = null;
     var isInitialLoad = true;
@@ -299,15 +304,112 @@
         return html;
     }
 
+    // --- Fused fire view (v0.9.14) -----------------------------------------
+    // Fire-domain adapters whose rows are replaced by the fused renderer.
+    var FIRE_ADAPTERS = { firms: 1, wfigs_perimeters: 1, wfigs_incidents: 1 };
+    var fuseFireToggle = document.getElementById("fuse-fire-toggle");
+    if (fuseFireToggle) fuseFireToggle.addEventListener("change", rebindEventLayers);
+    function fuseFireOn() { return fuseFireToggle && fuseFireToggle.checked; }
+    // Colors come from CSS vars so they can be retuned without code.
+    function cssVar(name, fallback) {
+        var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+        return v || fallback;
+    }
+    function fireConfirmedColor() { return cssVar("--fire-confirmed", "#d7261e"); }
+    function fireUnconfirmedColor() { return cssVar("--fire-unconfirmed", "#f59e0b"); }
+
+    function fireFusedPopup(fire) {
+        var name = fire.incident_name || "(unnamed fire)";
+        var n = fire.hotspot_count || 0;
+        var html = "<strong>&#128293; " + name + "</strong><br>Confirmed fire (perimeter + " +
+            n + " hotspot" + (n === 1 ? "" : "s") + ")";
+        if (fire.acres != null) html += "<br>" + Math.round(fire.acres).toLocaleString() + " acres";
+        if (fire.cause) html += "<br>Cause: " + fire.cause;
+        if (fire.max_frp != null) html += "<br>Max FRP: " + fire.max_frp;
+        if (fire.irwin_id) html += "<br><small>" + fire.irwin_id + "</small>";
+        return html;
+    }
+    function unconfirmedPopup(h) {
+        var html = "<strong>&#9888; Unconfirmed hotspot</strong><br>Satellite detection, no perimeter yet";
+        if (h.satellite) html += "<br>Satellite: " + h.satellite;
+        if (h.frp) html += "<br>FRP: " + h.frp;
+        if (h.confidence) html += "<br>Confidence: " + h.confidence;
+        var t = h.time ? new Date(h.time).toLocaleString() : "";
+        if (t) html += "<br><small>" + t + "</small>";
+        return html;
+    }
+
+    function drawConfirmedFire(fire, color) {
+        if (fire.geometry) {
+            var poly = L.geoJSON(fire.geometry, { style: { color: color, weight: 2,
+                fillColor: color, opacity: 0.9, fillOpacity: 0.25 } });
+            poly.bindPopup(fireFusedPopup(fire));
+            poly.addTo(fireFusedGroup);
+        }
+        (fire.hotspots || []).forEach(function(h) {
+            if (!h.geometry) return;
+            L.geoJSON(h.geometry, { pointToLayer: function(f, ll) {
+                return L.circleMarker(ll, { radius: 3, color: color, weight: 1,
+                    fillColor: color, fillOpacity: 0.8 }); },
+                style: { color: color, weight: 1, fillColor: color, fillOpacity: 0.55 }
+            }).addTo(fireFusedGroup);
+        });
+        // Collapsed glyph at the perimeter centroid; click expands (zoom to bounds).
+        var center = centroidLatLng(fire.geometry);
+        if (center) {
+            var glyph = L.marker(center, { icon: L.divIcon({ className: "",
+                html: '<div class="evt-marker evt-square fire-glyph" style="background:' + color + '"></div>',
+                iconSize: [17, 17], iconAnchor: [9, 9] }) });
+            glyph.bindPopup(fireFusedPopup(fire));
+            glyph.on("click", function() {
+                try { var b = L.geoJSON(fire.geometry).getBounds();
+                    if (b.isValid()) map.fitBounds(b.pad(0.3)); } catch (e) {}
+            });
+            glyph.addTo(fireFusedGroup);
+        }
+    }
+    function drawUnconfirmedHotspot(h, color) {
+        if (!h.geometry) return;
+        var layer = L.geoJSON(h.geometry, { pointToLayer: function(f, ll) {
+            return L.circleMarker(ll, { radius: 4, color: color, weight: 1,
+                fillColor: color, fillOpacity: 0.7 }); },
+            style: { color: color, weight: 1, fillColor: color, fillOpacity: 0.5 } });
+        layer.bindPopup(unconfirmedPopup(h));
+        layer.addTo(fireFusedGroup);
+    }
+    function renderFusedFires() {
+        fireFusedGroup.clearLayers();
+        var url = "/events/fire-fused.json";
+        if (mapFilterOn()) {
+            var b = map.getBounds();
+            url += "?north=" + Math.min(90, b.getNorth()).toFixed(4) +
+                   "&south=" + Math.max(-90, b.getSouth()).toFixed(4) +
+                   "&east=" + wrapLon(b.getEast()).toFixed(4) +
+                   "&west=" + wrapLon(b.getWest()).toFixed(4);
+        }
+        fetch(url, { headers: { "Accept": "application/json" } })
+            .then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(data) {
+                if (!data) return;
+                var cc = fireConfirmedColor(), uc = fireUnconfirmedColor();
+                (data.fires || []).forEach(function(fire) { drawConfirmedFire(fire, cc); });
+                (data.unconfirmed || []).forEach(function(h) { drawUnconfirmedHotspot(h, uc); });
+            })
+            .catch(function(e) { console.error("fused fire fetch failed", e); });
+    }
+
     function rebindEventLayers() {
         markerCluster.clearLayers();
         polyGroup.clearLayers();
+        var fused = fuseFireOn();
+        if (fused) { renderFusedFires(); } else { fireFusedGroup.clearLayers(); }
 
         var rows = document.querySelectorAll("#events-rows tr.event-row[data-geometry]");
 
         rows.forEach(function(row) {
             var geomStr = row.dataset.geometry;
             if (!geomStr || geomStr === "") return;
+            if (fused && FIRE_ADAPTERS[row.dataset.adapter || ""]) return;
 
             try {
                 var geom = JSON.parse(geomStr);
