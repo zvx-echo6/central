@@ -69,6 +69,7 @@ class FIRMSAdapter(SourceAdapter):
     api_key_field = "api_key_alias"
     wizard_order = 2
     default_cadence_s = 300
+    dedup_sweep_days = 2  # 48h dedup window (FIRMS hotspots churn fast)
 
     # Enrichment pilot (PR J): FIRMS rows carry top-level latitude/longitude.
     enrichment_locations = [("latitude", "longitude")]
@@ -202,45 +203,6 @@ class FIRMSAdapter(SourceAdapter):
             self._db.close()
             self._db = None
         logger.info("FIRMS adapter shut down")
-
-    def is_published(self, stable_id: str) -> bool:
-        """Check if an event has already been published."""
-        if not self._db:
-            return False
-        cur = self._db.execute(
-            "SELECT 1 FROM published_ids WHERE adapter = ? AND event_id = ?",
-            (self.name, stable_id),
-        )
-        return cur.fetchone() is not None
-
-    def mark_published(self, stable_id: str) -> None:
-        """Mark an event as published."""
-        if not self._db:
-            return
-        self._db.execute(
-            """
-            INSERT INTO published_ids (adapter, event_id, first_seen, last_seen)
-            VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (adapter, event_id) DO UPDATE SET
-                last_seen = CURRENT_TIMESTAMP
-            """,
-            (self.name, stable_id),
-        )
-        self._db.commit()
-
-    def sweep_old_ids(self) -> int:
-        """Remove published_ids older than 48 hours. Returns count deleted."""
-        if not self._db:
-            return 0
-        cur = self._db.execute(
-            "DELETE FROM published_ids WHERE adapter = ? AND last_seen < datetime('now', '-48 hours')",
-            (self.name,),
-        )
-        self._db.commit()
-        count = cur.rowcount
-        if count > 0:
-            logger.info("FIRMS swept old dedup entries", extra={"count": count})
-        return count
 
     def _build_stable_id(
         self, satellite: str, acq_date: str, acq_time: str, lat: float, lon: float

@@ -418,6 +418,7 @@ class NWSAdapter(SourceAdapter):
         )
         self._db.commit()
 
+    # TODO(v0.9.19.1): unscoped global DELETE -- clobbers other adapters' dedup rows; scope to adapter + move to base.
     def sweep_old_ids(self) -> int:
         """Remove published_ids older than 8 days. Returns count deleted."""
         if not self._db:

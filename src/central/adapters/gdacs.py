@@ -149,6 +149,7 @@ class GDACSAdapter(SourceAdapter):
     api_key_field = None
     wizard_order = None
     default_cadence_s = 600
+    dedup_sweep_days = 30
 
     # Event lat/lon mirrored from Geo.centroid into event.data (see poll()).
     enrichment_locations = [("latitude", "longitude")]
@@ -203,42 +204,6 @@ class GDACSAdapter(SourceAdapter):
             new_config.settings.get("event_types", DEFAULT_EVENT_TYPES)
         )
         logger.info("GDACS config updated", extra={"event_types": self.event_types})
-
-    def is_published(self, event_id: str) -> bool:
-        if not self._db:
-            return False
-        cur = self._db.execute(
-            "SELECT 1 FROM published_ids WHERE adapter = ? AND event_id = ?",
-            (self.name, event_id),
-        )
-        return cur.fetchone() is not None
-
-    def mark_published(self, event_id: str) -> None:
-        if not self._db:
-            return
-        self._db.execute(
-            """
-            INSERT INTO published_ids (adapter, event_id, first_seen, last_seen)
-            VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (adapter, event_id) DO UPDATE SET
-                last_seen = CURRENT_TIMESTAMP
-            """,
-            (self.name, event_id),
-        )
-        self._db.commit()
-
-    def sweep_old_ids(self) -> int:
-        if not self._db:
-            return 0
-        cur = self._db.execute(
-            "DELETE FROM published_ids WHERE adapter = ? AND last_seen < datetime('now', '-30 days')",
-            (self.name,),
-        )
-        self._db.commit()
-        count = cur.rowcount
-        if count > 0:
-            logger.info("GDACS swept old dedup entries", extra={"count": count})
-        return count
 
     def subject_for(self, event: Event) -> str:
         parts = event.category.split(".")
