@@ -16,10 +16,7 @@ from central.config_store import ConfigStore
 from central.tomtom_flow_parse import decode_flow_tile
 from central.gui.nats import get_js
 
-logger = logging.getLogger("central.gui.routes")
-
-
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from central.bootstrap_config import get_settings
 from central.gui.csrf import (
@@ -64,6 +61,9 @@ from central.api_key_resolver import adapter_has_resolved_api_key
 from central.adapter_discovery import discover_adapters
 from central.streams import STREAMS as STREAM_REGISTRY
 from pydantic import ValidationError
+
+logger = logging.getLogger("central.gui.routes")
+
 
 @cache
 def _adapter_classes() -> dict:
@@ -308,7 +308,6 @@ async def dashboard_polls(request: Request) -> HTMLResponse:
 async def setup_operator_form(request: Request) -> HTMLResponse:
     """Render the setup operator form (step 1)."""
     from central.gui.wizard import get_wizard_state
-    from central.gui.csrf import reuse_or_generate_pre_auth_csrf
 
     templates = _get_templates()
     settings = get_settings()
@@ -346,7 +345,6 @@ async def setup_operator_submit(
 ) -> Response:
     """Process the setup operator form (step 1)."""
     from central.gui.wizard import get_wizard_state, set_wizard_cookie, WizardState
-    from central.gui.csrf import reuse_or_generate_pre_auth_csrf
 
     templates = _get_templates()
     settings = get_settings()
@@ -401,7 +399,6 @@ async def setup_operator_submit(
 async def setup_system_form(request: Request) -> HTMLResponse:
     """Render the system settings form (step 2)."""
     from central.gui.wizard import get_wizard_state
-    from central.gui.csrf import reuse_or_generate_pre_auth_csrf
 
     settings = get_settings()
 
@@ -447,7 +444,6 @@ async def setup_system_form(request: Request) -> HTMLResponse:
 async def setup_system_submit(request: Request) -> Response:
     """Process the system settings form (step 2)."""
     from central.gui.wizard import get_wizard_state, set_wizard_cookie
-    from central.gui.csrf import reuse_or_generate_pre_auth_csrf
 
     templates = _get_templates()
     settings = get_settings()
@@ -514,7 +510,6 @@ async def setup_system_submit(request: Request) -> Response:
 async def setup_keys_form(request: Request) -> HTMLResponse:
     """Render the API keys form (step 3)."""
     from central.gui.wizard import get_wizard_state
-    from central.gui.csrf import reuse_or_generate_pre_auth_csrf
 
     settings = get_settings()
 
@@ -549,7 +544,6 @@ async def setup_keys_form(request: Request) -> HTMLResponse:
 async def setup_keys_submit(request: Request) -> Response:
     """Process the API keys form (step 3)."""
     from central.gui.wizard import get_wizard_state, set_wizard_cookie
-    from central.gui.csrf import reuse_or_generate_pre_auth_csrf
     from central.crypto import encrypt
 
     templates = _get_templates()
@@ -647,7 +641,6 @@ async def setup_keys_submit(request: Request) -> Response:
 async def setup_adapters_form(request: Request) -> HTMLResponse:
     """Render the adapters configuration form (step 4)."""
     from central.gui.wizard import get_wizard_state
-    from central.gui.csrf import reuse_or_generate_pre_auth_csrf
 
     settings = get_settings()
 
@@ -765,7 +758,6 @@ async def setup_adapters_form(request: Request) -> HTMLResponse:
 async def setup_adapters_submit(request: Request) -> Response:
     """Process the adapters configuration form (step 4)."""
     from central.gui.wizard import get_wizard_state, set_wizard_cookie
-    from central.gui.csrf import reuse_or_generate_pre_auth_csrf
 
     templates = _get_templates()
     pool = get_pool()
@@ -985,7 +977,6 @@ async def setup_adapters_submit(request: Request) -> Response:
 async def setup_finish_form(request: Request) -> HTMLResponse:
     """Render the finish setup page (step 5)."""
     from central.gui.wizard import get_wizard_state
-    from central.gui.csrf import reuse_or_generate_pre_auth_csrf
 
     settings = get_settings()
 
@@ -1038,7 +1029,6 @@ async def setup_finish_form(request: Request) -> HTMLResponse:
 async def setup_finish_submit(request: Request) -> Response:
     """Complete the setup wizard - atomic commit of all wizard state."""
     from central.gui.wizard import get_wizard_state, clear_wizard_cookie
-    from central.gui.csrf import reuse_or_generate_pre_auth_csrf
     from asyncpg.exceptions import UniqueViolationError
 
     templates = _get_templates()
@@ -3471,8 +3461,10 @@ def _fused_bbox(params: dict) -> tuple[float, float, float, float] | None:
     """Parse optional north/south/east/west into (west, south, east, north), or
     None if absent/degenerate/out-of-range (mirrors _parse_events_params)."""
     try:
-        n = float(params["north"]); so = float(params["south"])
-        e = float(params["east"]); w = float(params["west"])
+        n = float(params["north"])
+        so = float(params["south"])
+        e = float(params["east"])
+        w = float(params["west"])
     except (KeyError, TypeError, ValueError):
         return None
     if -90 <= so < n <= 90 and -180 <= w < e <= 180:
