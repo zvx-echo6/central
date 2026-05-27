@@ -113,6 +113,33 @@ STREAM_SUBJECTS = {s.name: [s.subject_filter] for s in STREAM_REGISTRY}
 
 # Recompute interval for stream max_bytes (1 hour)
 STREAM_RECOMPUTE_INTERVAL_S = 3600
+# How often to sweep expired archived events out of the events table (1 hour).
+EVENTS_RETENTION_INTERVAL_S = 3600
+
+# Maps each event-bearing stream to the events.category first-token domains it
+# owns. Category domains do NOT equal stream subject domains for the traffic
+# family (flow/incident/closure/work_zone/camera all live under central.traffic*),
+# so the mapping is explicit. The events-retention sweep uses each stream's
+# config.streams.max_age_s (the /streams 1/7/14/30/365d buttons) as the
+# source-of-truth horizon. Keep in sync with the StreamEntry registry: a category
+# domain present in events but absent here is logged by _sweep_events_retention so
+# a new adapter's events can't silently evade retention.
+STREAM_CATEGORY_DOMAINS: dict[str, tuple[str, ...]] = {
+    "CENTRAL_WX": ("wx",),
+    "CENTRAL_FIRE": ("fire",),
+    "CENTRAL_QUAKE": ("quake",),
+    "CENTRAL_SPACE": ("space",),
+    "CENTRAL_DISASTER": ("disaster",),
+    "CENTRAL_HYDRO": ("hydro",),
+    "CENTRAL_TRAFFIC": ("incident", "closure", "work_zone"),
+    "CENTRAL_TRAFFIC_FLOW": ("flow",),
+    "CENTRAL_TRAFFIC_CAMERAS": ("camera",),
+}
+
+
+def _all_mapped_domains() -> set[str]:
+    """Every category domain covered by STREAM_CATEGORY_DOMAINS."""
+    return {d for domains in STREAM_CATEGORY_DOMAINS.values() for d in domains}
 
 
 class JsonFormatter(logging.Formatter):
@@ -646,6 +673,69 @@ class Supervisor:
                 extra={"stream": stream_name, "error": str(e)},
             )
 
+    async def _sweep_events_retention(self) -> None:
+        """Delete archived events older than their stream's max_age_s (the
+        per-stream retention from /streams). Fail-safe: a stream missing from
+        config.streams or with max_age_s <= 0 is skipped (never deleted)."""
+        streams = {s.name: s for s in await self._config_store.list_streams()}
+        total = 0
+        for stream_name, domains in STREAM_CATEGORY_DOMAINS.items():
+            cfg = streams.get(stream_name)
+            if cfg is None or cfg.max_age_s is None or cfg.max_age_s <= 0:
+                logger.warning(
+                    "Skipping events retention: no/invalid max_age_s",
+                    extra={"stream": stream_name},
+                )
+                continue
+            try:
+                deleted = await self._config_store.delete_events_older_than(
+                    list(domains), cfg.max_age_s
+                )
+            except Exception as e:
+                logger.error(
+                    "Events retention sweep failed for stream",
+                    extra={"stream": stream_name, "error": str(e)},
+                )
+                continue
+            total += deleted
+            if deleted:
+                logger.info(
+                    "Swept expired events",
+                    extra={"stream": stream_name, "deleted": deleted,
+                           "max_age_s": cfg.max_age_s},
+                )
+        # Surface any category domain no stream's map covers (potential leak).
+        try:
+            unmapped = await self._config_store.unmapped_event_domains(
+                list(_all_mapped_domains())
+            )
+            if unmapped:
+                logger.warning(
+                    "events categories not covered by retention map",
+                    extra={"unmapped_domains": sorted(unmapped)},
+                )
+        except Exception as e:
+            logger.error("Failed checking unmapped event domains",
+                         extra={"error": str(e)})
+        logger.info("Events retention sweep complete",
+                    extra={"total_deleted": total})
+
+    async def _events_retention_loop(self) -> None:
+        """Sweep expired archived events immediately on startup, then hourly."""
+        while not self._shutdown_event.is_set():
+            try:
+                await self._sweep_events_retention()
+            except Exception as e:
+                logger.error("Events retention loop error", extra={"error": str(e)})
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(),
+                    timeout=EVENTS_RETENTION_INTERVAL_S,
+                )
+                break  # shutdown requested
+            except asyncio.TimeoutError:
+                pass
+
     async def _stream_retention_recompute_loop(self) -> None:
         """Periodically recompute max_bytes for all streams."""
         while not self._shutdown_event.is_set():
@@ -884,6 +974,9 @@ class Supervisor:
 
         # Start stream retention recompute loop
         self._tasks.append(asyncio.create_task(self._stream_retention_recompute_loop()))
+
+        # Start archived-events retention sweep loop (v0.9.13)
+        self._tasks.append(asyncio.create_task(self._events_retention_loop()))
 
         logger.info(
             "Supervisor started",
