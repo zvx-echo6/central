@@ -162,6 +162,23 @@
     </fieldset>
     {% endif %}
 
+    {# Standalone API-quota panel for flat-config adapters (e.g. WZDx). model_list
+       adapters render their own copy inside _partials/model_list.html, so skip it
+       here when one is present to avoid a double panel. #}
+    {% set has_model_list = namespace(value=false) %}
+    {% for field in fields %}
+        {% if field.widget == "model_list" %}{% set has_model_list.value = true %}{% endif %}
+    {% endfor %}
+    {% if quota and not has_model_list.value %}
+    <div class="quota-panel flash {% if quota.blocked %}flash-error{% elif quota.warn %}flash-warn{% endif %}"
+         data-quota-cap="{{ quota.cap }}"
+         data-quota-spm="{{ quota.seconds_per_month }}"
+         data-quota-default="{{ quota.default_cadence_s }}">
+        <strong>API quota:</strong> <span class="quota-detail">{{ quota.detail }}</span>
+        <span class="quota-msg">{% if quota.blocked %}<br>⛔ Over free-tier cap — reduce calls before saving.{% elif quota.warn %}<br>⚠️ Approaching free-tier cap.{% endif %}</span>
+    </div>
+    {% endif %}
+
     {% set has_region = namespace(value=false) %}
     {% for field in fields %}
         {% if field.widget == "region" %}
