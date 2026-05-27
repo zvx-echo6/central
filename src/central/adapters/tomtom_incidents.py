@@ -333,6 +333,8 @@ class TomTomIncidentsAdapter(SourceAdapter):
         return {
             "calls_per_month": calls_per_month,
             "cap": cap,
+            "seconds_per_month": _SECONDS_PER_MONTH,
+            "default_cadence_s": cls.default_cadence_s,
             "percent": percent,
             "warn": percent >= 80.0,
             "blocked": percent >= 100.0,

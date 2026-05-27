@@ -66,10 +66,13 @@
 </div>
 
 {% if quota %}
-<div class="quota-panel flash {% if quota.blocked %}flash-error{% elif quota.warn %}flash-warn{% endif %}">
-    <strong>API quota:</strong> {{ quota.detail }}
-    {% if quota.blocked %}<br>⛔ Over free-tier cap — reduce calls before saving.
-    {% elif quota.warn %}<br>⚠️ Approaching free-tier cap.{% endif %}
+<div class="quota-panel flash {% if quota.blocked %}flash-error{% elif quota.warn %}flash-warn{% endif %}"
+     data-field="{{ field.name }}"
+     data-quota-cap="{{ quota.cap }}"
+     data-quota-spm="{{ quota.seconds_per_month }}"
+     data-quota-default="{{ quota.default_cadence_s }}">
+    <strong>API quota:</strong> <span class="quota-detail">{{ quota.detail }}</span>
+    <span class="quota-msg">{% if quota.blocked %}<br>⛔ Over free-tier cap — reduce calls before saving.{% elif quota.warn %}<br>⚠️ Approaching free-tier cap.{% endif %}</span>
 </div>
 {% endif %}
 
@@ -101,5 +104,66 @@
         });
         renumber();
     });
+})();
+</script>
+
+<script>
+// v0.9.15: live client-side mirror of TomTomIncidentsAdapter.quota_estimate --
+// recompute the est. monthly call count as the operator edits a cadence input
+// or adds/removes a bbox row, without waiting for Save. Vanilla, self-contained,
+// and a no-op when no quota panel is present (non-TomTom model_lists).
+(function() {
+    function init() {
+        var panel = document.querySelector('.quota-panel[data-field]');
+        if (!panel) return;
+        var container = document.querySelector(
+            '.model-list[data-field="' + panel.dataset.field + '"]');
+        if (!container) return;
+        var body = container.querySelector('.model-list-body');
+        if (!body) return;
+        var CAP = parseFloat(panel.dataset.quotaCap);
+        var SPM = parseFloat(panel.dataset.quotaSpm);
+        var DEF = parseFloat(panel.dataset.quotaDefault);
+        var detailEl = panel.querySelector('.quota-detail');
+        var msgEl = panel.querySelector('.quota-msg');
+
+        // Server uses the adapter-level cadence as a floor:
+        // effective = max(adapter_cadence, bbox_cadence || default).
+        function adapterCadence() {
+            var el = document.getElementById('cadence_s');
+            var v = el ? parseFloat(el.value) : NaN;
+            return isNaN(v) ? 0 : v;
+        }
+        function recompute() {
+            var rows = body.querySelectorAll('.model-list-row');
+            var floor = adapterCadence(), calls = 0;
+            rows.forEach(function(row) {
+                var el = row.querySelector('[data-sub="cadence_s"]');
+                var bc = el ? parseFloat(el.value) : NaN;
+                var eff = Math.max(floor, isNaN(bc) ? DEF : bc);
+                if (eff > 0) calls += SPM / eff;
+            });
+            var cpm = Math.round(calls);
+            var pct = CAP ? (cpm / CAP * 100) : 0;
+            var warn = pct >= 80, blocked = pct >= 100;
+            detailEl.textContent = cpm.toLocaleString() + ' est. calls/month across '
+                + rows.length + ' bbox(es) vs ' + CAP.toLocaleString()
+                + '/month free tier (' + Math.round(pct) + '%)';
+            msgEl.innerHTML = blocked
+                ? '<br>⛔ Over free-tier cap — reduce calls before saving.'
+                : (warn ? '<br>⚠️ Approaching free-tier cap.' : '');
+            panel.classList.toggle('flash-error', blocked);
+            panel.classList.toggle('flash-warn', warn && !blocked);
+        }
+        body.addEventListener('input', recompute);
+        var core = document.getElementById('cadence_s');
+        if (core) core.addEventListener('input', recompute);
+        new MutationObserver(recompute).observe(body, { childList: true });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 })();
 </script>
