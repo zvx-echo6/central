@@ -78,6 +78,7 @@ class USGSQuakeAdapter(SourceAdapter):
     requires_api_key = None
     wizard_order = 3
     default_cadence_s = 60
+    dedup_sweep_days = 7
 
     # Epicenter lat/lon are top-level keys in event.data (see _build_event).
     enrichment_locations = [("latitude", "longitude")]
@@ -199,45 +200,6 @@ class USGSQuakeAdapter(SourceAdapter):
             self._db.close()
             self._db = None
         logger.info("USGS quake adapter shut down")
-
-    def is_published(self, event_id: str) -> bool:
-        """Check if an event has already been published."""
-        if not self._db:
-            return False
-        cur = self._db.execute(
-            "SELECT 1 FROM published_ids WHERE adapter = ? AND event_id = ?",
-            (self.name, event_id),
-        )
-        return cur.fetchone() is not None
-
-    def mark_published(self, event_id: str) -> None:
-        """Mark an event as published."""
-        if not self._db:
-            return
-        self._db.execute(
-            """
-            INSERT INTO published_ids (adapter, event_id, first_seen, last_seen)
-            VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (adapter, event_id) DO UPDATE SET
-                last_seen = CURRENT_TIMESTAMP
-            """,
-            (self.name, event_id),
-        )
-        self._db.commit()
-
-    def sweep_old_ids(self) -> int:
-        """Remove published_ids older than 7 days. Returns count deleted."""
-        if not self._db:
-            return 0
-        cur = self._db.execute(
-            "DELETE FROM published_ids WHERE adapter = ? AND last_seen < datetime('now', '-7 days')",
-            (self.name,),
-        )
-        self._db.commit()
-        count = cur.rowcount
-        if count > 0:
-            logger.info("USGS quake swept old dedup entries", extra={"count": count})
-        return count
 
     def _build_url(self) -> str:
         """Build USGS GeoJSON feed URL."""

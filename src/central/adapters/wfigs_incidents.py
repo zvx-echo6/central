@@ -133,45 +133,6 @@ class WFIGSIncidentsAdapter(SourceAdapter):
             extra={"region": self.region.model_dump() if self.region else None},
         )
 
-    def is_published(self, event_id: str) -> bool:
-        """Check if an event has already been published."""
-        if not self._db:
-            return False
-        cur = self._db.execute(
-            "SELECT 1 FROM published_ids WHERE adapter = ? AND event_id = ?",
-            (self.name, event_id),
-        )
-        return cur.fetchone() is not None
-
-    def mark_published(self, event_id: str) -> None:
-        """Mark an event as published."""
-        if not self._db:
-            return
-        self._db.execute(
-            """
-            INSERT INTO published_ids (adapter, event_id, first_seen, last_seen)
-            VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (adapter, event_id) DO UPDATE SET
-                last_seen = CURRENT_TIMESTAMP
-            """,
-            (self.name, event_id),
-        )
-        self._db.commit()
-
-    def sweep_old_ids(self) -> int:
-        """Remove published_ids older than 14 days. Returns count deleted."""
-        if not self._db:
-            return 0
-        cur = self._db.execute(
-            "DELETE FROM published_ids WHERE adapter = ? AND last_seen < datetime('now', '-14 days')",
-            (self.name,),
-        )
-        self._db.commit()
-        count = cur.rowcount
-        if count > 0:
-            logger.info("WFIGS incidents swept old dedup entries", extra={"count": count})
-        return count
-
     def subject_for(self, event: Event) -> str:
         """Compute NATS subject for an event."""
         # Removal events have a different subject pattern
