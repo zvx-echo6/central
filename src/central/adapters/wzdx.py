@@ -5,6 +5,13 @@ First adapter to use the v0.9.0 category/subject split: category="work_zone.wzdx
 NATS subject is "central.traffic.work_zone.{state}" on CENTRAL_TRAFFIC. Subject
 state comes from the registry row (reliable, pre-enrichment); the geocoder state
 is a fallback. Discovery is stateless per poll; dedup uses the shared cursors.db.
+
+State allowlist (v0.9.17): `states` narrows which registry feeds are fetched, at
+poll time — out-of-allowlist state feeds are never requested, so they cost no
+bandwidth or upstream quota (vs. the v0.9.12 archive bbox filter, which only drops
+them *after* the fetch). Semantics flipped in v0.9.17: an empty/unset `states`
+now means the Idaho-region default (ID + neighbors), NOT "every eligible feed".
+To poll nationally, explicitly select every state in the GUI.
 """
 
 import asyncio
@@ -13,7 +20,7 @@ import sqlite3
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import aiohttp
 from pydantic import BaseModel
@@ -42,6 +49,25 @@ _DEFAULT_SEVERITY = 1
 # Bounded per-poll fan-out (~21 feeds pass the filter; Iowa alone is ~1.4 MB).
 _FEED_CONCURRENCY = 6
 _FEED_TIMEOUT_S = 60
+
+# 30-day month, for the informational quota_estimate (matches tomtom_incidents).
+_SECONDS_PER_MONTH = 30 * 24 * 3600
+
+# Selectable 2-letter codes (mirrors inciweb.STATE_NAME_TO_CODE's value set, so any
+# registry `state` that maps to a code is also pickable). list[StateCode] renders as
+# the existing "checkboxes" multi-select widget (firms.py precedent) — no new widget.
+StateCode = Literal[
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL",
+    "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT",
+    "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI",
+    "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC", "PR",
+    "GU", "VI", "AS", "MP",
+]
+
+# Idaho-region default: ID + its 6 neighbors. WA/UT (and ID) have eligible feeds
+# in the registry today; OR/NV/WY/MT are aspirational — listed so they are picked
+# up automatically if/when those state DOTs publish a WZDx feed.
+_DEFAULT_STATES: list[str] = ["ID", "WA", "OR", "NV", "UT", "WY", "MT"]
 
 _DEDUP_DDL = (
     "CREATE TABLE IF NOT EXISTS published_ids ("
@@ -103,9 +129,11 @@ def _flatten_geometry(
 
 
 class WZDxSettings(BaseModel):
-    """states: allowlist of 2-letter codes to poll; None = every eligible feed."""
+    """states: 2-letter codes whose registry feeds to poll. Empty/unset -> the
+    Idaho-region default (`_DEFAULT_STATES`), NOT every feed (v0.9.17 flip). Codes
+    are validated against `StateCode`; malformed codes are rejected at save time."""
 
-    states: list[str] | None = None
+    states: list[StateCode] = list(_DEFAULT_STATES)
 
 
 class WZDxAdapter(SourceAdapter):
@@ -138,14 +166,17 @@ class WZDxAdapter(SourceAdapter):
         self._cursor_db_path = cursor_db_path
         self._session: aiohttp.ClientSession | None = None
         self._db: sqlite3.Connection | None = None
-        self._states: set[str] | None = self._read_states(config)
+        self._states: set[str] = self._read_states(config)
 
     @staticmethod
-    def _read_states(config: AdapterConfig) -> set[str] | None:
+    def _read_states(config: AdapterConfig) -> set[str]:
+        """Configured allowlist, or the Idaho-region default when empty/unset/null
+        (v0.9.17 flip — empty no longer means "poll every eligible feed")."""
         raw = config.settings.get("states")
         if not raw:
-            return None
-        return {s.strip().upper() for s in raw if s and s.strip()} or None
+            return set(_DEFAULT_STATES)
+        codes = {s.strip().upper() for s in raw if s and s.strip()}
+        return codes or set(_DEFAULT_STATES)
 
     async def startup(self) -> None:
         self._session = aiohttp.ClientSession(
@@ -156,7 +187,7 @@ class WZDxAdapter(SourceAdapter):
         self._db.execute(_DEDUP_DDL)
         self._db.execute("CREATE INDEX IF NOT EXISTS published_ids_last_seen ON published_ids (last_seen)")
         self._db.commit()
-        logger.info("WZDx adapter started", extra={"states": sorted(self._states) if self._states else None})
+        logger.info("WZDx adapter started", extra={"states": sorted(self._states)})
 
     async def shutdown(self) -> None:
         if self._session:
@@ -168,7 +199,7 @@ class WZDxAdapter(SourceAdapter):
 
     async def apply_config(self, new_config: AdapterConfig) -> None:
         self._states = self._read_states(new_config)
-        logger.info("WZDx config updated", extra={"states": sorted(self._states) if self._states else None})
+        logger.info("WZDx config updated", extra={"states": sorted(self._states)})
 
     @retry(
         stop=stop_after_attempt(3),
@@ -200,15 +231,15 @@ class WZDxAdapter(SourceAdapter):
         return doc["features"]
 
     def _discover(self, registry_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Eligible rows, optionally narrowed to the operator's state allowlist."""
+        """Eligible rows narrowed to the operator's state allowlist (always set;
+        defaults to the Idaho region — see `_read_states`)."""
         feeds: list[dict[str, Any]] = []
         for row in registry_rows:
             if not _eligible(row):
                 continue
-            if self._states is not None:
-                code = _state_code(row.get("state"))
-                if code is None or code not in self._states:
-                    continue
+            code = _state_code(row.get("state"))
+            if code is None or code not in self._states:
+                continue
             feeds.append(row)
         return feeds
 
@@ -295,3 +326,29 @@ class WZDxAdapter(SourceAdapter):
             enr = (event.data.get("_enriched") or {}).get("geocoder") or {}
             code = _state_code(enr.get("state"))
         return f"central.traffic.work_zone.{code.lower() if code else 'unknown'}"
+
+    @classmethod
+    def quota_estimate(cls, settings: BaseModel, cadence_s: int) -> dict | None:
+        """Informational only — WZDx is free/unauthenticated and has no upstream cap
+        (cap=None -> never warns, never blocks a save). Surfaces the per-month
+        upstream GET volume (1 registry fetch + up to one feed per allowlisted state)
+        so operators see how narrowing `states` cuts fetch volume."""
+        states = getattr(settings, "states", None) or _DEFAULT_STATES
+        n_states = len({s.upper() for s in states})
+        per_poll = 1 + n_states  # 1 registry + at most one feed per in-scope state
+        cadence = max(cadence_s or cls.default_cadence_s, 1)
+        calls_per_month = round(per_poll * _SECONDS_PER_MONTH / cadence)
+        return {
+            "calls_per_month": calls_per_month,
+            "cap": None,
+            "seconds_per_month": _SECONDS_PER_MONTH,
+            "default_cadence_s": cls.default_cadence_s,
+            "percent": 0.0,
+            "warn": False,
+            "blocked": False,
+            "detail": (
+                f"~{calls_per_month:,} upstream GET(s)/month: 1 registry + up to "
+                f"{n_states} state feed(s) at {cadence}s cadence. WZDx is free/uncapped — "
+                f"fewer states means fewer fetches."
+            ),
+        }

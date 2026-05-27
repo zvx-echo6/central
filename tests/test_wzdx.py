@@ -16,14 +16,19 @@ adapter-owned cache to redirect (unlike nwis's NWIS_CACHE_DB_PATH).
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from pydantic import ValidationError
+
 from central.adapters.wzdx import (
     _DEFAULT_SEVERITY,
+    _DEFAULT_STATES,
     _VEHICLE_IMPACT_SEVERITY,
     WZDxAdapter,
+    WZDxSettings,
     _eligible,
     _flatten_geometry,
 )
@@ -124,7 +129,10 @@ def test_event_type_split(adapter):
 
 
 @pytest.mark.asyncio
-async def test_poll_yields_events(adapter):
+async def test_poll_yields_events(tmp_path):
+    # Explicit allowlist (UT+IA): Iowa is outside the v0.9.17 default set, so this
+    # test sets states directly to exercise multi-feed fan-out + the json-skip.
+    adapter = WZDxAdapter(_cfg({"states": ["UT", "IA"]}), MagicMock(), tmp_path / "cursors.db")
     await adapter.startup()
     registry = [
         {"format": "geojson", "active": True, "needapikey": False, "version": "4", "feedname": "udot", "state": "utah", "url": {"url": "u"}},
@@ -158,3 +166,88 @@ def test_summary_omits_unknown_direction():
     flat = {"road_names": ["I-80"], "direction": "unknown"}
     row = {"adapter": "wzdx", "data": {"data": {"data": flat}}}
     assert _derive_subject(row) == "Work zone on I-80"
+
+
+# --- v0.9.17: poll-time state allowlist ---------------------------------------
+
+def _registry_row(state):
+    return {"format": "geojson", "active": True, "needapikey": False,
+            "version": "4", "feedname": state[:3], "state": state, "url": {"url": state}}
+
+
+def test_default_states_when_unset():
+    # Settings default + adapter both fall back to the Idaho-region 7-set, NOT "all".
+    assert WZDxSettings().states == _DEFAULT_STATES
+    assert set(_DEFAULT_STATES) == {"ID", "WA", "OR", "NV", "UT", "WY", "MT"}
+    a = WZDxAdapter(_cfg({}), MagicMock(), Path("/tmp/unused.db"))
+    assert a._states == set(_DEFAULT_STATES)
+
+
+def test_null_states_uses_default():
+    # The live DB row stores {"states": null} pre-deploy-DML; must not mean "all".
+    a = WZDxAdapter(_cfg({"states": None}), MagicMock(), Path("/tmp/unused.db"))
+    assert a._states == set(_DEFAULT_STATES)
+
+
+def test_discover_filters_to_default_states(adapter):
+    # adapter fixture has empty settings -> default 7-set. ID/UT in; IA/OH out.
+    registry = [_registry_row(s) for s in ("idaho", "utah", "iowa", "ohio")]
+    kept = {r["state"] for r in adapter._discover(registry)}
+    assert kept == {"idaho", "utah"}
+
+
+def test_discover_honours_explicit_allowlist(tmp_path):
+    a = WZDxAdapter(_cfg({"states": ["id"]}), MagicMock(), tmp_path / "c.db")
+    assert a._states == {"ID"}  # lower-case input is normalized
+    registry = [_registry_row(s) for s in ("idaho", "utah", "iowa")]
+    kept = {r["state"] for r in a._discover(registry)}
+    assert kept == {"idaho"}
+
+
+def test_malformed_state_code_rejected():
+    with pytest.raises(ValidationError):
+        WZDxSettings(states=["ID", "ZZ"])
+
+
+def test_quota_estimate_informational():
+    q = WZDxAdapter.quota_estimate(WZDxSettings(), 600)
+    # 7 states -> 1 registry + 7 feeds = 8 GET/poll; 2_592_000/600 = 4320 polls.
+    assert q["calls_per_month"] == 8 * (2_592_000 // 600)
+    assert q["cap"] is None
+    assert q["warn"] is False and q["blocked"] is False
+    # Narrowing states lowers the estimate (the 82% delta the panel surfaces).
+    assert WZDxAdapter.quota_estimate(
+        WZDxSettings(states=["ID", "WA", "UT"]), 600
+    )["calls_per_month"] < q["calls_per_month"]
+
+
+def test_edit_page_renders_standalone_quota_panel():
+    # v0.9.17: WZDx is a flat-config (checkboxes) adapter, so its quota panel
+    # renders from the standalone block in adapters_edit.html (not the model_list
+    # partial). Informational only -> "flash" with no warn/error class, cap=None.
+    from starlette.requests import Request
+
+    from central.gui import templates as gui_templates
+    from central.gui.form_descriptors import describe_fields
+
+    s = {"states": _DEFAULT_STATES}
+    fields = describe_fields(WZDxAdapter.settings_schema, s)
+    quota = WZDxAdapter.quota_estimate(WZDxSettings(**s), 600)
+    ctx = {
+        "operator": SimpleNamespace(username="admin"), "csrf_token": "x",
+        "adapter": {"name": "wzdx", "display_name": "WZDx", "description": "",
+                    "enabled": True, "cadence_s": 600, "settings": s, "paused_at": None,
+                    "updated_at": None, "last_error": None},
+        "fields": fields, "api_keys": [], "errors": None, "form_data": None,
+        "tile_url": "https://t/{z}/{x}/{y}.png", "tile_attribution": "OSM",
+        "api_key_missing": False, "requires_api_key_alias": None,
+        "preview_rows": None, "preview_error": None, "quota": quota,
+    }
+    req = Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b""})
+    out = gui_templates.TemplateResponse(request=req, name="adapters_edit.html", context=ctx).body.decode()
+    assert 'type="checkbox" name="states" value="ID"' in out  # checkboxes, default checked
+    assert "model-list" not in out
+    assert 'class="quota-panel flash "' in out  # no flash-warn/flash-error
+    assert "upstream GET" in out and "free/uncapped" in out
+    assert 'data-quota-cap="None"' in out
+    assert "flash-warn" not in out and "flash-error" not in out
