@@ -1,13 +1,12 @@
 """Tests for WFIGS adapters."""
 
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from central.config_models import AdapterConfig, RegionConfig
+from central.config_models import AdapterConfig
 from central.models import Event, Geo
 
 
