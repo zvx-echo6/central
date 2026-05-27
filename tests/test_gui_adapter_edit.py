@@ -13,7 +13,7 @@ from central.gui import templates as gui_templates
 from central.gui.form_descriptors import describe_fields
 from central.gui.routes import adapters_edit_form, adapters_edit_submit
 from central.adapters.tomtom_incidents import (
-    TomTomIncidentsAdapter, TomTomIncidentsSettings, TOMTOM_FREE_TIER_CALLS_PER_MONTH,
+    TomTomIncidentsAdapter, TomTomIncidentsSettings,
 )
 
 _BBOXES = [
@@ -139,7 +139,8 @@ def _bbox_pairs(i, name, state="ID", cadence=None, **coords):
 
 async def _submit_expect_422(pairs, cadence_s="1800"):
     pool, _ = _pool()
-    tmpl = MagicMock(); tmpl.TemplateResponse.return_value = MagicMock()
+    tmpl = MagicMock()
+    tmpl.TemplateResponse.return_value = MagicMock()
     with patch("central.gui.routes._get_templates", return_value=tmpl), \
          patch("central.gui.routes.get_pool", return_value=pool), \
          patch("central.gui.routes.adapter_has_resolved_api_key",
@@ -199,7 +200,8 @@ class TestGetRoute:
     @pytest.mark.asyncio
     async def test_get_200_with_quota_in_context(self):
         pool, _ = _pool()
-        tmpl = MagicMock(); tmpl.TemplateResponse.return_value = MagicMock(status_code=200)
+        tmpl = MagicMock()
+        tmpl.TemplateResponse.return_value = MagicMock(status_code=200)
         req = MagicMock()
         req.state.operator = SimpleNamespace(id=1, username="admin")
         req.state.csrf_token = "x"
