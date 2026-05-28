@@ -54,7 +54,7 @@ class TestEONETHelpers:
         assert _subject_category(None) == "unknown"
         assert _subject_category("") == "unknown"
 
-        # Through subject_for: a category with no upstream component yields .unknown.global
+        # Through subject_for: a category with no upstream component yields .unknown.unknown
         adapter = EONETAdapter(_config(), MagicMock(), Path("/tmp/never_used.db"))
         event = Event(
             id="X",
@@ -65,7 +65,7 @@ class TestEONETHelpers:
             geo=Geo(),
             data={},
         )
-        assert adapter.subject_for(event).endswith(".unknown.global")
+        assert adapter.subject_for(event).endswith(".unknown.unknown")
 
     def test_dedup_key_includes_latest_geometry_date(self):
         from central.adapters.eonet import _dedup_key
@@ -148,7 +148,7 @@ class TestEONETAdapter:
         assert out_lat == lat_in, "second centroid element must equal upstream lat (no swap)"
 
     @pytest.mark.asyncio
-    async def test_country_always_global(self, tmp_path: Path):
+    async def test_country_unknown_when_no_geocoder(self, tmp_path: Path):
         """Every emitted event has subject suffix '.global' (no country resolution in v1)."""
         from central.adapters.eonet import EONETAdapter
 
@@ -160,7 +160,7 @@ class TestEONETAdapter:
 
         assert events, "fixture should produce at least one emitted event"
         for e in events:
-            assert adapter.subject_for(e).endswith(".global"), e.category
+            assert adapter.subject_for(e).endswith(".unknown"), e.category
 
     @pytest.mark.asyncio
     async def test_magnitude_value_surfaced(self, tmp_path: Path):
@@ -249,4 +249,4 @@ class TestEONETAdapter:
         subj = adapter.subject_for(ts)
         assert subj.startswith(f"central.disaster.eonet.{expected_cat}.")
         assert ".removed." in subj
-        assert subj.endswith(".global")
+        assert subj.endswith(".unknown")

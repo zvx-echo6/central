@@ -51,7 +51,7 @@ class TestNWISHelpers:
             geo=Geo(),
             data={},
         )
-        assert adapter.subject_for(event).endswith(".00060.usgs.05420500")
+        assert adapter.subject_for(event).endswith(".00060.usgs.05420500.unknown")
 
     def test_subject_decomposes_non_usgs(self):
         """MO005-400105093591601 -> agency='mo005', bare='400105093591601'; subject reflects both."""
@@ -71,7 +71,7 @@ class TestNWISHelpers:
             geo=Geo(),
             data={},
         )
-        assert adapter.subject_for(event).endswith(".00060.mo005.400105093591601")
+        assert adapter.subject_for(event).endswith(".00060.mo005.400105093591601.unknown")
 
     def test_subject_unprefixed_id_falls_back(self):
         """ID with no dash falls back to agency='unknown'."""
@@ -93,7 +93,7 @@ class TestNWISHelpers:
             data={},
         )
         subj = adapter.subject_for(event)
-        assert subj.endswith(f".00060.unknown.{bare}")
+        assert subj.endswith(f".00060.unknown.{bare}.unknown")
 
     def test_dedup_key_composite(self):
         """Same id+param+time -> same key; different time -> different key."""
