@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from central.config_models import AdapterConfig, RegionConfig
 from central.config_store import ConfigStore
 from central.models import Event, Geo
+from central.adapters._subject_helpers import subject_for_region
 
 logger = logging.getLogger(__name__)
 
@@ -379,7 +380,10 @@ class USGSQuakeAdapter(SourceAdapter):
         logger.info("USGS quake yielded events", extra={"count": new_count})
 
     def subject_for(self, event: Event) -> str:
-        """Return NATS subject for quake event."""
-        return f"central.{event.category}"
+        """Return NATS subject for quake event.
 
-
+        Subject format: central.quake.event.<tier>.<region>
+        Region: us.<state> for US events, <country> for intl, unknown if missing.
+        """
+        region = subject_for_region(event.data)
+        return f"central.{event.category}.{region}"

@@ -22,6 +22,7 @@ from central.adapter import SourceAdapter
 from central.config_models import AdapterConfig
 from central.config_store import ConfigStore
 from central.models import Event, Geo
+from central.adapters._subject_helpers import subject_for_country
 
 logger = logging.getLogger(__name__)
 
@@ -44,16 +45,6 @@ def severity_from_alertlevel(level: str | None) -> int:
     if not level:
         return 0
     return _ALERTLEVEL_TO_SEVERITY.get(level.strip().capitalize(), 0)
-
-
-def subject_for_country(country: str | None) -> str:
-    """Lowercase, hyphenate spaces. 'unknown' for missing/empty. Takes first if comma-separated."""
-    if not country:
-        return "unknown"
-    first = country.split(",")[0].strip()
-    if not first:
-        return "unknown"
-    return first.lower().replace(" ", "-")
 
 
 def parse_rfc822_utc(raw: str | None) -> datetime | None:

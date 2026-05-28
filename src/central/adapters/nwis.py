@@ -28,6 +28,7 @@ from central.adapters.nwis_enrich import (
 from central.config_models import AdapterConfig, RegionConfig
 from central.config_store import ConfigStore
 from central.models import Event, Geo
+from central.adapters._subject_helpers import subject_for_region
 
 logger = logging.getLogger(__name__)
 
@@ -220,11 +221,17 @@ class NWISAdapter(SourceAdapter):
         )
 
     def subject_for(self, event: Event) -> str:
+        """Compute NATS subject for a water data event.
+
+        Subject format: central.hydro.<param>.<agency>.<site>.<region>
+        NWIS is always US (USGS data), so region is us.<state> or unknown.
+        """
         # event.category is "hydro.<parameter_code>.<agency>.<bare_site_no>"
         parts = event.category.split(".")
+        region = subject_for_region(event.data)
         if len(parts) >= 4:
-            return f"central.hydro.{parts[1]}.{parts[2]}.{parts[3]}"
-        return "central.hydro.unknown.unknown.unknown"
+            return f"central.hydro.{parts[1]}.{parts[2]}.{parts[3]}.{region}"
+        return f"central.hydro.unknown.unknown.unknown.{region}"
 
     def _initial_url(self, parameter_code: str) -> str:
         params: dict[str, str] = {

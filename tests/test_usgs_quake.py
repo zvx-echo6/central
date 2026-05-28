@@ -503,7 +503,7 @@ class TestSubjectFor:
             geo=Geo(centroid=(-116.0, 45.0)),
             data={},
         )
-        assert adapter.subject_for(event) == "central.quake.event.minor"
+        assert adapter.subject_for(event) == "central.quake.event.minor.unknown"
 
     @pytest.mark.asyncio
     async def test_subject_light(self, temp_db_path, mock_config_store):
@@ -522,7 +522,7 @@ class TestSubjectFor:
             geo=Geo(centroid=(-116.0, 45.0)),
             data={},
         )
-        assert adapter.subject_for(event) == "central.quake.event.light"
+        assert adapter.subject_for(event) == "central.quake.event.light.unknown"
 
     @pytest.mark.asyncio
     async def test_subject_moderate(self, temp_db_path, mock_config_store):
@@ -541,7 +541,7 @@ class TestSubjectFor:
             geo=Geo(centroid=(-116.0, 45.0)),
             data={},
         )
-        assert adapter.subject_for(event) == "central.quake.event.moderate"
+        assert adapter.subject_for(event) == "central.quake.event.moderate.unknown"
 
     @pytest.mark.asyncio
     async def test_subject_strong(self, temp_db_path, mock_config_store):
@@ -560,7 +560,7 @@ class TestSubjectFor:
             geo=Geo(centroid=(-116.0, 45.0)),
             data={},
         )
-        assert adapter.subject_for(event) == "central.quake.event.strong"
+        assert adapter.subject_for(event) == "central.quake.event.strong.unknown"
 
     @pytest.mark.asyncio
     async def test_subject_major(self, temp_db_path, mock_config_store):
@@ -579,7 +579,7 @@ class TestSubjectFor:
             geo=Geo(centroid=(-116.0, 45.0)),
             data={},
         )
-        assert adapter.subject_for(event) == "central.quake.event.major"
+        assert adapter.subject_for(event) == "central.quake.event.major.unknown"
 
     @pytest.mark.asyncio
     async def test_subject_great(self, temp_db_path, mock_config_store):
@@ -598,4 +598,4 @@ class TestSubjectFor:
             geo=Geo(centroid=(-116.0, 45.0)),
             data={},
         )
-        assert adapter.subject_for(event) == "central.quake.event.great"
+        assert adapter.subject_for(event) == "central.quake.event.great.unknown"

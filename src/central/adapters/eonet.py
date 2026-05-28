@@ -22,6 +22,7 @@ from central.adapter import SourceAdapter
 from central.config_models import AdapterConfig, RegionConfig
 from central.config_store import ConfigStore
 from central.models import Event, Geo
+from central.adapters._subject_helpers import subject_for_country, _country_from_geocoder
 
 logger = logging.getLogger(__name__)
 
@@ -222,12 +223,20 @@ class EONETAdapter(SourceAdapter):
         )
 
     def subject_for(self, event: Event) -> str:
+        """Compute NATS subject for an EONET event.
+
+        Subject format: central.disaster.eonet.<category>.<country>
+        EONET is mostly international; uses country token (not state).
+        """
         # event.category is "disaster.eonet.<subject_category>[.removed]"
         parts = event.category.split(".")
         subj_cat = parts[2] if len(parts) >= 3 else "unknown"
+        country = subject_for_country(
+            _country_from_geocoder(event.data)
+        )
         if len(parts) >= 4 and parts[-1] == "removed":
-            return f"central.disaster.eonet.{subj_cat}.removed.global"
-        return f"central.disaster.eonet.{subj_cat}.global"
+            return f"central.disaster.eonet.{subj_cat}.removed.{country}"
+        return f"central.disaster.eonet.{subj_cat}.{country}"
 
     @retry(
         stop=stop_after_attempt(3),

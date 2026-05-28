@@ -303,7 +303,7 @@ class TestSubjectGeneration:
         )
 
         subject = adapter.subject_for(event)
-        assert subject == "central.fire.hotspot.viirs_snpp.high"
+        assert subject == "central.fire.hotspot.viirs_snpp.high.unknown"
 
     @pytest.mark.asyncio
     async def test_subject_nominal_confidence(self, temp_db_path, mock_config_store):
@@ -324,7 +324,7 @@ class TestSubjectGeneration:
         )
 
         subject = adapter.subject_for(event)
-        assert subject == "central.fire.hotspot.viirs_noaa20.nominal"
+        assert subject == "central.fire.hotspot.viirs_noaa20.nominal.unknown"
 
 
 class TestUrlBuilding:

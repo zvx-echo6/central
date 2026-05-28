@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from central.config_models import AdapterConfig, RegionConfig
 from central.config_store import ConfigStore
 from central.models import Event, Geo
+from central.adapters._subject_helpers import subject_for_region
 
 logger = logging.getLogger(__name__)
 
@@ -139,10 +140,11 @@ class FIRMSAdapter(SourceAdapter):
     def subject_for(self, event: Event) -> str:
         """Compute NATS subject for a fire hotspot event.
 
-        Subject format: central.fire.hotspot.<satellite>.<confidence>
-        The category already contains this structure.
+        Subject format: central.fire.hotspot.<satellite>.<confidence>.<region>
+        Region: us.<state> for US events, <country> for intl, unknown if missing.
         """
-        return f"central.{event.category}"
+        region = subject_for_region(event.data)
+        return f"central.{event.category}.{region}"
 
 
     async def startup(self) -> None:
