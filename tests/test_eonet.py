@@ -149,7 +149,7 @@ class TestEONETAdapter:
 
     @pytest.mark.asyncio
     async def test_country_unknown_when_no_geocoder(self, tmp_path: Path):
-        """Every emitted event has subject suffix '.global' (no country resolution in v1)."""
+        """No geocoder enrichment -> subject ends with '.unknown'."""
         from central.adapters.eonet import EONETAdapter
 
         adapter = EONETAdapter(_config(), MagicMock(), tmp_path / "cursors.db")
@@ -244,7 +244,7 @@ class TestEONETAdapter:
 
         # Subject pattern: subtype BEFORE 'removed' per §8 canonical pattern.
         # Subscriber filtering on central.disaster.eonet.<cat>.> must match the
-        # removal subject central.disaster.eonet.<cat>.removed.global.
+        # removal subject central.disaster.eonet.<cat>.removed.unknown.
         expected_cat = _subject_category(first_event["categories"][0]["id"])
         subj = adapter.subject_for(ts)
         assert subj.startswith(f"central.disaster.eonet.{expected_cat}.")
