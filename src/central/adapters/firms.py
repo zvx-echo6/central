@@ -2,6 +2,7 @@
 
 import csv
 import logging
+import math
 import sqlite3
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
@@ -50,6 +51,56 @@ SEVERITY_MAP = {
     "nominal": 2,
     "low": 1,
 }
+
+# 1° latitude ≈ 111 km everywhere; longitude scales by cos(lat).
+_KM_PER_DEG_LAT = 111.0
+# Defensive clamp: keeps cos(lat) bounded away from 0 at the poles. FIRMS
+# coverage stops well short of ±60°, so this only fires for malformed input.
+_POLE_CLAMP_DEG = 89.0
+
+
+def _pixel_polygon(
+    lat: float,
+    lon: float,
+    scan: float | None,
+    track: float | None,
+) -> dict[str, Any] | None:
+    """Build a rectangular GeoJSON Polygon for a FIRMS satellite pixel footprint.
+
+    scan and track are pixel dimensions in km from the FIRMS CSV. scan is the
+    along-track (~latitude) extent, track is the cross-track (~longitude)
+    extent; the cross-track dimension is scaled by cos(lat) to convert km to
+    degrees of longitude. Pixels are typically ~0.5×0.66 km at nadir and grow
+    off-nadir.
+
+    Returns None if scan or track is missing, non-numeric, or non-positive —
+    the caller falls back to centroid-only Geo.
+    """
+    if scan is None or track is None:
+        return None
+    try:
+        scan_km = float(scan)
+        track_km = float(track)
+    except (TypeError, ValueError):
+        return None
+    if scan_km <= 0 or track_km <= 0:
+        return None
+
+    clamped_lat = max(-_POLE_CLAMP_DEG, min(_POLE_CLAMP_DEG, lat))
+    half_scan_deg = (scan_km / 2.0) / _KM_PER_DEG_LAT
+    half_track_deg = (track_km / 2.0) / (
+        _KM_PER_DEG_LAT * math.cos(math.radians(clamped_lat))
+    )
+
+    # CCW ring with the closing vertex duplicated (GeoJSON requirement).
+    ring = [
+        [lon - half_track_deg, lat - half_scan_deg],
+        [lon + half_track_deg, lat - half_scan_deg],
+        [lon + half_track_deg, lat + half_scan_deg],
+        [lon - half_track_deg, lat + half_scan_deg],
+        [lon - half_track_deg, lat - half_scan_deg],
+    ]
+    return {"type": "Polygon", "coordinates": [ring]}
 
 
 class FIRMSSettings(BaseModel):
@@ -313,9 +364,15 @@ class FIRMSAdapter(SourceAdapter):
         # Build stable ID
         stable_id = self._build_stable_id(satellite, acq_date, acq_time, lat, lon)
 
+        # Construct the satellite pixel footprint as a GeoJSON Polygon from
+        # scan/track. Falls back to centroid-only Geo if either dimension is
+        # missing/invalid — _build_geom_sql then stores a Point. We keep
+        # centroid alongside geometry so consumers that read only centroid
+        # still work.
+        geometry = _pixel_polygon(lat, lon, row.get("scan"), row.get("track"))
         geo = Geo(
             centroid=(lon, lat),  # GeoJSON order: lon, lat
-            bbox=(lon, lat, lon, lat),  # Point bbox
+            geometry=geometry,
             regions=[],
             primary_region=None,
         )
@@ -353,6 +410,10 @@ class FIRMSAdapter(SourceAdapter):
 
         total_features = 0
         total_new = 0
+        # Count emitted records that fell back to centroid-only Geo because
+        # scan/track were missing. Warned once at the end of the poll cycle
+        # rather than per-record to avoid log spam.
+        total_missing_dims = 0
 
         for satellite in self._satellites:
             url = self._build_url(satellite)
@@ -379,6 +440,8 @@ class FIRMSAdapter(SourceAdapter):
                         continue
 
                     event = self._row_to_event(row, satellite)
+                    if event.geo.geometry is None:
+                        total_missing_dims += 1
                     yield event
                     self.mark_published(stable_id)
                     new_count += 1
@@ -399,6 +462,15 @@ class FIRMSAdapter(SourceAdapter):
                     extra={"satellite": satellite, "error": str(e)},
                 )
                 continue
+
+        if total_missing_dims:
+            logger.warning(
+                "FIRMS records missing scan/track — falling back to centroid-only Geo",
+                extra={
+                    "missing_count": total_missing_dims,
+                    "total_new": total_new,
+                },
+            )
 
         logger.info(
             "FIRMS poll completed",
