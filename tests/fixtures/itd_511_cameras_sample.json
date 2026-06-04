@@ -1,0 +1,90 @@
+[
+  {
+    "Id": 3,
+    "Source": "ITDNET",
+    "SourceId": "1000",
+    "Roadway": "SH-55 Eagle",
+    "Direction": "Southbound",
+    "Latitude": 43.619167,
+    "Longitude": -116.35478,
+    "Location": "SH-55 Eagle Fairview",
+    "SortOrder": 0,
+    "Views": [
+      {
+        "Id": 1039,
+        "Url": "https://511.idaho.gov/map/Cctv/1039",
+        "Status": "Disabled",
+        "Description": "D3 SH-55 37.9 Eagle Fairview 526"
+      }
+    ]
+  },
+  {
+    "Id": 436,
+    "Source": "ACHD",
+    "SourceId": "4001",
+    "Roadway": "Local Boise",
+    "Direction": "Unknown",
+    "Latitude": 43.60304,
+    "Longitude": -116.18841,
+    "Location": "Park Parkcenter Front Clearwater",
+    "SortOrder": 0,
+    "Views": [
+      {
+        "Id": 631,
+        "Url": "https://511.idaho.gov/map/Cctv/631",
+        "Status": "Enabled",
+        "Description": ""
+      }
+    ]
+  },
+  {
+    "Id": 1,
+    "Source": "UDOT",
+    "SourceId": "10.C1",
+    "Roadway": "I-15",
+    "Direction": "Unknown",
+    "Latitude": 42.0011,
+    "Longitude": -112.198,
+    "Location": "I-15 UT/ID State Line UT",
+    "SortOrder": 1,
+    "Views": [
+      {
+        "Id": 1,
+        "Url": "https://511.idaho.gov/map/Cctv/1",
+        "Status": "Enabled",
+        "Description": "N/A"
+      }
+    ]
+  },
+  {
+    "Id": 2,
+    "Source": "RWIS",
+    "SourceId": "100.C1",
+    "Roadway": "SH-75",
+    "Direction": "Unknown",
+    "Latitude": 43.5946,
+    "Longitude": -114.345,
+    "Location": "SH-75 Wood River",
+    "SortOrder": 325,
+    "Views": [
+      {
+        "Id": 2,
+        "Url": "https://511.idaho.gov/map/Cctv/2",
+        "Status": "Enabled",
+        "Description": ""
+      },
+      {
+        "Id": 3,
+        "Url": "https://511.idaho.gov/map/Cctv/3",
+        "Status": "Enabled",
+        "Description": ""
+      },
+      {
+        "Id": 4,
+        "Url": "https://511.idaho.gov/map/Cctv/4",
+        "Status": "Enabled",
+        "Description": ""
+      }
+    ]
+  }
+]

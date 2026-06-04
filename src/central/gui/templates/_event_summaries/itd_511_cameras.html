@@ -1,0 +1,5 @@
+{# ITD 511 camera one-line subject. Location field is already humanized (e.g.
+   "I-15 UT/ID State Line UT"), so it stands alone. Falls back to roadway then
+   camera_id. Fields from payload->data->data. #}
+{%- set d = (event.data.get('data') or {}).get('data') or {} -%}
+Camera: {{ d.get('location') or d.get('roadway') or ('#' ~ d.get('camera_id')) }}

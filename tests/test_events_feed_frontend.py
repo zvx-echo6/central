@@ -1147,6 +1147,8 @@ _SAMPLE_INNER = {
     "tomtom_flow": {"road_category": "primary", "relative_speed": 0.11},
     "tomtom_incidents": {"description": "Roadworks", "from": "Early Road", "to": "Slade Road"},
     "state_511_atis_cameras": {"location_description": "I-84 Mountain Home", "camera_id": 42},
+    "itd_511": {"event_type_short": "work_zone", "roadway_name": "I-84"},
+    "itd_511_cameras": {"location": "I-84 Mountain Home", "camera_id": 42},
 }
 
 # Exact expected subjects for the deterministic adapters. swpc_alerts is omitted
@@ -1169,6 +1171,8 @@ _EXPECTED_SUBJECT = {
     "tomtom_flow": "Traffic flow (primary) — 11% of free-flow",
     "tomtom_incidents": "Roadworks on Early Road → Slade Road",
     "state_511_atis_cameras": "Camera: I-84 Mountain Home",
+    "itd_511": "Road work on I-84",
+    "itd_511_cameras": "Camera: I-84 Mountain Home",
 }
 
 

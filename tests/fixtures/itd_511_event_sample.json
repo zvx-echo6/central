@@ -1,0 +1,214 @@
+[
+  {
+    "ID": 23,
+    "SourceId": "4277",
+    "Organization": "ERS",
+    "RoadwayName": "SH-81",
+    "DirectionOfTravel": "Unknown",
+    "Description": " Work on the shoulder on SH-81 near Poverty Gulch. 7/8/2024 9:29 PM Mon: 12:00 PM - 5:00 PM, Tue, Wed, Thu, Fri, Sat, Sun: Active all day Activities: use caution, warning.",
+    "Reported": 1720495740,
+    "LastUpdated": 1749675731,
+    "StartDate": 1720495740,
+    "PlannedEndDate": null,
+    "LanesAffected": "No Data",
+    "Latitude": 42.5168038430856,
+    "Longitude": -113.711287649613,
+    "LatitudeSecondary": null,
+    "LongitudeSecondary": null,
+    "EventType": "roadwork",
+    "EventSubType": "workOnTheShoulder",
+    "IsFullClosure": false,
+    "Severity": "None",
+    "Comment": null,
+    "EncodedPolyline": null,
+    "Restrictions": {
+      "Width": null,
+      "Height": null,
+      "Length": null,
+      "Weight": null,
+      "Speed": null
+    },
+    "DetourPolyline": "",
+    "DetourInstructions": "",
+    "Recurrence": "<b>Mon:</b><br/>12:00 PM - 5:00 PM<br/><br/><b>Tue, Wed, Thu, Fri, Sat, Sun:</b><br/>Active all day<br/><br/>",
+    "RecurrenceSchedules": [
+      {
+        "StartDate": "7/8/2024 9:29:00 PM-06:00:00",
+        "EndDate": null,
+        "Times": [
+          {
+            "StartTime": "12:00:00-06:00:00",
+            "EndTime": "16:59:59-06:00:00"
+          }
+        ],
+        "DaysOfWeek": [
+          "Monday"
+        ]
+      },
+      {
+        "StartDate": "7/8/2024 9:29:00 PM-06:00:00",
+        "EndDate": null,
+        "Times": [
+          {
+            "StartTime": "00:00:00-06:00:00",
+            "EndTime": "23:59:59-06:00:00"
+          }
+        ],
+        "DaysOfWeek": [
+          "Tuesday",
+          "Wednesday",
+          "Thursday",
+          "Friday",
+          "Saturday",
+          "Sunday"
+        ]
+      }
+    ],
+    "Cause": "roadwork"
+  },
+  {
+    "ID": 17,
+    "SourceId": "469",
+    "Organization": "ERS",
+    "RoadwayName": "N McDermott Rd",
+    "DirectionOfTravel": "Both",
+    "Description": " Long term road construction on N McDermott Rd Both Directions from Five Mile Creek to US-20. All lanes closed. 1/30/2023 2:24 PM Mon, Tue, Wed, Thu, Fri, Sat, Sun: Active all day",
+    "Reported": 1675113840,
+    "LastUpdated": 1718758080,
+    "StartDate": 1675113840,
+    "PlannedEndDate": null,
+    "LanesAffected": "All lanes closed",
+    "Latitude": 43.6485700000001,
+    "Longitude": -116.47349,
+    "LatitudeSecondary": 43.6630000000001,
+    "LongitudeSecondary": -116.47421,
+    "EventType": "closures",
+    "EventSubType": "longTermRoadConstruction",
+    "IsFullClosure": true,
+    "Severity": "None",
+    "Comment": "Open to local traffic only.",
+    "EncodedPolyline": "qbliGhv{eUsk@MeTEsBAsAGiAQw@Qi@MoAYmA]aA]}@a@[?[JSNKNENCTEzCGnAIX",
+    "Restrictions": {
+      "Width": null,
+      "Height": null,
+      "Length": null,
+      "Weight": null,
+      "Speed": null
+    },
+    "DetourPolyline": "",
+    "DetourInstructions": "",
+    "Recurrence": "<b>Mon, Tue, Wed, Thu, Fri, Sat, Sun:</b><br/>Active all day<br/><br/>",
+    "RecurrenceSchedules": [
+      {
+        "StartDate": "1/30/2023 2:24:00 PM-06:00:00",
+        "EndDate": null,
+        "Times": [
+          {
+            "StartTime": "00:00:00-06:00:00",
+            "EndTime": "23:59:59-06:00:00"
+          }
+        ],
+        "DaysOfWeek": [
+          "Monday",
+          "Tuesday",
+          "Wednesday",
+          "Thursday",
+          "Friday",
+          "Saturday",
+          "Sunday"
+        ]
+      }
+    ],
+    "Cause": "roadwork"
+  },
+  {
+    "ID": 34585,
+    "SourceId": "11146",
+    "Organization": "ERS",
+    "RoadwayName": "I-84",
+    "DirectionOfTravel": "East",
+    "Description": " Left Lane Blocked on I-84 Eastbound near N Franklin Blvd. 2 Left Lanes Blocked. Activities: Expect Delays, Look Out for Flagger, Use Caution.",
+    "Reported": 1780543740,
+    "LastUpdated": 1780543820,
+    "StartDate": 1780543740,
+    "PlannedEndDate": null,
+    "LanesAffected": "2 Left Lanes Blocked",
+    "Latitude": 43.5980897425697,
+    "Longitude": -116.542818286917,
+    "LatitudeSecondary": null,
+    "LongitudeSecondary": null,
+    "EventType": "accidentsAndIncidents",
+    "EventSubType": "leftLaneBlocked",
+    "IsFullClosure": false,
+    "Severity": "None",
+    "Comment": "The two left lanes of eastbound I-84 will be blocked near milepost 36.5 tonight for road maintenance. Keep Right.",
+    "EncodedPolyline": null,
+    "Restrictions": {
+      "Width": null,
+      "Height": null,
+      "Length": null,
+      "Weight": null,
+      "Speed": null
+    },
+    "DetourPolyline": "",
+    "DetourInstructions": "",
+    "Recurrence": "",
+    "RecurrenceSchedules": "",
+    "Cause": "Incident"
+  },
+  {
+    "ID": 33663,
+    "SourceId": "11000",
+    "Organization": "ERS",
+    "RoadwayName": "SH-16",
+    "DirectionOfTravel": "Both",
+    "Description": " Special event on SH-16 Both Directions at W Chaparral Rd. 6/8/2026 8:00 AM to 6/15/2026 5:00 PM Mon, Tue, Wed, Thu, Fri, Sat, Sun: Active all day Activities: Use Caution.",
+    "Reported": 1780927200,
+    "LastUpdated": 1779805341,
+    "StartDate": 1780927200,
+    "PlannedEndDate": 1781564400,
+    "LanesAffected": "No Data",
+    "Latitude": 43.780078841046,
+    "Longitude": -116.473209123902,
+    "LatitudeSecondary": null,
+    "LongitudeSecondary": null,
+    "EventType": "specialEvents",
+    "EventSubType": "specialEvent",
+    "IsFullClosure": false,
+    "Severity": "None",
+    "Comment": "Rodeo Traffic entering/leaving roadway ",
+    "EncodedPolyline": null,
+    "Restrictions": {
+      "Width": null,
+      "Height": null,
+      "Length": null,
+      "Weight": null,
+      "Speed": null
+    },
+    "DetourPolyline": "",
+    "DetourInstructions": "",
+    "Recurrence": "<b>Mon, Tue, Wed, Thu, Fri, Sat, Sun:</b><br/>Active all day<br/><br/>",
+    "RecurrenceSchedules": [
+      {
+        "StartDate": "6/8/2026 8:00:00 AM-06:00:00",
+        "EndDate": "6/15/2026 5:00:00 PM-06:00:00",
+        "Times": [
+          {
+            "StartTime": "00:00:00-06:00:00",
+            "EndTime": "23:59:59-06:00:00"
+          }
+        ],
+        "DaysOfWeek": [
+          "Monday",
+          "Tuesday",
+          "Wednesday",
+          "Thursday",
+          "Friday",
+          "Saturday",
+          "Sunday"
+        ]
+      }
+    ],
+    "Cause": "specialEvents"
+  }
+]

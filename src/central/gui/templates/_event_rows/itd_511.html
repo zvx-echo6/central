@@ -1,0 +1,16 @@
+{# ITD 511 detail rows. Fields from payload->data->data; every block guarded.
+   Direction "Unknown"/"None" suppressed (wzdx lesson). Recurrence HTML
+   stripped via striptags so the source's <b>/<br/> markup doesn't leak. #}
+{%- set d = (event.data.get('data') or {}).get('data') or {} -%}
+{% if d.get('roadway_name') %}<dt>Road</dt><dd>{{ d.roadway_name }}{% if d.get('direction') and d.direction not in ['Unknown', 'None'] %} ({{ d.direction }}){% endif %}</dd>{% endif %}
+{% if d.get('event_sub_type') %}<dt>Type</dt><dd>{{ d.event_sub_type }}</dd>{% endif %}
+{% if d.get('lanes_affected') and d.lanes_affected != 'No Data' %}<dt>Lanes</dt><dd>{{ d.lanes_affected }}</dd>{% endif %}
+{% if d.get('is_full_closure') %}<dt>Full closure</dt><dd>Yes</dd>{% endif %}
+{% if d.get('itd_severity') and d.itd_severity != 'None' %}<dt>ITD severity</dt><dd>{{ d.itd_severity }}</dd>{% endif %}
+{% if d.get('description') %}<dt>Description</dt><dd>{{ d.description | truncate(220) }}</dd>{% endif %}
+{% if d.get('comment') %}<dt>Comment</dt><dd>{{ d.comment | truncate(220) }}</dd>{% endif %}
+{% if d.get('cause') and d.cause != d.get('event_type_short') %}<dt>Cause</dt><dd>{{ d.cause }}</dd>{% endif %}
+{% if d.get('detour_instructions') %}<dt>Detour</dt><dd>{{ d.detour_instructions | truncate(220) }}</dd>{% endif %}
+{% if d.get('recurrence_text') %}<dt>Schedule</dt><dd>{{ d.recurrence_text | striptags | truncate(120) }}</dd>{% endif %}
+{%- set r = d.get('restrictions') or {} -%}
+{% if r.get('Width') or r.get('Height') or r.get('Length') or r.get('Weight') or r.get('Speed') %}<dt>Restrictions</dt><dd>{% if r.Width %}W:{{ r.Width }} {% endif %}{% if r.Height %}H:{{ r.Height }} {% endif %}{% if r.Length %}L:{{ r.Length }} {% endif %}{% if r.Weight %}Wt:{{ r.Weight }} {% endif %}{% if r.Speed %}Spd:{{ r.Speed }}{% endif %}</dd>{% endif %}

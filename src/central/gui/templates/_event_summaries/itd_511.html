@@ -1,0 +1,9 @@
+{# ITD 511 one-line subject. event_type_short ∈ {work_zone, closure, incident,
+   special_event, advisory}. Fields from payload->data->data. Drops
+   "Unknown"/"None" direction tokens per the v0.9.1 wzdx lesson. #}
+{%- set d = (event.data.get('data') or {}).get('data') or {} -%}
+{%- set labels = {'work_zone': 'Road work', 'closure': 'Closure', 'incident': 'Incident', 'special_event': 'Special event', 'advisory': 'Advisory'} -%}
+{%- set lead = labels.get(d.get('event_type_short'), 'Traffic event') -%}
+{%- set dir = d.get('direction') -%}
+{%- set show_dir = dir and dir not in ['Unknown', 'None'] -%}
+{{ lead }}{% if d.get('roadway_name') %} on {{ d.roadway_name }}{% if show_dir %} {{ dir }}{% endif %}{% endif %}{% if d.get('is_full_closure') %} (full closure){% endif %}

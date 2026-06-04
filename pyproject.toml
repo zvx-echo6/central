@@ -21,6 +21,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "jinja2>=3.1.6",
     "nats-py>=2.14.0",
+    "polyline>=2.0,<3",  # itd_511: Google polyline decode (EncodedPolyline → LineString)
     "pydantic>=2,<3",
     "pydantic-settings>=2.7.0",
     "python-multipart>=0.0.20",
