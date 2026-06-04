@@ -1557,6 +1557,105 @@ conditions.
   `lastUpdated` field is camera-config time), so the drawer shows no "captured at".
 - **Removal semantics:** none; offline cameras serve an empty image but stay listed.
 
+### itd_511 — Idaho 511 official DOT API (events + advisories)
+
+Idaho Transportation Department's official 511 REST API. Polls roadwork,
+closures, incidents, special events, and advisories statewide. First
+official-state-DOT-API adapter (v0.10.0); runs in parallel with state_511_atis
+(Castle Rock) post-deploy for A/B comparison. Idaho-only; subject suffix is
+uniformly `us.id`.
+
+- **Stream:** `CENTRAL_TRAFFIC` (event class). **event_type:** one of
+  `work_zone`, `closure`, `incident`, `special_event`, `advisory` (from
+  `category = "<event_type>.itd_511"`).
+- **Subject pattern:** `central.traffic.<event_type>.us.id` (v0.9.20 forward
+  convention -- `us.id` is the ISO-3166-2 region suffix; subscribe to all ITD
+  events via `central.traffic.>.us.id` or per-type via the leading wildcard).
+- **Source:** `GET /api/v2/get/event?key=<KEY>` (events, **cadence 60s**) +
+  `GET /api/v2/get/alerts?key=<KEY>` (advisories, **cadence 300s** -- every
+  5th poll). API key required (alias `idaho_511`). Documented limit 10 calls
+  / 60s; combined load ~1.3 calls/min.
+- **EventType mapping:** `roadwork`->`work_zone`, `closures`->`closure`,
+  `accidentsAndIncidents`->`incident`, `specialEvents`->`special_event`.
+  Advisories always emit `event_type=advisory`.
+- **Dedup key shape:** `idaho_511:event:<SourceId>` (events) /
+  `idaho_511:advisory:<id>` (advisories). SourceId is the upstream-allocated
+  stable id; the ITD-internal `ID` is used as fallback.
+- **Geometry:** decoded EncodedPolyline (Google polyline format) -> LineString;
+  falls back to bookend LineString (Latitude,Longitude + Latitude2,Longitude2)
+  -> single Point. Shipped via `geo.geometry` so PostGIS renders the affected
+  segment as a polyline on the map.
+- **Severity:** ITD `Severity` (string) mapped `None`->1, `Minor`->2, `Major`->3.
+  `IsFullClosure=true` forces severity 3 regardless (orthogonal upstream
+  signals in the live data -- 15 of 152 None-severity events were full
+  closures at landing).
+- **Advisories:** structural pass-through under `data.advisory`. The upstream
+  `/alerts` endpoint returned `[]` at adapter landing; the parser probes a few
+  likely id / timestamp / coord fields best-effort and stores the entire
+  record so v0.10.x can refine field mapping once a real advisory lands.
+- **Event.data fields (events):**
+
+  | key | type | nullable | description |
+  |---|---|---|---|
+  | `event_type_short` | str | no | One of work_zone / closure / incident / special_event / advisory |
+  | `event_sub_type` | str | yes | Rich vocabulary, e.g. `bridgeConstruction`, `nightTimeConstructionWork` |
+  | `roadway_name` | str | yes | e.g. `I-84`, `SH-16` |
+  | `direction` | str | yes | `East` / `Both` / `Unknown` (Unknown suppressed in L-c text) |
+  | `description` / `comment` | str | yes | Operator text |
+  | `lanes_affected` | str | yes | e.g. `2 Left Lanes Blocked` |
+  | `is_full_closure` | bool | no | Drives the severity-3 override |
+  | `itd_severity` | str | yes | Raw ITD value (`Major` / `Minor` / `None`) |
+  | `cause` | str | yes | Usually mirrors EventType (`roadwork`, `Incident`, `specialEvents`) |
+  | `organization` | str | yes | Uniformly `ERS` at landing |
+  | `recurrence_text` | str | yes | HTML schedule (consumer should `striptags`) |
+  | `recurrence_schedules` | list | yes | Structured `[{StartDate, EndDate, Times, DaysOfWeek}]` |
+  | `restrictions` | dict | yes | `{Width, Height, Length, Weight, Speed}` (often all null) |
+  | `detour_polyline` / `detour_instructions` | str | yes | Detour geometry + text |
+  | `encoded_polyline` | str | yes | Raw EncodedPolyline (also decoded into geo.geometry) |
+  | `id_internal` / `source_id` | int / str | no | ITD-internal id + upstream-stable SourceId |
+  | `reported_epoch` / `last_updated_epoch` / `start_epoch` / `planned_end_epoch` | int | yes | Unix epoch (UTC); `Event.time` uses LastUpdated -> Reported -> StartDate priority |
+  | `latitude` / `longitude` | float | yes | Primary point (enrichment input) |
+
+### itd_511_cameras — Idaho 511 official DOT API cameras (telemetry)
+
+Idaho Transportation Department's traffic camera directory. One telemetry
+event per camera per UTC day; the `/telemetry` detail drawer renders the live
+image inline (`<img>` fetched direct from the source -- Central stores the URL,
+never the image bytes). Sibling adapter of itd_511 (shared API key alias
+`idaho_511`).
+
+- **Stream:** `CENTRAL_TRAFFIC_CAMERAS` (telemetry; `/telemetry` tab).
+- **Subject pattern:** `central.traffic_cameras.us.id.<camera_id>` -- subscribe
+  to one camera or `central.traffic_cameras.us.id.>` for all ITD cameras.
+- **GUI event_type:** `camera` (from `category = "camera.itd_511_cameras"`).
+- **Source:** `GET /api/v2/get/cameras?key=<KEY>`. 664 cameras at landing;
+  **cadence 600s**. ITD aggregates ~1.2% border-region mirrors from
+  neighbouring DOTs (UDOT, ODOT, WYDOT, WSDOT, NDot, MTD, DriveBC, Lemhi
+  County). All cameras are tagged region `US-ID`; `data.source_jurisdiction`
+  preserves the raw upstream `Source` so consumers can re-bucket the cross-DOT
+  mirrors if needed.
+- **Dedup key shape:** `idaho_511:cam:<camera_id>:<YYYY-MM-DD>` -- one event
+  per camera per UTC day. The table always shows today's cameras; no per-poll
+  flooding.
+- **Image URL:** `https://511.idaho.gov/map/Cctv/<view_id>` -- publicly
+  reachable, no auth. Format may be jpeg / gif / png (mixed per camera);
+  `<img>` handles all.
+- **Event.data fields:**
+
+  | key | type | nullable | description |
+  |---|---|---|---|
+  | `camera_id` | int | no | Stable upstream id |
+  | `roadway` | str | yes | e.g. `I-84`, `I-15` |
+  | `direction` | str | yes | `North` / `Unknown` (Unknown suppressed in row partial) |
+  | `location` | str | yes | Humanized (e.g. `I-15 UT/ID State Line UT`) |
+  | `source` / `source_jurisdiction` | str | yes | ITDNET / ACHD / RWIS / Idaho511 / UDOT / ODOT / WYDOT / ... |
+  | `source_id_upstream` | str | yes | Source-specific id (e.g. UDOT `10.C1`) |
+  | `image_url` | str | yes | First Views[].Url (live image; jpeg/gif/png) |
+  | `additional_views` | list[str] | no | URLs of Views[1:] when a camera has multiple angles |
+  | `view_count` / `view_descriptions` | int / list[str] | no / no | Total views + per-view labels |
+  | `sort_order` | int | yes | Upstream display order hint |
+  | `latitude` / `longitude` | float | yes | Camera location (enrichment input) |
+
 ### tomtom_incidents — TomTom real-time traffic incidents (commercial coverage)
 
 Real-time incidents (closures, jams, hazards, road work, accidents) from TomTom
