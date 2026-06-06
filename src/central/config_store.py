@@ -14,6 +14,7 @@ import asyncpg
 
 from central.config_models import AdapterConfig, EnrichmentConfig, StreamConfig
 from central.crypto import decrypt, encrypt
+from central.monitoring_area import MonitoringArea, load_monitoring_area
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,20 @@ class ConfigStore:
     async def close(self) -> None:
         """Close the connection pool."""
         await self._pool.close()
+
+    # -------------------------------------------------------------------------
+    # System configuration
+    # -------------------------------------------------------------------------
+
+    async def get_monitoring_area(self) -> MonitoringArea | None:
+        """Read the system monitoring-area bbox from ``config.system``.
+
+        Returns ``None`` if no row is set or any monitor_* column is NULL.
+        Used by both archive (for the INSERT-time filter) and supervisor (for
+        the publish-time filter, v0.10.2).
+        """
+        async with self._pool.acquire() as conn:
+            return await load_monitoring_area(conn)
 
     # -------------------------------------------------------------------------
     # Adapter configuration

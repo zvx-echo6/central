@@ -31,6 +31,12 @@ from central.enrichment.backends.no_op import NoOpBackend
 from central.enrichment.backends.photon import PhotonBackend
 from central.enrichment.geocoder import GeocoderEnricher
 from central.models import Event
+from central.monitoring_area import (
+    MONITORING_AREA_REFRESH_S,
+    MonitoringArea,
+    build_geom_json,
+    classify_geom,
+)
 from central.stream_manager import StreamManager
 from central.streams import STREAMS as STREAM_REGISTRY
 CURSOR_DB_PATH = Path("/var/lib/central/cursors.db")
@@ -231,6 +237,12 @@ class Supervisor:
         self._start_time = datetime.now(timezone.utc)
         self._config_watch_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
+        # v0.10.2 publish-time monitoring-area filter: mirror archive's
+        # ACK-but-don't-insert behavior at the supervisor->NATS hop so
+        # subscribers (meshai, Navi) never see out-of-area events. Refreshed
+        # every MONITORING_AREA_REFRESH_S from config.system.
+        self._monitoring_area: MonitoringArea | None = None
+        self._dropped_publish: dict[str, int] = {}
 
     async def connect(self) -> None:
         """Connect to NATS."""
@@ -238,6 +250,25 @@ class Supervisor:
         self._js = self._nc.jetstream()
         self._stream_manager = StreamManager(self._js)
         logger.info("Connected to NATS", extra={"url": self._nats_url})
+
+        # Load the publish-time monitoring-area bbox (v0.10.2). Mirrors archive:
+        # on failure keep the last value and warn -- never block startup over a
+        # config read.
+        try:
+            self._monitoring_area = await self._config_store.get_monitoring_area()
+        except Exception as e:
+            logger.warning(
+                "Could not load monitoring area at startup; publish filter no-ops until refresh",
+                extra={"error": str(e)},
+            )
+        area = self._monitoring_area
+        logger.info(
+            "Publish-time monitoring area loaded",
+            extra={"monitoring_area": (
+                {"north": area.north, "south": area.south,
+                 "east": area.east, "west": area.west} if area else None
+            )},
+        )
 
     async def disconnect(self) -> None:
         """Disconnect from NATS."""
@@ -266,6 +297,31 @@ class Supervisor:
             payload,
             headers={"Nats-Msg-Id": msg_id},
         )
+
+    async def _refresh_monitoring_area_loop(self) -> None:
+        """Periodically refresh the publish-time monitoring-area bbox so GUI
+        edits propagate within ~MONITORING_AREA_REFRESH_S without a restart, and
+        log a rolling INFO summary of per-adapter drops. Mirrors archive's
+        ``_refresh_monitoring_area_loop`` pattern -- same cadence, same fail-
+        open behavior (keep last value on read failure)."""
+        while not self._shutdown_event.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(), timeout=MONITORING_AREA_REFRESH_S
+                )
+            except asyncio.TimeoutError:
+                try:
+                    self._monitoring_area = await self._config_store.get_monitoring_area()
+                except Exception as e:
+                    logger.warning(
+                        "Could not refresh monitoring area; keeping previous value",
+                        extra={"error": str(e)},
+                    )
+                if self._dropped_publish:
+                    logger.info(
+                        "publish bbox filter drop summary (cumulative)",
+                        extra={"dropped_by_adapter": dict(self._dropped_publish)},
+                    )
 
     def _create_adapter(self, config: AdapterConfig) -> SourceAdapter:
         """Create an adapter instance based on config name."""
@@ -351,6 +407,36 @@ class Supervisor:
                     envelope, msg_id = wrap_event(event, self._cloudevents_config)
 
                     subject = state.adapter.subject_for(event)
+
+                    # v0.10.2 publish-time monitoring-area filter. Mirrors
+                    # archive's classify->ACK pattern but here we just `continue`
+                    # without mark_published -- if the area widens later the
+                    # next poll re-yields the same id and we'll publish it
+                    # naturally. Marking published on drop would be a forward-
+                    # only blackhole.
+                    geom_json = build_geom_json(
+                        event.geo.model_dump() if event.geo else None
+                    )
+                    verdict = classify_geom(geom_json, self._monitoring_area)
+                    if verdict == "out-of-bounds":
+                        self._dropped_publish[state.name] = (
+                            self._dropped_publish.get(state.name, 0) + 1
+                        )
+                        logger.debug(
+                            "Dropped out-of-bounds event at publish (monitoring-area filter)",
+                            extra={
+                                "id": event.id,
+                                "adapter": state.name,
+                                "category": event.category,
+                                "subject": subject,
+                            },
+                        )
+                        continue
+                    if verdict == "invalid-geom":
+                        logger.warning(
+                            "Geom could not be evaluated for publish-time bbox filter; publishing",
+                            extra={"id": event.id, "adapter": state.name},
+                        )
 
                     # Publish
                     await self._publish_event(subject, envelope, msg_id)
@@ -977,6 +1063,11 @@ class Supervisor:
 
         # Start archived-events retention sweep loop (v0.9.13)
         self._tasks.append(asyncio.create_task(self._events_retention_loop()))
+
+        # Start publish-time monitoring-area refresh loop (v0.10.2)
+        self._tasks.append(
+            asyncio.create_task(self._refresh_monitoring_area_loop())
+        )
 
         logger.info(
             "Supervisor started",

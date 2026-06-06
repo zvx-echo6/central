@@ -366,7 +366,7 @@ class FIRMSAdapter(SourceAdapter):
 
         # Construct the satellite pixel footprint as a GeoJSON Polygon from
         # scan/track. Falls back to centroid-only Geo if either dimension is
-        # missing/invalid — _build_geom_sql then stores a Point. We keep
+        # missing/invalid — build_geom_json then stores a Point. We keep
         # centroid alongside geometry so consumers that read only centroid
         # still work.
         geometry = _pixel_polygon(lat, lon, row.get("scan"), row.get("track"))

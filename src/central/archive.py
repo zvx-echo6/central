@@ -9,18 +9,23 @@ import json
 import logging
 import signal
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
 import nats
-from shapely.geometry import box as _shapely_box, shape
 from nats.js import JetStreamContext
 from nats.js.api import ConsumerConfig, DeliverPolicy, AckPolicy
 from nats.js.errors import NotFoundError
 
 from central.bootstrap_config import get_settings
+from central.monitoring_area import (
+    MONITORING_AREA_REFRESH_S,
+    MonitoringArea,
+    build_geom_json,
+    classify_geom,
+    load_monitoring_area,
+)
 from central.streams import STREAMS as STREAM_REGISTRY
 
 # Event-bearing streams to consume -- derived from the registry's event_bearing flag.
@@ -30,9 +35,6 @@ STREAMS = [(s.name, s.subject_filter) for s in STREAM_REGISTRY if s.event_bearin
 BATCH_SIZE = 100
 FETCH_TIMEOUT = 5.0
 ACK_WAIT = 30
-# How often the archive re-reads the monitoring-area bbox from config.system so
-# GUI edits take effect without a service restart (~this many seconds latency).
-MONITORING_AREA_REFRESH_S = 60
 
 
 def consumer_name_for(stream: str) -> str:
@@ -73,83 +75,6 @@ def setup_logging() -> None:
 
 
 logger = logging.getLogger("central.archive")
-
-
-def _build_geom_sql(geo_data: dict[str, Any] | None) -> str | None:
-    """Build PostGIS geometry from event geo data."""
-    if not geo_data:
-        return None
-
-    # A full GeoJSON geometry (e.g. flow-segment LineString) wins over the
-    # bbox/centroid fallbacks so the map renders the real shape. Inert for
-    # adapters that don't set geo.geometry.
-    geometry = geo_data.get("geometry")
-    if geometry:
-        return json.dumps(geometry)
-
-    bbox = geo_data.get("bbox")
-    centroid = geo_data.get("centroid")
-
-    if bbox and len(bbox) == 4:
-        # Create polygon from bbox
-        min_lon, min_lat, max_lon, max_lat = bbox
-        return json.dumps({
-            "type": "Polygon",
-            "coordinates": [[
-                [min_lon, min_lat],
-                [max_lon, min_lat],
-                [max_lon, max_lat],
-                [min_lon, max_lat],
-                [min_lon, min_lat],
-            ]]
-        })
-    elif centroid and len(centroid) == 2:
-        # Create point from centroid
-        return json.dumps({
-            "type": "Point",
-            "coordinates": centroid
-        })
-
-    return None
-
-
-@dataclass(frozen=True)
-class MonitoringArea:
-    """System-level bounding box that events must intersect to be archived."""
-
-    north: float
-    south: float
-    east: float
-    west: float
-
-    def as_box(self):
-        # shapely box(minx, miny, maxx, maxy) -> (west, south, east, north)
-        return _shapely_box(self.west, self.south, self.east, self.north)
-
-
-def _classify_geom(geom_json: str | None, area: "MonitoringArea | None") -> str:
-    """Classify an event geometry against the monitoring area (archive bbox filter).
-
-    Returns one of:
-      'null-geom'     -- no geometry; always archived (SWPC trio, .removed tombstones)
-      'no-area'       -- no monitoring area configured; archive everything
-      'in-bounds'     -- geometry intersects the area; archive
-      'out-of-bounds' -- geometry lies entirely outside the area; drop
-      'invalid-geom'  -- geometry could not be evaluated; archived (fail-open) + warn
-
-    Uses intersects() so border-straddlers are kept (matches PostGIS ST_Intersects).
-    The filter must never drop an event because of a parse failure: when in doubt,
-    keep it.
-    """
-    if geom_json is None:
-        return "null-geom"
-    if area is None:
-        return "no-area"
-    try:
-        geom = shape(json.loads(geom_json))
-        return "in-bounds" if geom.intersects(area.as_box()) else "out-of-bounds"
-    except Exception:
-        return "invalid-geom"
 
 
 class ArchiveConsumer:
@@ -199,18 +124,7 @@ class ArchiveConsumer:
             return
         try:
             async with self._pool.acquire() as conn:
-                row = await conn.fetchrow(
-                    "SELECT monitor_north, monitor_south, monitor_east, monitor_west "
-                    "FROM config.system WHERE id = true"
-                )
-            cols = ("monitor_north", "monitor_south", "monitor_east", "monitor_west")
-            if row and all(row[c] is not None for c in cols):
-                self._monitoring_area = MonitoringArea(
-                    north=row["monitor_north"], south=row["monitor_south"],
-                    east=row["monitor_east"], west=row["monitor_west"],
-                )
-            else:
-                self._monitoring_area = None
+                self._monitoring_area = await load_monitoring_area(conn)
         except Exception as e:
             logger.warning(
                 "Could not load monitoring area; keeping previous value",
@@ -321,9 +235,9 @@ class ArchiveConsumer:
             await msg.ack()
             return
 
-        geom_json = _build_geom_sql(geo_data)
+        geom_json = build_geom_json(geo_data)
 
-        verdict = _classify_geom(geom_json, self._monitoring_area)
+        verdict = classify_geom(geom_json, self._monitoring_area)
         if verdict == "out-of-bounds":
             self._dropped[adapter] = self._dropped.get(adapter, 0) + 1
             logger.debug(
