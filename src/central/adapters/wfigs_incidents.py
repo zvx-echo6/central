@@ -73,7 +73,6 @@ class WFIGSIncidentsAdapter(SourceAdapter):
         self._cursor_db_path = cursor_db_path
         self._session: aiohttp.ClientSession | None = None
         self._db: sqlite3.Connection | None = None
-        self._last_poll_time: datetime | None = None
 
         # Parse region from settings
         region_dict = config.settings.get("region")
@@ -164,12 +163,16 @@ class WFIGSIncidentsAdapter(SourceAdapter):
             "f": "geojson",
         }
 
-        # Time filter: only fetch modified since last poll
-        if self._last_poll_time:
-            iso_time = self._last_poll_time.strftime("%Y-%m-%d %H:%M:%S")
-            params["where"] = f"ModifiedOnDateTime > timestamp '{iso_time}'"
-        else:
-            params["where"] = "1=1"
+        # v0.10.2.1: full-page fetch every poll. The previous incremental
+        # `ModifiedOnDateTime > timestamp '<last_poll>'` clause silently
+        # returned 0 features because the upstream layer renamed the column
+        # to `ModifiedOnDateTime_dt` (epoch ms) and our where-clause both
+        # used the old name AND compared against a SQL timestamp literal.
+        # ArcGIS treated the clause as not-matching; the fall-off detector
+        # then tombstoned every previously-observed IRWINID on poll #2.
+        # `wfigs_observed` + `published_ids` already de-duplicate the full
+        # page, so re-fetching every poll is correct and idempotent.
+        params["where"] = "1=1"
 
         # Bbox filter if region configured
         if self.region:
@@ -326,9 +329,6 @@ class WFIGSIncidentsAdapter(SourceAdapter):
         # Periodic cleanup of old entries
         cleanup_old_observed(self._db, LAYER_NAME)
         self.sweep_old_ids()
-
-        # Update last poll time
-        self._last_poll_time = datetime.now(timezone.utc)
 
         logger.info(
             "WFIGS incidents poll completed",
