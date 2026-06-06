@@ -1,8 +1,0 @@
-{# State 511 camera detail. Live <img> fetched direct from the source (no proxy /
-   blob storage in Central). Fields from payload->data->data. #}
-{% set d = (event.data.get('data') or {}).get('data') or {} %}
-{% if d.get('image_url') %}<dt>View</dt><dd><img src="{{ d.image_url }}" alt="Camera view" style="max-width:480px;max-height:360px;display:block;" loading="lazy"></dd>{% endif %}
-{% if d.get('roadway_name') %}<dt>Road</dt><dd>{{ d.roadway_name }}{% if d.get('direction') and d.direction not in ['Unknown', 'None'] %} ({{ d.direction }}){% endif %}</dd>{% endif %}
-{% if d.get('location_description') %}<dt>Location</dt><dd>{{ d.location_description }}</dd>{% endif %}
-{% if d.get('source') %}<dt>Source</dt><dd>{{ d.source }}</dd>{% endif %}
-{% if d.get('image_count') and d.image_count > 1 %}<dt>Views</dt><dd>{{ d.image_count }} camera angles</dd>{% endif %}

@@ -1143,10 +1143,8 @@ _SAMPLE_INNER = {
     "wfigs_incidents": {"county": "Montezuma", "state": "CO"},
     "wfigs_perimeters": {"county": "Carbon", "state": "MT"},
     "wzdx": {"road_names": ["I-80"], "direction": "eastbound"},
-    "state_511_atis": {"layer": "Incidents", "roadway_name": "US-95", "location_description": "Ponderosa Mobile Home Park"},
     "tomtom_flow": {"road_category": "primary", "relative_speed": 0.11},
     "tomtom_incidents": {"description": "Roadworks", "from": "Early Road", "to": "Slade Road"},
-    "state_511_atis_cameras": {"location_description": "I-84 Mountain Home", "camera_id": 42},
     "itd_511": {"event_type_short": "work_zone", "roadway_name": "I-84"},
     "itd_511_cameras": {"location": "I-84 Mountain Home", "camera_id": 42},
 }
@@ -1170,7 +1168,6 @@ _EXPECTED_SUBJECT = {
     "wzdx": "Work zone on I-80 eastbound",
     "tomtom_flow": "Traffic flow (primary) — 11% of free-flow",
     "tomtom_incidents": "Roadworks on Early Road → Slade Road",
-    "state_511_atis_cameras": "Camera: I-84 Mountain Home",
     "itd_511": "Road work on I-84",
     "itd_511_cameras": "Camera: I-84 Mountain Home",
 }
