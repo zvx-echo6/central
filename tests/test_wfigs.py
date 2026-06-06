@@ -316,6 +316,64 @@ class TestWFIGSIncidentsAdapter:
         await adapter.shutdown()
 
     @pytest.mark.asyncio
+    async def test_where_clause_is_1_eq_1_on_every_poll(
+        self, mock_config: AdapterConfig, mock_config_store: MagicMock, cursor_db_path: Path
+    ):
+        """v0.10.2.1 regression guard: every poll sends ``where=1=1``.
+
+        The pre-v0.10.2.1 adapter sent ``where=ModifiedOnDateTime > timestamp 'X'``
+        on every poll after the first -- a clause that silently returned 0
+        features because the upstream layer renamed the column to
+        ``ModifiedOnDateTime_dt``. That made the fall-off detector tombstone
+        every previously-observed IRWINID on poll #2 (the Summit Creek bug).
+        Both the first poll and every poll thereafter must now send the
+        unconditional full-page query.
+        """
+        from central.adapters.wfigs_incidents import WFIGSIncidentsAdapter
+
+        adapter = WFIGSIncidentsAdapter(mock_config, mock_config_store, cursor_db_path)
+        await adapter.startup()
+
+        captured: list[dict] = []
+
+        def _capture(url, params=None, **kw):
+            captured.append(dict(params or {}))
+            resp = AsyncMock()
+            resp.raise_for_status = MagicMock()
+            resp.json = AsyncMock(return_value=SAMPLE_INCIDENTS_RESPONSE)
+            return AsyncMock(__aenter__=AsyncMock(return_value=resp), __aexit__=AsyncMock())
+
+        with patch.object(adapter._session, "get", side_effect=_capture):
+            _ = [e async for e in adapter.poll()]   # poll 1
+            _ = [e async for e in adapter.poll()]   # poll 2
+
+        await adapter.shutdown()
+
+        assert len(captured) == 2, "expected one HTTP call per poll"
+        for i, params in enumerate(captured):
+            assert params.get("where") == "1=1", (
+                f"poll #{i+1} sent where={params.get('where')!r}; expected '1=1'"
+            )
+            # Regression guard against ANY incremental time clause sneaking back.
+            for v in params.values():
+                assert "ModifiedOnDateTime" not in str(v), (
+                    f"poll #{i+1} param value referenced ModifiedOnDateTime: {v!r}"
+                )
+
+    @pytest.mark.asyncio
+    async def test_no_last_poll_time_attribute(
+        self, mock_config: AdapterConfig, mock_config_store: MagicMock, cursor_db_path: Path
+    ):
+        """The vestigial ``_last_poll_time`` attribute must not be re-introduced."""
+        from central.adapters.wfigs_incidents import WFIGSIncidentsAdapter
+
+        adapter = WFIGSIncidentsAdapter(mock_config, mock_config_store, cursor_db_path)
+        assert not hasattr(adapter, "_last_poll_time"), (
+            "_last_poll_time was the in-memory cursor driving the broken "
+            "incremental where-clause; do not re-add"
+        )
+
+    @pytest.mark.asyncio
     async def test_fall_off_emits_removal(
         self, mock_config: AdapterConfig, mock_config_store: MagicMock, cursor_db_path: Path
     ):
@@ -596,3 +654,59 @@ class TestWFIGSPerimetersAdapter:
         assert _as_geometry('{"type": "Point"}')["type"] == "Point"
         assert _as_geometry("not json") is None
         assert _as_geometry(None) is None
+
+    @pytest.mark.asyncio
+    async def test_where_clause_is_1_eq_1_on_every_poll(
+        self, mock_config: AdapterConfig, mock_config_store: MagicMock, cursor_db_path: Path
+    ):
+        """v0.10.2.1 regression guard: every poll sends ``where=1=1``.
+
+        The pre-v0.10.2.1 perimeters adapter sent
+        ``where=attr_ModifiedOnDateTime_dt > timestamp 'X'`` on every poll
+        after the first -- a type-broken comparison (epoch ms vs SQL
+        timestamp literal) that silently returned 0 features. The fall-off
+        detector then tombstoned Summit Creek (1924-acre Idaho WF, 85%
+        contained) on poll #2 after the v0.10.2 supervisor restart.
+        """
+        from central.adapters.wfigs_perimeters import WFIGSPerimetersAdapter
+
+        adapter = WFIGSPerimetersAdapter(mock_config, mock_config_store, cursor_db_path)
+        await adapter.startup()
+
+        captured: list[dict] = []
+
+        def _capture(url, params=None, **kw):
+            captured.append(dict(params or {}))
+            resp = AsyncMock()
+            resp.raise_for_status = MagicMock()
+            resp.json = AsyncMock(return_value=SAMPLE_PERIMETERS_RESPONSE)
+            return AsyncMock(__aenter__=AsyncMock(return_value=resp), __aexit__=AsyncMock())
+
+        with patch.object(adapter._session, "get", side_effect=_capture):
+            _ = [e async for e in adapter.poll()]   # poll 1
+            _ = [e async for e in adapter.poll()]   # poll 2
+
+        await adapter.shutdown()
+
+        assert len(captured) == 2, "expected one HTTP call per poll"
+        for i, params in enumerate(captured):
+            assert params.get("where") == "1=1", (
+                f"poll #{i+1} sent where={params.get('where')!r}; expected '1=1'"
+            )
+            for v in params.values():
+                assert "ModifiedOnDateTime" not in str(v), (
+                    f"poll #{i+1} param value referenced ModifiedOnDateTime: {v!r}"
+                )
+
+    @pytest.mark.asyncio
+    async def test_no_last_poll_time_attribute(
+        self, mock_config: AdapterConfig, mock_config_store: MagicMock, cursor_db_path: Path
+    ):
+        """The vestigial ``_last_poll_time`` attribute must not be re-introduced."""
+        from central.adapters.wfigs_perimeters import WFIGSPerimetersAdapter
+
+        adapter = WFIGSPerimetersAdapter(mock_config, mock_config_store, cursor_db_path)
+        assert not hasattr(adapter, "_last_poll_time"), (
+            "_last_poll_time was the in-memory cursor driving the broken "
+            "incremental where-clause; do not re-add"
+        )
