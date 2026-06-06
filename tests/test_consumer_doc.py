@@ -119,3 +119,27 @@ def test_subsections_appear_in_doc_order_matches_registry_size():
         f"duplicate per-adapter sections: {[a for a in doc_adapters if doc_adapters.count(a) > 1]}"
     )
     assert len(doc_adapters) == len(discover_adapters())
+
+
+def test_castle_rock_legacy_adapters_remain_removed():
+    """v0.10.3 regression guard: ``state_511_atis`` and ``state_511_atis_cameras``
+    were ripped out because the Castle Rock legacy ``/map/mapIcons/`` +
+    ``/List/GetData/`` shape is end-of-life on the only Idaho source we cared
+    about (Idaho 511) -- the official ITD adapters (``itd_511`` + ``itd_511_cameras``,
+    v0.10.0) supersede them. The sister-site discovery confirmed no other
+    Castle Rock customer still exposes the legacy shape that this adapter pair
+    consumed. Re-adding either module would resurrect a dying-upstream dependency."""
+    registry = discover_adapters()
+    assert "state_511_atis" not in registry, (
+        "state_511_atis was removed in v0.10.3; use itd_511 (v0.10.0) instead"
+    )
+    assert "state_511_atis_cameras" not in registry, (
+        "state_511_atis_cameras was removed in v0.10.3; use itd_511_cameras (v0.10.0) instead"
+    )
+    adapters_dir = Path(__file__).resolve().parents[1] / "src" / "central" / "adapters"
+    assert not (adapters_dir / "state_511_atis.py").exists(), (
+        "state_511_atis.py was removed in v0.10.3; do not re-add"
+    )
+    assert not (adapters_dir / "state_511_atis_cameras.py").exists(), (
+        "state_511_atis_cameras.py was removed in v0.10.3; do not re-add"
+    )

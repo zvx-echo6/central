@@ -1478,91 +1478,12 @@ already running can disable those overlap categories via `EONETSettings.category
 }
 ```
 
-### state_511_atis — State 511 incidents / closures / road work (Castle Rock ATIS)
-
-State-DOT 511 traffic events from the Castle Rock ATIS platform. Each layer is a
-two-endpoint join: `GET /map/mapIcons/<Layer>` (markers: `itemId` + `location`
-`[lat,lon]`) joined on id with `POST /List/GetData/<Layer>` (DataTables detail:
-road name, description, county, severity). Verified for Idaho only.
-
-- **Stream:** `CENTRAL_TRAFFIC`
-- **Layers / event_types:** Incidents -> `incident`, Closures -> `closure`,
-  Construction (`type":"Roadwork"`) -> `work_zone`. (Cameras are telemetry and
-  ship as a separate adapter later.)
-- **Subject pattern:** `central.traffic.<event_type>.<state>` (e.g.
-  `central.traffic.incident.id`); `<state>` is the lowercased config `code`.
-- **GUI event_type:** from `category = "<event_type>.state_511_atis"` (first
-  dotted segment). `incident` and `closure` are new event_types (query-derived;
-  no hardcoded enum); `work_zone` is shared with wzdx.
-- **Cadence default:** 300s (5 min).
-- **Dedup key shape:** composite `<state_code>:<layer>:<id>`
-  (e.g. `ID:Incidents:33579`); reused as the inner `Event.id`.
-- **Event.data fields:**
-
-  | key | type | nullable | description |
-  |---|---|---|---|
-  | `roadway_name` | str | yes | Road name, e.g. `US-95` |
-  | `description` | str | yes | Operator-readable narrative |
-  | `event_sub_type` | str | yes | e.g. `roadwayBlocked`, `longTermRoadConstruction` |
-  | `direction` | str | yes | `Both` / `North` / `Unknown` … |
-  | `location_description` | str | yes | Cross-street / landmark, e.g. `Five Mile Creek \| US-20` |
-  | `county` / `state` | str | yes | Upstream-supplied; populate the Location column |
-  | `start_date` / `last_updated` | str | yes | US-format local strings (no TZ; parsed naive->UTC, approximate) |
-  | `is_full_closure` | bool | yes | Closures only; drives severity |
-  | `layer` / `state_code` | str | no | Source layer + 2-letter state code (subject routing) |
-  | `latitude` / `longitude` | float | yes | From the marker join (enrichment input) |
-
-- **Severity:** `is_full_closure == true` -> 3, else 1 (the upstream `severity`
-  string is "None" on most records; not mapped in v1).
-- **Decipherable as-is:** mostly. Road + location + description + county/state are
-  user-ready; the geocoder fills `city` from the joined coordinates.
-- **Removal semantics:** none in v1. Events age out of the upstream feed; the
-  14-day dedup sweep expires stale ids.
-
-### state_511_atis_cameras — State 511 traffic cameras (Castle Rock ATIS, telemetry)
-
-State-DOT 511 traffic cameras (Idaho). One telemetry event per camera per UTC day;
-the `/telemetry` detail drawer renders the live image inline (`<img>` fetched
-direct from the source -- Central stores the URL, never the image bytes). Pairs
-with state_511_atis incidents: see an incident, click a nearby camera, see road
-conditions.
-
-- **Stream:** `CENTRAL_TRAFFIC_CAMERAS` (telemetry; `/telemetry` tab).
-- **Subject pattern:** `central.traffic_cameras.<state>.<camera_id>` -- subscribe to
-  one camera or `central.traffic_cameras.id.>` for all Idaho.
-- **GUI event_type:** `camera` (from `category = "camera.state_511_atis_cameras"`).
-- **Source:** full state list via `POST /List/GetData/Cameras` (DataTables,
-  **paginated** at 100/page; Idaho ~455). Public-unauth. **Cadence 600s.**
-- **Dedup key shape:** `<state_code>:cam:<camera_id>:<YYYY-MM-DD>` -- one event per
-  camera per UTC day. The table always shows today's cameras; no per-poll flooding
-  and no dedup-window/retention coordination needed.
-- **Event.data fields:**
-
-  | key | type | nullable | description |
-  |---|---|---|---|
-  | `camera_id` | int | no | Stable upstream id |
-  | `roadway_name` | str | yes | e.g. `I-84` |
-  | `location_description` | str | yes | e.g. `I-84 Mountain Home` (embeds the roadway) |
-  | `direction` | str | yes | `North` / `Unknown` / ... |
-  | `source` | str | yes | Owning agency: `Idaho511`, `ITDNET`, `RWIS`, `UDOT`, `ODOT`, ... (border cameras Idaho 511 surfaces) |
-  | `image_url` | str | yes | Full live image URL (`<base_url>/map/Cctv/<id>`); browser fetches direct |
-  | `image_count` | int | no | Number of camera angles (1-4) |
-  | `record_updated` | str | yes | Camera config edit time (NOT image-capture time) |
-  | `state_code` | str | no | Routing |
-  | `latitude` / `longitude` | float | yes | From the WKT `POINT (lon lat)` |
-
-- **Severity:** always `1` (cameras have no severity signal; telemetry styling).
-- **Decipherable as-is:** yes -- location + source are user-ready; the live image
-  is one click away. **No image-capture timestamp** is available upstream (the
-  `lastUpdated` field is camera-config time), so the drawer shows no "captured at".
-- **Removal semantics:** none; offline cameras serve an empty image but stay listed.
-
 ### itd_511 — Idaho 511 official DOT API (events + advisories)
 
 Idaho Transportation Department's official 511 REST API. Polls roadwork,
 closures, incidents, special events, and advisories statewide. First
-official-state-DOT-API adapter (v0.10.0); runs in parallel with state_511_atis
-(Castle Rock) post-deploy for A/B comparison. Idaho-only; subject suffix is
+official-state-DOT-API adapter (v0.10.0; superseded the Castle Rock-backed
+state_511_atis adapter, removed in v0.10.3). Idaho-only; subject suffix is
 uniformly `us.id`.
 
 - **Stream:** `CENTRAL_TRAFFIC` (event class). **event_type:** one of
@@ -1660,11 +1581,11 @@ never the image bytes). Sibling adapter of itd_511 (shared API key alias
 
 Real-time incidents (closures, jams, hazards, road work, accidents) from TomTom
 Orbis `incidentDetails`, polled per metro bbox. Complements wzdx (federal work
-zones) and state_511_atis (state-DOT reports) with commercial vehicle-telematics
+zones) and itd_511 (state-DOT reports) with commercial vehicle-telematics
 coverage. One event per incident.
 
 - **Stream:** `CENTRAL_TRAFFIC` (event class). **event_type:** `incident` (from
-  `category = "incident.tomtom_incidents"`); shares the type with state_511_atis.
+  `category = "incident.tomtom_incidents"`); shares the type with itd_511.
 - **Subject pattern:** `central.traffic.incident.<state>` (e.g.
   `central.traffic.incident.id`); `<state>` is the per-bbox `state_code`.
 - **Coverage:** configured metro bboxes, **each <= 10,000 km^2** (TomTom rejects

@@ -15,9 +15,8 @@ Subject convention (v0.9.20 forward, locked v0.10.0 architectural call A):
   central.traffic_cameras.us.id.<camera_id>
 
 Dedup id: ``idaho_511:cam:<Camera_Id>:<YYYY-MM-DD>`` — one telemetry event per
-camera per UTC day, matching the state_511_atis_cameras precedent. Image URLs
-ship straight through; the partial renders <img src=...> from Views[0].Url
-(jpeg/gif/png all confirmed publicly reachable).
+camera per UTC day. Image URLs ship straight through; the partial renders
+<img src=...> from Views[0].Url (jpeg/gif/png all confirmed publicly reachable).
 
 Retry predicate matches itd_511's (architectural call B): no retry on 4xx
 except 429 with Retry-After. Shares the ``_Transient`` sentinel and
