@@ -17,7 +17,7 @@ import pytest
 
 from central.adapter import SourceAdapter
 from central.adapters.tomtom_flow import TomTomFlowAdapter
-from central.archive import _build_geom_sql
+from central.monitoring_area import build_geom_json
 from central.config_models import AdapterConfig
 from central.tomtom_flow_parse import (
     _local_to_lonlat,
@@ -83,10 +83,10 @@ def test_subject_for():
 def test_archive_prefers_geo_geometry():
     line = {"type": "LineString", "coordinates": [[-116.2, 43.6], [-116.1, 43.7]]}
     # geometry present -> returned verbatim (not bbox/centroid)
-    out = _build_geom_sql({"geometry": line, "centroid": [-116.2, 43.6], "bbox": [-116.3, 43.5, -116.0, 43.8]})
+    out = build_geom_json({"geometry": line, "centroid": [-116.2, 43.6], "bbox": [-116.3, 43.5, -116.0, 43.8]})
     assert json.loads(out) == line
     # no geometry -> falls back to centroid Point (regression guard)
-    out2 = _build_geom_sql({"centroid": [-116.2, 43.6]})
+    out2 = build_geom_json({"centroid": [-116.2, 43.6]})
     assert json.loads(out2)["type"] == "Point"
 
 

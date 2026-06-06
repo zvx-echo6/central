@@ -14,7 +14,7 @@ from central.adapters.firms import (
     SATELLITE_SHORT,
     _pixel_polygon,
 )
-from central.archive import _build_geom_sql
+from central.monitoring_area import build_geom_json
 from central.config_models import AdapterConfig
 from central.models import Event, Geo
 
@@ -553,7 +553,7 @@ class TestPixelPolygon:
 
 
 class TestGeoGeometryRoundTripsThroughArchive:
-    """Regression guard: FIRMS geo.geometry must reach _build_geom_sql as Polygon."""
+    """Regression guard: FIRMS geo.geometry must reach build_geom_json as Polygon."""
 
     @pytest.mark.asyncio
     async def test_geo_geometry_round_trips_through_archive_path(
@@ -572,7 +572,7 @@ class TestGeoGeometryRoundTripsThroughArchive:
         # Simulate what archive does: serialize geo to dict and run it through
         # the same helper that produces the PostGIS geom clause.
         geo_dict = event.geo.model_dump()
-        sql_clause = _build_geom_sql(geo_dict)
+        sql_clause = build_geom_json(geo_dict)
         assert sql_clause is not None
         decoded = json.loads(sql_clause)
         assert decoded["type"] == "Polygon"
@@ -600,6 +600,6 @@ class TestGeoGeometryRoundTripsThroughArchive:
         assert event.geo.geometry is None
 
         geo_dict = event.geo.model_dump()
-        sql_clause = _build_geom_sql(geo_dict)
+        sql_clause = build_geom_json(geo_dict)
         assert sql_clause is not None
         assert json.loads(sql_clause)["type"] == "Point"

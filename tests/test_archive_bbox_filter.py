@@ -1,53 +1,20 @@
-"""Archive-level monitoring-area bbox filter (v0.9.12).
+"""Archive-level monitoring-area bbox filter integration (v0.9.12).
 
-Events whose geometry falls entirely outside the system monitoring area are
-dropped at archive INSERT time; null-geom events and border-straddlers are kept.
-The filter is fail-open: an unparseable geometry is archived (with a warning),
-never dropped.
+After v0.10.2 the ``MonitoringArea`` / ``classify_geom`` / ``build_geom_json``
+primitives moved to ``central.monitoring_area`` -- their pure-unit tests live in
+``test_monitoring_area.py``. This file keeps the end-to-end check that archive's
+``_process_message`` still drops out-of-bounds events (ACK + counter, no INSERT)
+and that null-geom / no-area paths still archive.
 """
 import json
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from central.archive import ArchiveConsumer, MonitoringArea, _classify_geom
+from central.archive import ArchiveConsumer
+from central.monitoring_area import MonitoringArea
 
 IDAHO = MonitoringArea(north=44.5, south=41.8, east=-111.0, west=-117.5)
-
-
-def _pt(lon, lat):
-    return json.dumps({"type": "Point", "coordinates": [lon, lat]})
-
-
-class TestClassifyGeom:
-    def test_null_geom_always_kept(self):
-        assert _classify_geom(None, IDAHO) == "null-geom"
-
-    def test_no_area_keeps_everything(self):
-        assert _classify_geom(_pt(-114.0, 43.5), None) == "no-area"
-
-    def test_in_bounds_kept(self):
-        assert _classify_geom(_pt(-114.0, 43.5), IDAHO) == "in-bounds"
-
-    def test_out_of_bounds_dropped(self):
-        assert _classify_geom(_pt(-74.0, 40.7), IDAHO) == "out-of-bounds"
-
-    def test_border_straddling_polygon_kept(self):
-        # Spans the western edge (west=-117.5): partly out, partly in -> kept.
-        poly = json.dumps({
-            "type": "Polygon",
-            "coordinates": [[[-119, 42], [-116, 42], [-116, 43], [-119, 43], [-119, 42]]],
-        })
-        assert _classify_geom(poly, IDAHO) == "in-bounds"
-
-    def test_point_exactly_on_border_kept(self):
-        assert _classify_geom(_pt(-117.5, 43.0), IDAHO) == "in-bounds"
-
-    def test_unparseable_geom_kept(self):
-        assert _classify_geom("{not valid json", IDAHO) == "invalid-geom"
-
-    def test_unknown_geom_type_kept(self):
-        assert _classify_geom(json.dumps({"type": "Nonsense"}), IDAHO) == "invalid-geom"
 
 
 def _make_msg(envelope):
