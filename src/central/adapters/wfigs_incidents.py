@@ -2,6 +2,7 @@
 
 import logging
 import sqlite3
+import time
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,7 +19,6 @@ from tenacity import (
 
 from central.adapter import SourceAdapter
 from central.adapters.wfigs_common import (
-    WFIGS_INCIDENTS_URL,
     build_regions,
     cleanup_old_observed,
     delete_observed,
@@ -41,11 +41,42 @@ logger = logging.getLogger(__name__)
 
 LAYER_NAME = "incidents"
 
+# v0.10.4: switched from the `_Current` view to the parent `WFIGS_Incident_Locations`
+# endpoint. The Current view excludes IMT-managed BLM fires once they transition
+# to Type 3 IC / ICS-209 reporting (e.g. Blue Ridge: 14k acres, modified upstream
+# within the hour, but absent from _Current). The parent endpoint has the
+# IMT-managed fires; we filter to active wildfires server-side and cap recency
+# client-side. The wfigs_perimeters adapter stays on `_Current` (perimeters have
+# a different lifecycle and Blue Ridge isn't in either perimeter layer).
+WFIGS_INCIDENTS_URL = (
+    "https://services3.arcgis.com/T4QMspbfLg3qTGWY/ArcGIS/rest/services/"
+    "WFIGS_Incident_Locations/FeatureServer/0/query"
+)
+
+# Client-side recency cutoff: drop features whose ModifiedOnDateTime_dt is older
+# than this many seconds. Server-side `ModifiedOnDateTime_dt > N` combined with
+# any other predicate returns "Unable to perform query" on this layer, so the
+# floor is enforced after the JSON parse. Computed fresh each poll -- this is
+# NOT a persisted cursor (avoids the v0.10.2.1 silent-zero failure mode).
+_RECENCY_CUTOFF_S = 30 * 86400
+
+# Server-side cap. The endpoint also accepts orderByFields=ModifiedOnDateTime_dt
+# DESC, so the 300 we get back are the 300 most-recently-touched WF records in
+# the configured POOState (or globally if state is unset). Idaho currently has
+# ~30 within the 30-day client-side window.
+_RESULT_RECORD_COUNT = 300
+
 
 class WFIGSIncidentsSettings(BaseModel):
     """Settings schema for WFIGS Incidents adapter."""
 
     region: RegionConfig | None = None
+    # v0.10.4: ISO 3166-2 POOState code (e.g. "US-ID") for the server-side
+    # POOState filter. None disables the predicate -- the adapter then sees
+    # every state's WF records up to the resultRecordCount cap and relies on
+    # the existing client-side `region` bbox to scope. Operators normally
+    # set this to match the bbox state for a tighter upstream call.
+    state: str | None = None
 
 
 class WFIGSIncidentsAdapter(SourceAdapter):
@@ -80,6 +111,8 @@ class WFIGSIncidentsAdapter(SourceAdapter):
             self.region: RegionConfig | None = RegionConfig(**region_dict)
         else:
             self.region = None
+        # v0.10.4: POOState code (e.g. "US-ID") for the server-side filter.
+        self.state: str | None = config.settings.get("state")
 
     async def startup(self) -> None:
         """Initialize HTTP session and SQLite connection."""
@@ -127,6 +160,7 @@ class WFIGSIncidentsAdapter(SourceAdapter):
             self.region = RegionConfig(**region_dict)
         else:
             self.region = None
+        self.state = new_config.settings.get("state")
         logger.info(
             "WFIGS incidents config updated",
             extra={"region": self.region.model_dump() if self.region else None},
@@ -152,29 +186,39 @@ class WFIGSIncidentsAdapter(SourceAdapter):
         retry=retry_if_exception_type((aiohttp.ClientError, TimeoutError)),
     )
     async def _fetch_features(self) -> list[dict[str, Any]]:
-        """Fetch features from WFIGS FeatureServer."""
+        """Fetch features from WFIGS FeatureServer.
+
+        v0.10.4: switched from the `_Current` view to the parent endpoint with
+        a server-side active-wildfire filter (`IncidentTypeCategory='WF' AND
+        FireOutDateTime IS NULL [AND POOState='<state>']`), capped at the 300
+        most-recently-touched records via `orderByFields=ModifiedOnDateTime_dt
+        DESC + resultRecordCount=300`. A client-side recency cutoff drops
+        anything older than ``_RECENCY_CUTOFF_S``. The cutoff is recomputed
+        fresh each poll -- this is NOT a persisted cursor (see v0.10.2.1).
+        """
         if not self._session:
             raise RuntimeError("Session not initialized")
 
-        # Build query params
+        # Server-side WHERE: active wildfires only, optional POOState scope.
+        # The state code is plumbed from settings (no hardcoded codes); when
+        # unset, the predicate is omitted and the call returns every state's
+        # active WF records up to the result cap.
+        where_parts = ["IncidentTypeCategory='WF'", "FireOutDateTime IS NULL"]
+        if self.state:
+            # POOState literal is a 2-segment ISO-3166-2 code ("US-ID"), no quotes
+            # required inside it; escape any embedded single quotes defensively.
+            safe_state = self.state.replace("'", "''")
+            where_parts.append(f"POOState='{safe_state}'")
         params: dict[str, str] = {
             "outFields": "*",
             "returnGeometry": "true",
             "f": "geojson",
+            "where": " AND ".join(where_parts),
+            "orderByFields": "ModifiedOnDateTime_dt DESC",
+            "resultRecordCount": str(_RESULT_RECORD_COUNT),
         }
 
-        # v0.10.2.1: full-page fetch every poll. The previous incremental
-        # `ModifiedOnDateTime > timestamp '<last_poll>'` clause silently
-        # returned 0 features because the upstream layer renamed the column
-        # to `ModifiedOnDateTime_dt` (epoch ms) and our where-clause both
-        # used the old name AND compared against a SQL timestamp literal.
-        # ArcGIS treated the clause as not-matching; the fall-off detector
-        # then tombstoned every previously-observed IRWINID on poll #2.
-        # `wfigs_observed` + `published_ids` already de-duplicate the full
-        # page, so re-fetching every poll is correct and idempotent.
-        params["where"] = "1=1"
-
-        # Bbox filter if region configured
+        # Bbox filter if region configured (defense-in-depth alongside POOState).
         if self.region:
             bbox = f"{self.region.west},{self.region.south},{self.region.east},{self.region.north}"
             params["geometry"] = bbox
@@ -187,9 +231,24 @@ class WFIGSIncidentsAdapter(SourceAdapter):
             data = await resp.json()
 
         features = data.get("features", [])
+        raw_count = len(features)
+
+        # Client-side recency floor. Server-side `ModifiedOnDateTime_dt > N`
+        # combined with any other predicate is rejected on this layer, so the
+        # 30-day cutoff is enforced here after the JSON parse. Computed fresh
+        # each call -- never persisted.
+        cutoff_ms = (int(time.time()) - _RECENCY_CUTOFF_S) * 1000
+        features = [
+            f for f in features
+            if (f.get("properties", {}).get("ModifiedOnDateTime_dt") or 0) > cutoff_ms
+        ]
         logger.info(
             "WFIGS incidents fetch completed",
-            extra={"feature_count": len(features)},
+            extra={
+                "feature_count_raw": raw_count,
+                "feature_count_after_recency_filter": len(features),
+                "recency_cutoff_s": _RECENCY_CUTOFF_S,
+            },
         )
         return features
 
