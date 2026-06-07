@@ -295,6 +295,96 @@ async def dashboard_polls(request: Request) -> HTMLResponse:
 
 
 # =============================================================================
+# v0.10.5 — operator-controlled "Re-send recent events" card
+# =============================================================================
+
+
+def _resend_card(request: Request, error: str | None = None) -> HTMLResponse:
+    """Render the initial-state card. Used by /card, /preview, and /resend on
+    any precondition failure (invalid window, NATS down)."""
+    from central.gui.resend import TIME_WINDOWS
+
+    return _get_templates().TemplateResponse(
+        request=request, name="_resend_card.html",
+        context={
+            "windows": TIME_WINDOWS,
+            "csrf_token": getattr(request.state, "csrf_token", ""),
+            "error": error,
+        },
+    )
+
+
+@router.get("/actions/resend/card", response_class=HTMLResponse)
+async def actions_resend_card(request: Request) -> HTMLResponse:
+    """Initial state of the 'Re-send recent events' card.
+
+    Served at dashboard load AND on Cancel from the confirmation fragment."""
+    return _resend_card(request)
+
+
+@router.get("/actions/resend/preview", response_class=HTMLResponse)
+async def actions_resend_preview(request: Request, minutes: int = 0) -> HTMLResponse:
+    """Show the count of messages about to be re-sent in the chosen window."""
+    from central.gui.nats import get_js
+    from central.gui.resend import is_valid_window, preview_resend
+
+    if not is_valid_window(minutes):
+        return _resend_card(request, error="Time window not recognised.")
+    js = get_js()
+    if js is None:
+        return _resend_card(request, error="Stream backbone unavailable. Try again in a moment.")
+
+    result = await preview_resend(js, minutes)
+    return _get_templates().TemplateResponse(
+        request=request, name="_resend_confirm.html",
+        context={
+            "csrf_token": getattr(request.state, "csrf_token", ""),
+            "minutes": minutes,
+            "window_label": result["window_label"],
+            "count": result["count"],
+            "by_stream": result["by_stream"],
+            "preview_errors": result["errors"],
+        },
+    )
+
+
+@router.post("/actions/resend", response_class=HTMLResponse)
+async def actions_resend_execute(request: Request, minutes: int = 0) -> HTMLResponse:
+    """Execute the re-send wave. CSRF-validated via the form field."""
+    from central.gui.nats import get_js, get_nc
+    from central.gui.resend import execute_resend, is_valid_window
+
+    csrf_token = getattr(request.state, "csrf_token", "")
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
+    if not is_valid_window(minutes):
+        return _resend_card(request, error="Time window not recognised.")
+    js = get_js()
+    if js is None:
+        return _resend_card(request, error="Stream backbone unavailable. Try again in a moment.")
+
+    operator = getattr(request.state, "operator", None)
+    operator_name = (
+        operator.username if operator and hasattr(operator, "username") else "unknown"
+    )
+    result = await execute_resend(js, get_nc(), minutes, operator_name)
+    return _get_templates().TemplateResponse(
+        request=request, name="_resend_success.html",
+        context={
+            "csrf_token": csrf_token,
+            "minutes": minutes,
+            "window_label": result["window_label"],
+            "published": result["published"],
+            "errors": result["errors"],
+            "elapsed_s": result["elapsed_s"],
+            "by_stream": result["by_stream"],
+        },
+    )
+
+
+# =============================================================================
 # Setup Wizard routes
 # =============================================================================
 

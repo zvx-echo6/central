@@ -4,6 +4,9 @@
 
 {% block content %}
 <h1>Dashboard</h1>
+<div id="resend-card" hx-get="/actions/resend/card" hx-trigger="load" hx-swap="outerHTML">
+    Loading...
+</div>
 <div class="cols">
     <article>
         <header>Events (24h)</header>
