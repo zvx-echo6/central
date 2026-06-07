@@ -12,6 +12,7 @@ success fragment.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -30,11 +31,16 @@ from central.gui.resend import (
 
 
 def _mk_msg(subject: str, data: bytes = b'{"data":{"x":1}}',
-            headers: dict | None = None):
+            headers: dict | None = None, stream_seq: int = 0):
     msg = MagicMock()
     msg.subject = subject
     msg.data = data
     msg.headers = headers if headers is not None else {"Nats-Msg-Id": subject}
+    # Mirror nats-py's Msg.metadata.sequence.stream so the v0.10.5.2 snapshot
+    # filter has a concrete int to compare against (default 0 stays well
+    # below the high default snapshot in _mk_js so no existing test gets
+    # filtered out).
+    msg.metadata.sequence.stream = stream_seq
     return msg
 
 
@@ -43,6 +49,10 @@ def _mk_js(per_stream_msgs: dict[str, list]) -> MagicMock:
 
     The fetch sequence returns the list once, then empty (terminates the
     iterator). publish is captured for assertions; unsubscribe is no-op.
+    stream_info returns a snapshot that's intentionally far above any test
+    message's stream_seq so the v0.10.5.2 boundary check is a no-op for
+    every existing test -- only the dedicated regression tests below
+    exercise the filter explicitly.
     """
     js = MagicMock()
     captured_publishes: list[tuple[str, bytes, dict]] = []
@@ -52,6 +62,13 @@ def _mk_js(per_stream_msgs: dict[str, list]) -> MagicMock:
 
     js.publish = AsyncMock(side_effect=_publish)
     js._captured = captured_publishes
+
+    async def _stream_info(name):
+        info = MagicMock()
+        info.state.last_seq = 10**12
+        return info
+
+    js.stream_info = AsyncMock(side_effect=_stream_info)
 
     async def _pull_subscribe(filter_subj, durable=None, stream=None, config=None):
         sub = MagicMock()
@@ -281,6 +298,13 @@ async def test_pull_subscribe_inactive_threshold_within_nats_range():
 
     js = MagicMock()
     js.pull_subscribe = AsyncMock(side_effect=_capture_config)
+    # v0.10.5.2: preview_resend now snapshots last_seq before iterating; give
+    # the bare mock a stream_info AsyncMock so we still reach pull_subscribe.
+    async def _stream_info(name):
+        info = MagicMock()
+        info.state.last_seq = 10**12
+        return info
+    js.stream_info = AsyncMock(side_effect=_stream_info)
     await preview_resend(js, minutes=60)
 
     INT64_MAX_NS = 9_223_372_036_854_775_807
@@ -298,6 +322,119 @@ async def test_pull_subscribe_inactive_threshold_within_nats_range():
             f"bug -- a unit confusion that produced 30e18 and triggered "
             f"err_code=10025 from NATS."
         )
+
+
+# --- BY_START_TIME feedback-loop guard (v0.10.5.2) ---------------------------
+
+
+def _mk_batched_sub(batches: list[list]) -> MagicMock:
+    """Pull-sub mock whose fetch returns one entry from ``batches`` per call,
+    then empty -- lets a test stage messages that arrive AFTER the snapshot.
+    """
+    sub = MagicMock()
+    calls = {"n": 0}
+
+    async def _fetch(batch=200, timeout=2.0):
+        if calls["n"] < len(batches):
+            out = batches[calls["n"]]
+            calls["n"] += 1
+            return out
+        return []
+
+    sub.fetch = AsyncMock(side_effect=_fetch)
+    sub.unsubscribe = AsyncMock()
+    return sub
+
+
+@pytest.mark.asyncio
+async def test_iter_window_stops_at_snapshot_last_seq_boundary():
+    """v0.10.5.2 regression guard: the feedback loop that took down central.
+
+    v0.10.5 used DeliverPolicy.BY_START_TIME with no upper bound on the
+    consumer. As soon as execute_resend republished a message, the new copy
+    matched the time filter and the same consumer fetched it again,
+    republishing in an unbounded loop until the per-stream cap tripped --
+    potentially 450k spurious republishes across 9 streams, which is what
+    timed out central-gui's POST and brought the host down.
+
+    Fix: snapshot the stream's ``last_seq`` at the top of preview/execute
+    and pass it as ``max_stream_seq`` to ``_iter_window``. Any message
+    whose ``metadata.sequence.stream`` exceeds the snapshot was published
+    AFTER we started -- either an unrelated adapter ingest or the very
+    republish we just emitted -- and must not be touched.
+
+    Simulation: batch 1 holds the 100 legit pre-snapshot messages
+    (stream_seqs 100..199, snapshot=199). Batch 2 holds 100 post-snapshot
+    messages (stream_seqs 200..299) -- the "echoes" that v0.10.5 would
+    have looped on. Assert iter yields exactly 100 (all from batch 1) and
+    NEVER yields a batch-2 message.
+    """
+    pre_snapshot = [
+        _mk_msg(f"central.fire.x.{seq}", stream_seq=seq)
+        for seq in range(100, 200)
+    ]
+    post_snapshot = [
+        _mk_msg(f"central.fire.x.{seq}", stream_seq=seq)
+        for seq in range(200, 300)
+    ]
+    sub = _mk_batched_sub([pre_snapshot, post_snapshot])
+
+    js = MagicMock()
+    js.pull_subscribe = AsyncMock(return_value=sub)
+
+    yielded = []
+    async for msg in resend_mod._iter_window(
+        js, "CENTRAL_FIRE", "central.fire.>",
+        cutoff=datetime(2026, 6, 7, 0, 0, 0, tzinfo=timezone.utc),
+        max_stream_seq=199,
+    ):
+        yielded.append(msg.metadata.sequence.stream)
+
+    assert len(yielded) == 100
+    assert yielded == list(range(100, 200))
+    # Cleanup still runs after early return.
+    sub.unsubscribe.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_iter_window_enforces_per_stream_cap_with_warning(caplog):
+    """v0.10.5.2 regression guard: cap dropped from 50_000 to 5_000.
+
+    A legit operator window should never exceed this. If it does, we want
+    the operator to hear about it via a warning log -- silent truncation
+    is exactly the kind of behavior that hid the v0.10.5 feedback loop
+    from the operator until it took the host down.
+
+    Simulation: snapshot is set high enough (10**6) that it never limits
+    iteration; cap (5000) is the only stopper. Batches of 200 messages
+    each, seqs 1..6200, so the cap trips well before the source runs out.
+    """
+    batches = [
+        [_mk_msg(f"central.x.{seq}", stream_seq=seq)
+         for seq in range(start, start + 200)]
+        for start in range(1, 6201, 200)
+    ]
+    sub = _mk_batched_sub(batches)
+
+    js = MagicMock()
+    js.pull_subscribe = AsyncMock(return_value=sub)
+
+    yielded = 0
+    with caplog.at_level("WARNING", logger="central.gui.resend"):
+        async for _ in resend_mod._iter_window(
+            js, "CENTRAL_FIRE", "central.fire.>",
+            cutoff=datetime(2026, 6, 7, 0, 0, 0, tzinfo=timezone.utc),
+            max_stream_seq=10**6,
+        ):
+            yielded += 1
+
+    assert yielded == resend_mod._MAX_MSGS_PER_STREAM == 5_000
+    cap_warnings = [r for r in caplog.records
+                    if r.levelname == "WARNING"
+                    and "cap reached" in r.getMessage()]
+    assert len(cap_warnings) == 1
+    assert cap_warnings[0].stream == "CENTRAL_FIRE"
+    sub.unsubscribe.assert_awaited_once()
 
 
 # --- stream-set safety -------------------------------------------------------

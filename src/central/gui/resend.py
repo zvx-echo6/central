@@ -52,10 +52,11 @@ _FETCH_BATCH = 200
 _FETCH_TIMEOUT_S = 2.0
 _INACTIVE_THRESHOLD_S = 30.0
 
-# Hard cap per stream per operation. 24h * worst-case CENTRAL_TRAFFIC_FLOW
-# volume is still well under this; bump if a legitimate operator action
-# ever hits it.
-_MAX_MSGS_PER_STREAM = 50_000
+# Hard cap per stream per operation. v0.10.5.2 dropped this from 50_000 to
+# 5_000 after the BY_START_TIME feedback loop ran wild: a legitimate
+# operator window should never exceed this, so hitting the cap is now a
+# warning condition the operator should hear about.
+_MAX_MSGS_PER_STREAM = 5_000
 
 # Audit-log meta subject. CENTRAL_META filter (`central.meta.>`) already
 # captures it; archive does NOT consume CENTRAL_META.
@@ -97,13 +98,22 @@ async def _iter_window(
     stream_name: str,
     subject_filter: str,
     cutoff: datetime,
+    max_stream_seq: int,
 ):
-    """Yield each NATS message in ``stream_name`` since ``cutoff``.
+    """Yield each NATS message in ``stream_name`` since ``cutoff`` up to ``max_stream_seq``.
 
     Uses an ephemeral pull-consumer (``durable=None``, ``ack_policy=NONE``,
     ``inactive_threshold=30s``) with ``DeliverPolicy.BY_START_TIME`` so the
     JetStream server filters server-side and we never paginate over the full
     stream history.
+
+    ``max_stream_seq`` is the snapshot of the stream's ``last_seq`` taken
+    immediately before iteration began. Any message with
+    ``msg.metadata.sequence.stream > max_stream_seq`` arrived AFTER the
+    snapshot -- either an unrelated adapter publish or, critically, a
+    republish from the very wave we're currently emitting. Iteration stops
+    cleanly at that boundary, which kills the v0.10.5 feedback loop where
+    BY_START_TIME alone kept matching our own republished messages.
     """
     config = ConsumerConfig(
         deliver_policy=DeliverPolicy.BY_START_TIME,
@@ -136,10 +146,21 @@ async def _iter_window(
             if not msgs:
                 break
             for msg in msgs:
+                # Pull-consumer delivery order is stream-seq ascending, so the
+                # first message past the snapshot means every remaining message
+                # also is -- exit the generator cleanly (finally still runs).
+                if msg.metadata.sequence.stream > max_stream_seq:
+                    return
                 yielded += 1
                 yield msg
                 if yielded >= _MAX_MSGS_PER_STREAM:
-                    break
+                    logger.warning(
+                        "resend: per-stream message cap reached, "
+                        "remaining matches in window were not processed",
+                        extra={"stream": stream_name,
+                               "cap": _MAX_MSGS_PER_STREAM},
+                    )
+                    return
     finally:
         try:
             await sub.unsubscribe()
@@ -147,23 +168,62 @@ async def _iter_window(
             pass
 
 
+async def _snapshot_last_seqs(js: JetStreamContext) -> tuple[dict[str, int], set[str]]:
+    """Capture each event-bearing stream's ``last_seq`` as the resend boundary.
+
+    Returns ``(snapshot, errored)``. Streams that don't exist (fresh dev box)
+    are omitted from ``snapshot`` and NOT marked errored -- they're simply
+    empty. Streams whose ``stream_info`` call raises any other exception are
+    added to ``errored`` so the caller can report them without iterating.
+
+    Taken all at once at the top of preview/execute so every stream sees a
+    point-in-time boundary that pre-dates any republish we're about to do.
+    """
+    snapshot: dict[str, int] = {}
+    errored: set[str] = set()
+    for s in _event_bearing_streams():
+        try:
+            info = await js.stream_info(s.name)
+            snapshot[s.name] = info.state.last_seq
+        except NotFoundError:
+            # Empty/absent stream: skip silently, no error.
+            pass
+        except Exception:
+            logger.exception("resend: snapshot failed", extra={"stream": s.name})
+            errored.add(s.name)
+    return snapshot, errored
+
+
 async def preview_resend(js: JetStreamContext, minutes: int) -> dict[str, Any]:
     """Count messages per event-bearing stream within the last ``minutes``.
 
     Streams that error out are reported with ``None`` in ``by_stream`` and
-    ``errors`` incremented; the preview never raises.
+    ``errors`` incremented; the preview never raises. The per-stream message
+    count is bounded by the snapshot of ``last_seq`` captured at the top of
+    the call so a preview taken immediately after a resend doesn't include
+    the messages we just republished.
     """
     if minutes <= 0 or not is_valid_window(minutes):
         return {"count": 0, "by_stream": {}, "minutes": minutes,
                 "window_label": window_label(minutes), "errors": 0}
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    snapshot, errored = await _snapshot_last_seqs(js)
     by_stream: dict[str, int | None] = {}
     total = 0
     errors = 0
     for s in _event_bearing_streams():
+        if s.name in errored:
+            by_stream[s.name] = None
+            errors += 1
+            continue
+        if s.name not in snapshot:
+            by_stream[s.name] = 0
+            continue
         try:
             n = 0
-            async for _ in _iter_window(js, s.name, s.subject_filter, cutoff):
+            async for _ in _iter_window(
+                js, s.name, s.subject_filter, cutoff, snapshot[s.name],
+            ):
                 n += 1
             by_stream[s.name] = n
             total += n
@@ -203,6 +263,8 @@ async def execute_resend(
     started_mono = time.monotonic()
     ts_ms = int(time.time() * 1000)
 
+    snapshot, errored = await _snapshot_last_seqs(js)
+
     published = 0
     errors = 0
     by_stream: dict[str, dict[str, int]] = {}
@@ -210,8 +272,17 @@ async def execute_resend(
     for s in _event_bearing_streams():
         n_ok = 0
         n_err = 0
+        if s.name in errored:
+            by_stream[s.name] = {"published": 0, "errors": 1}
+            errors += 1
+            continue
+        if s.name not in snapshot:
+            by_stream[s.name] = {"published": 0, "errors": 0}
+            continue
         try:
-            async for msg in _iter_window(js, s.name, s.subject_filter, cutoff):
+            async for msg in _iter_window(
+                js, s.name, s.subject_filter, cutoff, snapshot[s.name],
+            ):
                 hdr = msg.headers or {}
                 orig = hdr.get("Nats-Msg-Id") or hdr.get("nats-msg-id")
                 if orig:
