@@ -1,0 +1,23 @@
+<article id="resend-card">
+    <header>Re-send recent events</header>
+    <p>Replay messages from the last few minutes or hours so any consumer that
+       missed them can pick them up. Archived records collapse onto the same row
+       — re-sending does not duplicate history.</p>
+    {% if error %}<p role="alert"><strong>{{ error }}</strong></p>{% endif %}
+    <form>
+        <label for="resend-minutes">Time window
+            <select name="minutes" id="resend-minutes">
+                {% for m, label in windows %}
+                    <option value="{{ m }}"{% if m == 60 %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <button type="button"
+                hx-get="/actions/resend/preview"
+                hx-include="#resend-minutes"
+                hx-target="#resend-card"
+                hx-swap="outerHTML">
+            Re-send
+        </button>
+    </form>
+</article>

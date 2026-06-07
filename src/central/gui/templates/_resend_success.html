@@ -1,0 +1,23 @@
+<article id="resend-card">
+    <header>Re-sent {{ published }} event{{ '' if published == 1 else 's' }} from the last {{ window_label }}</header>
+    <p>Completed in {{ elapsed_s }} second{{ '' if elapsed_s == 1 else 's' }}{% if errors %}
+        — <strong>{{ errors }} failed</strong> and were not re-sent. See the
+        operator log for details.{% else %}.{% endif %}</p>
+    <details>
+        <summary>By stream</summary>
+        <ul>
+            {% for stream, info in by_stream.items() %}
+                <li><strong>{{ stream }}</strong>:
+                    {{ info.published }} sent{% if info.errors %},
+                    {{ info.errors }} failed{% endif %}
+                </li>
+            {% endfor %}
+        </ul>
+    </details>
+    <button type="button"
+            hx-get="/actions/resend/card"
+            hx-target="#resend-card"
+            hx-swap="outerHTML">
+        Re-send another window
+    </button>
+</article>

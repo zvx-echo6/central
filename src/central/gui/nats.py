@@ -31,6 +31,16 @@ def get_js() -> JetStreamContext | None:
     return _js
 
 
+def get_nc() -> nats.NATS | None:
+    """Get the raw NATS connection. Returns None if not connected.
+
+    Used by v0.10.5 ``central.gui.resend`` for non-JetStream meta-event
+    publishes (audit log on ``central.meta.action.resend``). Stream-bound
+    publishes still go via :func:`get_js`.
+    """
+    return _nc
+
+
 async def close_nats() -> None:
     """Close the NATS connection."""
     global _nc, _js
