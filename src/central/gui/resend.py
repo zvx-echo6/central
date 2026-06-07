@@ -42,9 +42,15 @@ logger = logging.getLogger(__name__)
 
 # Pull-fetch tuning. The ephemeral consumer's inactive_threshold guarantees
 # JetStream auto-cleans the temp consumer if anything kills our iterator.
+# v0.10.5.1 fix: ``inactive_threshold`` is expected as float SECONDS by
+# nats-py (which then multiplies by 1e9 internally to form the nanosecond
+# value sent to the server). v0.10.5 passed ``int(30e9)`` thinking it was
+# already in ns, which got re-multiplied to 30e18 -- out of int64 range,
+# rejected by the server with err_code=10025. Use the documented float-
+# seconds API and let the library handle the unit conversion.
 _FETCH_BATCH = 200
 _FETCH_TIMEOUT_S = 2.0
-_INACTIVE_THRESHOLD_NS = int(30e9)
+_INACTIVE_THRESHOLD_S = 30.0
 
 # Hard cap per stream per operation. 24h * worst-case CENTRAL_TRAFFIC_FLOW
 # volume is still well under this; bump if a legitimate operator action
@@ -103,7 +109,7 @@ async def _iter_window(
         deliver_policy=DeliverPolicy.BY_START_TIME,
         opt_start_time=cutoff.isoformat(),
         ack_policy=AckPolicy.NONE,
-        inactive_threshold=_INACTIVE_THRESHOLD_NS,
+        inactive_threshold=_INACTIVE_THRESHOLD_S,
         filter_subject=subject_filter,
     )
     try:
