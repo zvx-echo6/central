@@ -147,35 +147,34 @@ def _compute_bbox(
     return (min_lon, min_lat, max_lon, max_lat)
 
 
-def _extract_states_from_codes(
-    same_codes: list[str], ugc_codes: list[str]
-) -> set[str]:
-    """Extract state abbreviations from SAME and UGC codes."""
-    states: set[str] = set()
-
-    for code in same_codes:
-        if len(code) >= 2:
-            fips_state = code[:2]
-            if fips_state in FIPS_TO_STATE:
-                states.add(FIPS_TO_STATE[fips_state])
-
-    for code in ugc_codes:
-        if len(code) >= 2 and code[:2].isalpha():
-            states.add(code[:2].upper())
-
-    return states
-
-
 def _build_regions(same_codes: list[str], ugc_codes: list[str]) -> list[str]:
-    """Build sorted list of region strings from geocodes."""
+    """Build sorted list of region strings from geocodes.
+
+    SAME format (FCC standard) is ``PSSCCC``: ``P`` is an area-type indicator
+    (``0`` = whole region, ``1``-``9`` = a designated portion), ``SS`` is the
+    2-digit state FIPS, ``CCC`` is the 3-digit county FIPS. Pre-v0.10.7 read
+    ``code[:2]`` (``PS``) as the state -- so e.g. ``016005`` (Bannock County,
+    Idaho) parsed as state ``01`` = Alabama. Fix: slice ``code[1:3]`` for the
+    state and emit the 5-digit ANSI county FIPS (``code[1:]`` = ``SSCCC``)
+    rather than the full 6-digit SAME, so subscribers see the interoperable
+    standard form. The ``P`` digit is preserved verbatim in
+    ``data.geocode.SAME`` for any power user that needs it.
+
+    UGC codes carry the 2-letter state alpha (e.g. ``IDZ052``) so the UGC
+    branch was already correct -- only the SAME branch needed the fix.
+
+    Malformed inputs (non-6-digit, non-digit chars, ``None``) are silently
+    skipped: no crash, no entry.
+    """
     regions: set[str] = set()
 
     for code in same_codes:
-        if len(code) >= 2:
-            fips_state = code[:2]
+        if isinstance(code, str) and len(code) == 6 and code.isdigit():
+            fips_state = code[1:3]
             if fips_state in FIPS_TO_STATE:
                 state = FIPS_TO_STATE[fips_state]
-                regions.add(f"US-{state}-FIPS{code}")
+                county_ansi = code[1:]  # 5-digit ANSI county FIPS (SSCCC)
+                regions.add(f"US-{state}-FIPS{county_ansi}")
 
     for code in ugc_codes:
         if len(code) >= 3 and code[:2].isalpha():

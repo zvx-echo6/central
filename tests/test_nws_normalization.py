@@ -11,7 +11,6 @@ from central.adapters.nws import (
     NWSAdapter,
     _snake_case,
     _parse_datetime,
-    _extract_states_from_codes,
     _build_regions,
     _compute_centroid,
     _compute_bbox,
@@ -21,7 +20,9 @@ from central.config_models import AdapterConfig
 
 
 # Sample NWS GeoJSON features for testing
-# SAME codes: 6 digits, first 2 are state FIPS (ID=16, OR=41, CA=06, WA=53)
+# SAME codes are 6 digits in PSSCCC form (P=area-type indicator, SS=state
+# FIPS, CCC=county FIPS). ID=16, OR=41, CA=06, WA=53 — so the SAME values
+# below use the standard 0SSCCC form (no area-subset, full region).
 SAMPLE_FEATURE_ID = {
     "id": "urn:oid:2.49.0.1.840.0.a1b2c3d4e5f6",
     "type": "Feature",
@@ -42,7 +43,7 @@ SAMPLE_FEATURE_ID = {
         "expires": "2026-05-15T14:00:00-06:00",
         "severity": "Severe",
         "geocode": {
-            "SAME": ["160001"],  # Idaho state FIPS 16
+            "SAME": ["016001"],  # Idaho (state FIPS 16) county 001 (Ada)
             "UGC": ["IDC001", "IDZ033"],
         },
     },
@@ -59,7 +60,7 @@ SAMPLE_FEATURE_OR = {
         "expires": "2026-05-16T08:00:00Z",
         "severity": "Moderate",
         "geocode": {
-            "SAME": ["410051"],  # Oregon state FIPS 41
+            "SAME": ["041051"],  # Oregon (state FIPS 41) county 051 (Multnomah)
             "UGC": ["ORC051"],
         },
     },
@@ -79,7 +80,7 @@ SAMPLE_FEATURE_CA = {
         "expires": "2026-05-16T18:00:00-07:00",
         "severity": "Minor",
         "geocode": {
-            "SAME": ["060037"],  # California state FIPS 06
+            "SAME": ["006037"],  # California (state FIPS 06) county 037 (Los Angeles)
             "UGC": ["CAZ568"],
         },
     },
@@ -96,7 +97,7 @@ SAMPLE_FEATURE_UNKNOWN_SEVERITY = {
         "expires": None,
         "severity": "Unknown",
         "geocode": {
-            "SAME": ["530033"],  # Washington state FIPS 53
+            "SAME": ["053033"],  # Washington (state FIPS 53) county 033 (King)
             "UGC": ["WAC033"],
         },
     },
@@ -137,35 +138,14 @@ class TestParseDatetime:
         assert _parse_datetime("not a date") is None
 
 
-class TestExtractStates:
-    """Tests for state extraction from geocodes."""
-
-    def test_same_codes(self) -> None:
-        # Idaho FIPS is 16
-        states = _extract_states_from_codes(["160001", "160003"], [])
-        assert states == {"ID"}
-
-    def test_ugc_codes(self) -> None:
-        states = _extract_states_from_codes([], ["IDC001", "ORC051"])
-        assert states == {"ID", "OR"}
-
-    def test_combined(self) -> None:
-        # Idaho FIPS is 16
-        states = _extract_states_from_codes(["160001"], ["WAC033"])
-        assert states == {"ID", "WA"}
-
-    def test_empty(self) -> None:
-        states = _extract_states_from_codes([], [])
-        assert states == set()
-
-
 class TestBuildRegions:
     """Tests for region string building."""
 
     def test_same_to_fips_region(self) -> None:
-        # Idaho FIPS is 16
-        regions = _build_regions(["160001"], [])
-        assert "US-ID-FIPS160001" in regions
+        # SAME 016001 = P=0, SS=16 (Idaho), CCC=001 (Ada County);
+        # emitted region uses the 5-digit ANSI county FIPS (drops P).
+        regions = _build_regions(["016001"], [])
+        assert "US-ID-FIPS16001" in regions
 
     def test_ugc_county(self) -> None:
         regions = _build_regions([], ["IDC001"])
@@ -176,8 +156,67 @@ class TestBuildRegions:
         assert "US-ID-Z033" in regions
 
     def test_sorted_alphabetically(self) -> None:
-        regions = _build_regions(["160001"], ["IDC001", "IDZ033"])
+        regions = _build_regions(["016001"], ["IDC001", "IDZ033"])
         assert regions == sorted(regions)
+
+
+class TestSameStateParse:
+    """v0.10.7 regression guard: SAME PSSCCC parsing.
+
+    The pre-v0.10.7 ``_build_regions`` read ``code[:2]`` (``PS``) as the state
+    FIPS, so for ``P=0`` (the common case) every SAME code parsed as
+    Alabama (``01``) regardless of the real state. Fix slices ``code[1:3]``
+    for the state and emits the 5-digit ANSI county FIPS (``code[1:]``).
+    """
+
+    @pytest.mark.parametrize("same_code, expected_region", [
+        ("016005", "US-ID-FIPS16005"),  # Bannock County, Idaho
+        ("001005", "US-AL-FIPS01005"),  # Autauga area, Alabama
+        ("056005", "US-WY-FIPS56005"),  # Carbon area, Wyoming
+        ("049005", "US-UT-FIPS49005"),  # Cache area, Utah
+    ])
+    def test_state_derived_from_positions_1_2(
+        self, same_code: str, expected_region: str
+    ) -> None:
+        """Real SAME codes from four distinct states parse to the correct state."""
+        regions = _build_regions([same_code], [])
+        assert expected_region in regions
+        assert len(regions) == 1
+
+    def test_area_subset_indicator_is_dropped_from_emitted_region(self) -> None:
+        """SAME with P>=1 (designated portion) parses the same state but the
+        emitted 5-digit county FIPS drops the P digit -- area-subset info
+        lives upstream in ``data.geocode.SAME`` for power users."""
+        # 116005: P=1 (subset of region), SS=16 (Idaho), CCC=005 (Bannock)
+        regions = _build_regions(["116005"], [])
+        assert "US-ID-FIPS16005" in regions
+
+    @pytest.mark.parametrize("malformed", [
+        "",          # empty
+        "01",        # too short
+        "0160",      # too short
+        "0160050",   # too long (7 digits)
+        "016X05",    # non-digit char
+        "abcdef",    # all alpha
+        None,        # missing entry
+    ])
+    def test_malformed_same_is_silently_skipped(self, malformed) -> None:
+        """Garbage in SAME never crashes and never produces a region."""
+        regions = _build_regions([malformed], [])
+        assert regions == []
+
+    def test_unknown_state_fips_is_silently_skipped(self) -> None:
+        """SAME with valid format but unrecognized state FIPS produces nothing."""
+        # SS=99 is not a real state FIPS
+        regions = _build_regions(["099001"], [])
+        assert regions == []
+
+    def test_mixed_good_and_malformed(self) -> None:
+        """Valid entries still emit when malformed ones are present in the list."""
+        regions = _build_regions(["016001", "", "049005", "abc"], [])
+        assert "US-ID-FIPS16001" in regions
+        assert "US-UT-FIPS49005" in regions
+        assert len(regions) == 2
 
 
 class TestStateFilter:
