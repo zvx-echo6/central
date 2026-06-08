@@ -140,3 +140,68 @@ class TestLoadMonitoringArea:
             "monitor_east": -111.0, "monitor_west": -117.5,
         })
         assert await load_monitoring_area(conn) is None
+
+
+class TestDefaultMonitoringAreaCoversIdaho:
+    """v0.10.9 regression guard for migration 034 + the routes._DEFAULT_MONITOR fallback.
+
+    v0.10.2 shipped with the default monitor_north = 44.5, which only covered the
+    southern third of Idaho -- the supervisor's publish-time bbox filter was
+    silently dropping ~56 itd_511 events per 60-second poll (the entire northern
+    panhandle: Coeur d'Alene, Lewiston, Sandpoint, Moscow, McCall). NWS Idaho
+    UGC-zone alerts in the panhandle were similarly dropped (v0.10.7 followup
+    ticket (b)). Idaho actually extends to 49.0N. Migration 034 widens the
+    default to cover the full state.
+
+    If anything reverts the default to a value that excludes any Idaho city,
+    this test fails loudly.
+    """
+
+    # (city, lat, lon) -- spread across Idaho to catch any narrowing on any side.
+    IDAHO_SENTINEL_CITIES = [
+        ("Coeur d'Alene (panhandle, north)",   47.6777, -116.7805),
+        ("Sandpoint (panhandle, far north)",   48.2766, -116.5534),
+        ("Lewiston (north-central)",           46.4165, -117.0177),
+        ("Moscow (panhandle, west)",           46.7324, -116.9999),
+        ("McCall (central-north)",             44.9111, -116.0998),
+        ("Boise (south-west)",                 43.6150, -116.2023),
+        ("Idaho Falls (south-east)",           43.4917, -112.0339),
+        ("Twin Falls (south-central)",         42.5629, -114.4609),
+        ("Pocatello (south-east)",             42.8713, -112.4455),
+    ]
+
+    def test_routes_default_monitor_covers_full_idaho_extent(self):
+        """routes._DEFAULT_MONITOR must contain every Idaho sentinel city."""
+        from central.gui.routes import _DEFAULT_MONITOR
+        default = MonitoringArea(
+            north=_DEFAULT_MONITOR["north"],
+            south=_DEFAULT_MONITOR["south"],
+            east=_DEFAULT_MONITOR["east"],
+            west=_DEFAULT_MONITOR["west"],
+        )
+        for label, lat, lon in self.IDAHO_SENTINEL_CITIES:
+            assert classify_geom(_pt(lon, lat), default) == "in-bounds", (
+                f"_DEFAULT_MONITOR rejected {label} at ({lat}, {lon}) -- "
+                f"check that monitor_north is at least 49.0"
+            )
+
+    def test_routes_default_monitor_bounds_match_idaho_extent(self):
+        """Belt-and-suspenders: assert the exact corner values rather than
+        just inferring from the city checks. v0.10.9 set the default to
+        (49.0, 41.8, -111.0, -117.5) -- the bounding box of Idaho."""
+        from central.gui.routes import _DEFAULT_MONITOR
+        assert _DEFAULT_MONITOR["north"] >= 49.0
+        assert _DEFAULT_MONITOR["south"] <= 41.8
+        assert _DEFAULT_MONITOR["east"] >= -111.0
+        assert _DEFAULT_MONITOR["west"] <= -117.5
+
+    def test_v0_10_2_narrow_default_would_reject_panhandle(self):
+        """Anti-regression: the OLD v0.10.2 north=44.5 default would have
+        rejected the panhandle. This isn't testing current behavior -- it's
+        documenting what we fixed, and ensuring nothing reintroduces a
+        narrow north bound silently."""
+        narrow = MonitoringArea(north=44.5, south=41.8, east=-111.0, west=-117.5)
+        panhandle_cities = [c for c in self.IDAHO_SENTINEL_CITIES if c[1] > 44.5]
+        assert len(panhandle_cities) >= 4, "expected at least 4 north-of-44.5 sentinels"
+        for label, lat, lon in panhandle_cities:
+            assert classify_geom(_pt(lon, lat), narrow) == "out-of-bounds", label
