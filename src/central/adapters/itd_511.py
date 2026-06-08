@@ -57,6 +57,7 @@ from tenacity import (
 from central.adapter import SourceAdapter
 from central.config_models import AdapterConfig
 from central.config_store import ConfigStore
+from central.enrichment import mile_marker
 from central.models import Event, Geo
 
 logger = logging.getLogger(__name__)
@@ -296,6 +297,37 @@ class Itd511Adapter(SourceAdapter):
             lat, lon, rec.get("LatitudeSecondary"), rec.get("LongitudeSecondary"),
             rec.get("EncodedPolyline"),
         )
+        comment = _strip_or_none(rec.get("Comment"))
+        data: dict[str, Any] = {
+            "event_type_short": et,
+            "event_sub_type": _strip_or_none(rec.get("EventSubType")),
+            "roadway_name": _strip_or_none(rec.get("RoadwayName")),
+            "direction": _strip_or_none(rec.get("DirectionOfTravel")),
+            "description": _strip_or_none(rec.get("Description")),
+            "lanes_affected": _strip_or_none(rec.get("LanesAffected")),
+            "is_full_closure": bool(rec.get("IsFullClosure")),
+            "itd_severity": rec.get("Severity"),
+            "comment": comment,
+            "cause": _strip_or_none(rec.get("Cause")),
+            "organization": rec.get("Organization"),
+            "recurrence_text": _strip_or_none(rec.get("Recurrence")),
+            "recurrence_schedules": rec.get("RecurrenceSchedules") or [],
+            "restrictions": rec.get("Restrictions") or {},
+            "detour_polyline": rec.get("DetourPolyline") or None,
+            "detour_instructions": _strip_or_none(rec.get("DetourInstructions")),
+            "encoded_polyline": rec.get("EncodedPolyline"),
+            "id_internal": rec.get("ID"),
+            "source_id": rec.get("SourceId"),
+            "reported_epoch": rec.get("Reported"),
+            "last_updated_epoch": rec.get("LastUpdated"),
+            "start_epoch": rec.get("StartDate"),
+            "planned_end_epoch": rec.get("PlannedEndDate"),
+            "latitude": lat,
+            "longitude": lon,
+        }
+        mm = mile_marker.extract(comment)
+        if mm is not None:
+            data.setdefault("_enriched", {})["mile_marker"] = mm
         return Event(
             id=f"idaho_511:event:{source_id}",
             adapter=self.name,
@@ -310,33 +342,7 @@ class Itd511Adapter(SourceAdapter):
                 centroid=centroid, geometry=geom,
                 regions=["US-ID"], primary_region="US-ID",
             ),
-            data={
-                "event_type_short": et,
-                "event_sub_type": _strip_or_none(rec.get("EventSubType")),
-                "roadway_name": _strip_or_none(rec.get("RoadwayName")),
-                "direction": _strip_or_none(rec.get("DirectionOfTravel")),
-                "description": _strip_or_none(rec.get("Description")),
-                "lanes_affected": _strip_or_none(rec.get("LanesAffected")),
-                "is_full_closure": bool(rec.get("IsFullClosure")),
-                "itd_severity": rec.get("Severity"),
-                "comment": _strip_or_none(rec.get("Comment")),
-                "cause": _strip_or_none(rec.get("Cause")),
-                "organization": rec.get("Organization"),
-                "recurrence_text": _strip_or_none(rec.get("Recurrence")),
-                "recurrence_schedules": rec.get("RecurrenceSchedules") or [],
-                "restrictions": rec.get("Restrictions") or {},
-                "detour_polyline": rec.get("DetourPolyline") or None,
-                "detour_instructions": _strip_or_none(rec.get("DetourInstructions")),
-                "encoded_polyline": rec.get("EncodedPolyline"),
-                "id_internal": rec.get("ID"),
-                "source_id": rec.get("SourceId"),
-                "reported_epoch": rec.get("Reported"),
-                "last_updated_epoch": rec.get("LastUpdated"),
-                "start_epoch": rec.get("StartDate"),
-                "planned_end_epoch": rec.get("PlannedEndDate"),
-                "latitude": lat,
-                "longitude": lon,
-            },
+            data=data,
         )
 
     def _build_advisory_record(self, rec: dict[str, Any]) -> Event | None:
