@@ -396,3 +396,54 @@ def test_tenacity_decorator_has_explicit_no_log_hooks():
     assert retrying.after is after_nothing
     assert retrying.before is before_nothing
     assert retrying.reraise is True
+
+
+# --- v0.10.6: mile_marker enrichment on incident events ---------------------
+
+
+def _rec_with_comment(comment: str | None) -> dict:
+    """Minimal /get/event record with a settable Comment field."""
+    return {
+        "SourceId": "test-mm-1",
+        "EventType": "accidentsAndIncidents",
+        "Comment": comment,
+        "Latitude": 43.6,
+        "Longitude": -116.2,
+        "Severity": "Minor",
+    }
+
+
+def test_build_event_attaches_mile_marker_when_comment_has_milepost(adapter):
+    """Comment with a milepost keyword -> _enriched.mile_marker populated.
+
+    v0.10.6: the adapter calls central.enrichment.mile_marker.extract on
+    the Comment field; the result lands under the existing _enriched
+    namespace (same convention the supervisor's geocoder uses), keyed by
+    'mile_marker'. Asserts the bundle is present and matches the
+    {value, source, confidence} contract.
+    """
+    rec = _rec_with_comment(
+        "Crash on westbound I-84 at milepost 54.  One right lane blocked."
+    )
+    e = adapter._build_event_record(rec)
+    assert e is not None
+    bundle = e.data.get("_enriched", {}).get("mile_marker")
+    assert bundle is not None, "expected _enriched.mile_marker on milepost-bearing comment"
+    assert bundle["value"] == 54.0
+    assert bundle["source"] == "comment_regex"
+    assert bundle["confidence"] == "high"
+
+
+def test_build_event_omits_mile_marker_when_comment_has_none(adapter):
+    """No MP/mile keyword -> _enriched.mile_marker ABSENT (no null placeholder).
+
+    Subscribers can therefore distinguish 'no MP mentioned' from
+    'extraction ran and found nothing'. Also covers the missing-Comment path.
+    """
+    no_match = adapter._build_event_record(_rec_with_comment("Bridge Repair"))
+    assert no_match is not None
+    assert "mile_marker" not in no_match.data.get("_enriched", {})
+
+    missing = adapter._build_event_record(_rec_with_comment(None))
+    assert missing is not None
+    assert "mile_marker" not in missing.data.get("_enriched", {})
