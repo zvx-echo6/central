@@ -2349,7 +2349,7 @@ async def enrichment_update(request: Request) -> Response:
 
 # --- Monitoring area (system-level archive bbox filter) --------------------
 
-_DEFAULT_MONITOR = {"north": 44.5, "south": 41.8, "east": -111.0, "west": -117.5}
+_DEFAULT_MONITOR = {"north": 49.0, "south": 41.8, "east": -111.0, "west": -117.5}
 
 
 async def _read_monitoring_area(conn) -> dict[str, Any]:
