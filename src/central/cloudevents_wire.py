@@ -22,8 +22,17 @@ def wrap_event(
                 or None to use defaults.
 
     Returns:
-        A tuple of (envelope_dict, msg_id) where msg_id is the
-        CloudEvent id for use as Nats-Msg-Id header.
+        A tuple of (envelope_dict, msg_id). ``msg_id`` is what we hand to
+        JetStream as the ``Nats-Msg-Id`` header. As of v0.10.8 it has the
+        category-discriminated shape ``"{event.id}:{event.category}"`` so
+        that an incident envelope and a perimeter envelope sharing the
+        same source GUID (e.g. wfigs_incidents and wfigs_perimeters both
+        emitting a Summit Creek IRWIN within JetStream's 2-min dedup
+        window on CENTRAL_FIRE) do NOT collide -- the subject is not part
+        of the dedup key, so the category suffix is what makes them
+        distinct. ``envelope["id"]`` itself stays the bare ``event.id``
+        per the CloudEvents spec, so subscribers that key off the
+        payload id are unaffected.
     """
     # Resolve CloudEventsConfig from various input types
     if config is None:
@@ -67,4 +76,4 @@ def wrap_event(
     envelope: dict[str, Any] = dict(ce.get_attributes())
     envelope["data"] = ce.data
 
-    return envelope, event.id
+    return envelope, f"{event.id}:{event.category}"
