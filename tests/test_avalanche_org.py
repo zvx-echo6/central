@@ -16,6 +16,8 @@ from central.adapters.avalanche_org import (
     AvalancheOrgSettings,
     _centroid,
     _parse_iso,
+    _read_observed,
+    _removal_reason,
     _slug,
 )
 from central.config_models import AdapterConfig
@@ -46,16 +48,17 @@ def adapter(tmp_path: Path) -> AvalancheOrgAdapter:
 
 
 @pytest.mark.parametrize("text, expected", [
-    ("Banner Summit", "banner_summit"),
-    ("Sawtooth & Western Smoky Mtns", "sawtooth_western_smoky_mtns"),
-    ("Galena Summit & Eastern Mtns", "galena_summit_eastern_mtns"),
-    ("Soldier & Wood River Valley Mtns", "soldier_wood_river_valley_mtns"),
-    ("ALL CAPS", "all_caps"),
-    ("  leading/trailing  ", "leading_trailing"),
-    ("hyphens-and_underscores", "hyphens_and_underscores"),
+    ("Banner Summit", "banner-summit"),
+    ("Sawtooth & Western Smoky Mtns", "sawtooth-western-smoky-mtns"),
+    ("Galena Summit & Eastern Mtns", "galena-summit-eastern-mtns"),
+    ("Soldier & Wood River Valley Mtns", "soldier-wood-river-valley-mtns"),
+    ("ALL CAPS", "all-caps"),
+    ("  leading/trailing  ", "leading-trailing"),
+    ("hyphens-and_underscores", "hyphens-and-underscores"),
     ("", ""),
 ])
-def test_slug(text, expected):
+def test_slug_uses_hyphens(text, expected):
+    """v0.10.11: slug switched from underscore-join to hyphen-join."""
     assert _slug(text) == expected
 
 
@@ -146,10 +149,14 @@ def test_publishable_danger_levels_yield_event_with_mapped_severity(
     assert ev.data["center_id"] == "SNFAC"
     assert ev.data["zone_name"] == "Banner Summit"
     assert ev.data["off_season"] is False
-    assert ev.id == "SNFAC_banner_summit"
+    assert ev.id == "SNFAC_banner-summit"  # v0.10.11: hyphenated slug
     assert ev.category == "avy.advisory.snfac"
     assert ev.geo.primary_region == "US-ID"
     assert ev.geo.geometry is not None
+    # v0.10.11: bbox is computed from polygon bounds (W, S, E, N).
+    assert ev.geo.bbox is not None
+    west, south, east, north = ev.geo.bbox
+    assert west < east and south < north
 
 
 @pytest.mark.parametrize("danger_level", [-1, 0, 1, 2])
@@ -305,5 +312,200 @@ async def test_poll_yields_only_publishable_features(adapter, snfac_response, mo
         events = [e async for e in adapter.poll()]
         assert len(events) == 1
         assert events[0].severity == 3  # danger 4 → severity 3
+    finally:
+        await adapter.shutdown()
+
+
+# --- v0.10.11: tombstone emission tests -------------------------------------
+
+
+@pytest.mark.parametrize("upstream, expected_reason", [
+    ({"off_season": True, "danger_level": -1}, "off_season"),
+    ({"off_season": False, "danger_level": 1},  "below_threshold"),
+    ({"off_season": False, "danger_level": 2},  "below_threshold"),
+    ({"off_season": False, "danger_level": -1}, "below_threshold"),
+    (None,                                       "fallen_off_feed"),
+])
+def test_removal_reason_classification(upstream, expected_reason):
+    """The _removal_reason helper distinguishes off_season vs below_threshold
+    vs absent-from-feed. meshai treats fallen_off_feed the same as
+    below_threshold for retraction rendering -- documented in the PR body."""
+    assert _removal_reason(upstream) == expected_reason
+
+
+def _winter_feature(zone_name: str, danger_level: int = 3, *, off_season: bool = False) -> dict:
+    """Build a feature with overridable severity for state-transition tests."""
+    return {
+        "type": "Feature", "id": 1,
+        "properties": {
+            "name": zone_name, "state": "ID",
+            "off_season": off_season, "danger_level": danger_level,
+            "danger": "Considerable", "travel_advice": "x",
+            "start_date": "2026-12-15T17:59:00", "end_date": "2026-12-16T19:00:00",
+        },
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[-115.0, 44.0], [-114.0, 44.0],
+                             [-114.0, 45.0], [-115.0, 45.0], [-115.0, 44.0]]],
+        },
+    }
+
+
+async def _poll_with(adapter, features):
+    """Run one poll with a mocked _fetch returning the given features."""
+    async def _fake_fetch(center_id):
+        return {"features": features}
+    adapter._fetch = _fake_fetch
+    return [e async for e in adapter.poll()]
+
+
+@pytest.mark.asyncio
+async def test_tombstone_when_zone_drops_below_threshold(adapter):
+    """P1 publishes Considerable; P2 sees same zone at Low → tombstone."""
+    await adapter.startup()
+    try:
+        p1 = await _poll_with(adapter, [_winter_feature("Banner Summit", 3)])
+        assert len(p1) == 1 and p1[0].category.startswith("avy.advisory.")
+        assert "removed" not in p1[0].category
+
+        p2 = await _poll_with(adapter, [_winter_feature("Banner Summit", 1)])
+        assert len(p2) == 1
+        tomb = p2[0]
+        assert tomb.category == "avy.advisory.removed.snfac"
+        assert tomb.severity == 0
+        assert tomb.data["reason"] == "below_threshold"
+        assert tomb.data["zone_name"] == "Banner Summit"
+        assert tomb.data["state"] == "ID"
+        assert adapter.subject_for(tomb) == "central.avy.advisory.removed.us.id"
+    finally:
+        await adapter.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_tombstone_when_zone_goes_off_season(adapter):
+    await adapter.startup()
+    try:
+        await _poll_with(adapter, [_winter_feature("Banner Summit", 3)])
+        p2 = await _poll_with(
+            adapter, [_winter_feature("Banner Summit", -1, off_season=True)]
+        )
+        assert len(p2) == 1
+        assert p2[0].data["reason"] == "off_season"
+    finally:
+        await adapter.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_tombstone_when_zone_absent_from_feed(adapter):
+    """Zone falls off the response entirely → reason='fallen_off_feed'."""
+    await adapter.startup()
+    try:
+        await _poll_with(adapter, [_winter_feature("Banner Summit", 3)])
+        p2 = await _poll_with(adapter, [])  # zone gone
+        assert len(p2) == 1
+        assert p2[0].data["reason"] == "fallen_off_feed"
+    finally:
+        await adapter.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_no_tombstone_when_zone_stays_above_threshold(adapter):
+    """Repeat Considerable across polls → live publish only, no tombstone."""
+    await adapter.startup()
+    try:
+        await _poll_with(adapter, [_winter_feature("Banner Summit", 3)])
+        p2 = await _poll_with(adapter, [_winter_feature("Banner Summit", 4)])
+        assert len(p2) == 1
+        assert "removed" not in p2[0].category
+    finally:
+        await adapter.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_no_tombstone_for_never_published_zone(adapter):
+    """Zone has been below threshold the whole time → no tombstone ever."""
+    await adapter.startup()
+    try:
+        await _poll_with(adapter, [_winter_feature("Banner Summit", 1)])
+        p2 = await _poll_with(adapter, [_winter_feature("Banner Summit", -1, off_season=True)])
+        assert p2 == []
+    finally:
+        await adapter.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_no_duplicate_tombstone_across_consecutive_polls(adapter):
+    """Load-bearing correctness case: tombstone emitted ONCE on the transition,
+    then the zone is removed from the observed-published table so subsequent
+    polls under the same below-threshold condition do NOT re-emit. This is the
+    bug class meshai is exposed to if the diff logic gets it wrong.
+    """
+    await adapter.startup()
+    try:
+        # P1: publish at Considerable -> observed table has the zone.
+        await _poll_with(adapter, [_winter_feature("Banner Summit", 3)])
+        obs_after_p1 = _read_observed(adapter._db)
+        assert ("SNFAC", "Banner Summit") in obs_after_p1
+
+        # P2: zone drops to Low -> tombstone emitted AND observed table cleared.
+        p2 = await _poll_with(adapter, [_winter_feature("Banner Summit", 1)])
+        assert len(p2) == 1 and p2[0].category == "avy.advisory.removed.snfac"
+        obs_after_p2 = _read_observed(adapter._db)
+        assert ("SNFAC", "Banner Summit") not in obs_after_p2, (
+            "tombstone emitted but observed row not deleted — next poll would "
+            "re-emit, which is the bug we are guarding against"
+        )
+
+        # P3: still Low -> no second tombstone (observed table is empty).
+        p3 = await _poll_with(adapter, [_winter_feature("Banner Summit", 1)])
+        assert p3 == [], (
+            f"duplicate tombstone emitted on P3 ({len(p3)} events); "
+            f"diff logic is not removing zones from the observed table"
+        )
+
+        # P4: zone recovers to Considerable -> normal live publish, no tombstone.
+        p4 = await _poll_with(adapter, [_winter_feature("Banner Summit", 3)])
+        assert len(p4) == 1 and "removed" not in p4[0].category
+    finally:
+        await adapter.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_subject_for_routes_removed_category_correctly(adapter):
+    """Tombstone subject is `central.avy.advisory.removed.us.<state>`."""
+    await adapter.startup()
+    try:
+        await _poll_with(adapter, [_winter_feature("Banner Summit", 3)])
+        p2 = await _poll_with(adapter, [_winter_feature("Banner Summit", 1)])
+        assert len(p2) == 1
+        tomb = p2[0]
+        assert adapter.subject_for(tomb) == "central.avy.advisory.removed.us.id"
+        # Sanity: the live-publish subject still works.
+        live = adapter._build_event_record(_winter_feature("Other Zone", 4), "SNFAC")
+        assert adapter.subject_for(live) == "central.avy.advisory.us.id"
+    finally:
+        await adapter.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_tombstone_id_is_unique_per_emission(adapter):
+    """Each tombstone gets a fresh `:removed:<iso>` suffix so JetStream
+    doesn't dedup re-issued tombstones for the same zone across cycles."""
+    import asyncio as _asyncio
+    await adapter.startup()
+    try:
+        await _poll_with(adapter, [_winter_feature("Banner Summit", 3)])
+        p2 = await _poll_with(adapter, [_winter_feature("Banner Summit", 1)])
+        # publish, drop -> tombstone with one timestamp
+        first_id = p2[0].id
+
+        # zone recovers and drops again later with a different now()
+        await _poll_with(adapter, [_winter_feature("Banner Summit", 3)])
+        await _asyncio.sleep(0.01)  # ensure new ISO timestamp
+        p4 = await _poll_with(adapter, [_winter_feature("Banner Summit", 1)])
+        second_id = p4[0].id
+
+        assert first_id != second_id
+        assert ":removed:" in first_id and ":removed:" in second_id
     finally:
         await adapter.shutdown()
