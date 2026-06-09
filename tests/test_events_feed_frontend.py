@@ -1156,6 +1156,12 @@ _SAMPLE_INNER = {
             "mean_motion_rev_per_day": 15.49672912,
         }},
     },
+    "satpass_predict": {
+        "satellite_name": "ISS (ZARYA)",
+        "norad_id": 25544,
+        "peak_time": "2026-06-09T15:39:37+00:00",
+        "max_elevation_deg": 40.3,
+    },
 }
 
 # Exact expected subjects for the deterministic adapters. swpc_alerts is omitted
@@ -1181,6 +1187,7 @@ _EXPECTED_SUBJECT = {
     "itd_511_cameras": "Camera: I-84 Mountain Home",
     "avalanche_org": "Avalanche advisory — Banner Summit (Considerable)",
     "celestrak_tle": "TLE update: ISS (ZARYA) (NORAD 25544) — 92.9min orbit at 51.6°",
+    "satpass_predict": "ISS (ZARYA) passes overhead at 15:39 UTC — max elevation 40°",
 }
 
 

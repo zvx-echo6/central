@@ -50,6 +50,18 @@ class ConfigStore:
         """Close the connection pool."""
         await self._pool.close()
 
+    def get_pool(self) -> asyncpg.Pool:
+        """Return the underlying connection pool.
+
+        v0.11.1: introduced for the ``satpass_predict`` adapter which needs
+        ad-hoc reads against the ``events`` table to fetch the latest TLE
+        per ``norad_id`` (the supervisor's adapter scheduler doesn't pipe
+        Postgres access through any of the existing ConfigStore methods).
+        Single-method-surface escape hatch -- adapters acquire from the
+        pool themselves, no celestrak/tle-specific shape leaks into
+        ConfigStore."""
+        return self._pool
+
     # -------------------------------------------------------------------------
     # System configuration
     # -------------------------------------------------------------------------

@@ -444,8 +444,10 @@ def test_central_sat_registered_in_streams():
 
 
 def test_central_sat_in_supervisor_family_map():
+    """v0.11.0 set this to ('tle',); v0.11.1 extended to ('tle', 'pass') so
+    satpass_predict events also route to CENTRAL_SAT."""
     from central.supervisor import STREAM_CATEGORY_DOMAINS
-    assert STREAM_CATEGORY_DOMAINS["CENTRAL_SAT"] == ("tle",)
+    assert "tle" in STREAM_CATEGORY_DOMAINS["CENTRAL_SAT"]
 
 
 def test_celestrak_tle_in_space_adapter_group():
