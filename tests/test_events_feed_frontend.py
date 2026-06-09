@@ -1171,6 +1171,13 @@ _SAMPLE_INNER = {
         "velocity_kmps": 7.66,
         "heading_deg": 87.3,
     },
+    "n2yo_visualpasses": {
+        "satellite_name": "ISS (ZARYA)",
+        "norad_id": 25544,
+        "peak_time": "2026-06-09T21:14:00+00:00",
+        "magnitude": -3.4,
+        "max_elevation_deg": 47.0,
+    },
 }
 
 # Exact expected subjects for the deterministic adapters. swpc_alerts is omitted
@@ -1198,6 +1205,7 @@ _EXPECTED_SUBJECT = {
     "celestrak_tle": "TLE update: ISS (ZARYA) (NORAD 25544) — 92.9min orbit at 51.6°",
     "satpass_predict": "ISS (ZARYA) passes overhead at 15:39 UTC — max elevation 40°",
     "sat_positions": "ISS (ZARYA) at 43.6°N 116.2°W, alt 408km, 7.7km/s",
+    "n2yo_visualpasses": "ISS (ZARYA) visible pass at 21:14 UTC — mag -3.4, peak 47°",
 }
 
 

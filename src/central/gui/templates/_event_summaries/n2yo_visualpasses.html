@@ -1,0 +1,4 @@
+{%- set d = (event.data.get('data') or {}).get('data') or {} -%}
+{%- if d.get('satellite_name') and d.get('peak_time') and d.get('magnitude') is not none and d.get('max_elevation_deg') is not none -%}
+{{ d.satellite_name }} visible pass at {{ d.peak_time[11:16] }} UTC — mag {{ "%.1f"|format(d.magnitude) }}, peak {{ "%.0f"|format(d.max_elevation_deg) }}°
+{%- endif -%}

@@ -1,0 +1,9 @@
+{# n2yo_visualpasses pre-computed visible-pass alert. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('satellite_name') is not none %}<dt>Satellite</dt><dd>{{ d.satellite_name }} (NORAD {{ d.norad_id }})</dd>{% endif %}
+{% if d.get('observer_name') is not none %}<dt>Observer</dt><dd>{{ d.observer_name }}{% if d.get('observer_state') %} ({{ d.observer_state }}){% endif %}</dd>{% endif %}
+{% if d.get('aos_time') is not none %}<dt>AOS (rise)</dt><dd>{{ d.aos_time }}{% if d.get('azimuth_at_aos') is not none %} — azimuth {{ "%.0f"|format(d.azimuth_at_aos) }}°{% if d.get('azimuth_at_aos_compass') %} ({{ d.azimuth_at_aos_compass }}){% endif %}{% endif %}</dd>{% endif %}
+{% if d.get('peak_time') is not none %}<dt>Peak</dt><dd>{{ d.peak_time }}{% if d.get('max_elevation_deg') is not none %} — max elevation {{ "%.0f"|format(d.max_elevation_deg) }}°{% endif %}{% if d.get('azimuth_at_peak') is not none %} at {{ "%.0f"|format(d.azimuth_at_peak) }}°{% if d.get('azimuth_at_peak_compass') %} ({{ d.azimuth_at_peak_compass }}){% endif %}{% endif %}</dd>{% endif %}
+{% if d.get('los_time') is not none %}<dt>LOS (set)</dt><dd>{{ d.los_time }}{% if d.get('azimuth_at_los') is not none %} — azimuth {{ "%.0f"|format(d.azimuth_at_los) }}°{% if d.get('azimuth_at_los_compass') %} ({{ d.azimuth_at_los_compass }}){% endif %}{% endif %}</dd>{% endif %}
+{% if d.get('magnitude') is not none %}<dt>Brightness</dt><dd>magnitude {{ "%.1f"|format(d.magnitude) }} <small>(lower = brighter)</small></dd>{% endif %}
+{% if d.get('duration_s') is not none %}<dt>Duration</dt><dd>{{ "%.0f"|format(d.duration_s) }} sec</dd>{% endif %}
