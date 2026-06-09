@@ -11,7 +11,8 @@ from central.adapter_discovery import discover_adapters
 from central.gui import routes
 
 # Adapters with data_class="telemetry" (the pinned split; grow as telemetry adapters land).
-_TELEMETRY = ["itd_511_cameras", "nwis", "tomtom_flow"]
+# v0.11.0 added celestrak_tle (orbital state -- continuous-ish refresh, telemetry-class).
+_TELEMETRY = ["celestrak_tle", "itd_511_cameras", "nwis", "tomtom_flow"]
 
 
 # --- data_class defaults / registry split -----------------------------------
@@ -20,7 +21,7 @@ def test_base_default_is_event():
     assert SourceAdapter.data_class == "event"
 
 
-def test_registry_split_11_event_1_telemetry():
+def test_registry_split_event_vs_telemetry():
     reg = discover_adapters()
     by_class = {}
     for name, cls in reg.items():

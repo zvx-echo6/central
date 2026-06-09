@@ -362,7 +362,7 @@ central.<domain>.<subtype>[.<dimensions>...]
 ```
 
 - `<domain>` is one of `wx`, `fire`, `quake`, `space`, `disaster`, `hydro`,
-  `traffic`, `traffic_flow`, `traffic_cameras`, `avy`, `meta` (the current set — see [§8](#8-the-streamentry-registry) for adding
+  `traffic`, `traffic_flow`, `traffic_cameras`, `avy`, `sat`, `meta` (the current set — see [§8](#8-the-streamentry-registry) for adding
   one). Operators MUST be able to subscribe to all of one domain with
   `central.<domain>.>`.
 - `<subtype>` is adapter-driven and identifies the event category within the
@@ -554,6 +554,7 @@ STREAMS: list[StreamEntry] = [
     StreamEntry("CENTRAL_TRAFFIC_FLOW", "central.traffic_flow.>"),
     StreamEntry("CENTRAL_TRAFFIC_CAMERAS", "central.traffic_cameras.>"),
     StreamEntry("CENTRAL_AVY",      "central.avy.>"),
+    StreamEntry("CENTRAL_SAT",      "central.sat.>"),
     StreamEntry("CENTRAL_META",     "central.meta.>", event_bearing=False),
 ]
 ```

@@ -2938,7 +2938,7 @@ DEFAULT_TIME = "last_24h"
 ADAPTER_GROUPS = {
     "Disasters": ["gdacs", "firms", "inciweb", "wfigs_incidents", "wfigs_perimeters"],
     "Weather": ["nws"],
-    "Space": ["swpc_alerts", "swpc_kindex", "swpc_protons"],
+    "Space": ["swpc_alerts", "swpc_kindex", "swpc_protons", "celestrak_tle"],
     "Geophysical": ["usgs_quake", "nwis"],
     "Earth Observation": ["eonet"],
     "Transportation": ["wzdx", "tomtom_flow", "tomtom_incidents", "itd_511", "itd_511_cameras"],

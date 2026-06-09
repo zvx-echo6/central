@@ -135,6 +135,7 @@ Central's archive.
 | `CENTRAL_TRAFFIC_FLOW` | `central.traffic_flow.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_TRAFFIC_CAMERAS` | `central.traffic_cameras.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_AVY` | `central.avy.>` | 7 | 1 GiB | ✓ | ✓ |
+| `CENTRAL_SAT` | `central.sat.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_META` | `central.meta.>` | 1 | 1 GiB | — | ✓ |
 
 Retention and storage caps are migration-seeded defaults visible in `config.streams`;
@@ -1827,6 +1828,44 @@ at parameter `00060`, gage height (ft) at `00065`, water temperature (°C) at
 - **Off-season behavior:** during summer all SNFAC/PAC zones return
   `off_season=true` + `danger_level=-1` — the adapter yields zero events,
   by design.
+
+\
+---
+
+### celestrak_tle — CelesTrak satellite TLEs (v0.11.0)
+
+- **Source:** `https://celestrak.org/NORAD/elements/gp.php?GROUP=<group>&FORMAT=TLE`
+  per configured group (defaults: `stations`, `weather`, `amateur`), plus
+  per-CATNR endpoint for operator-pinned `extra_norad_ids`. 4h cadence
+  (CelesTrak refreshes ~8h).
+- **Stream:** `CENTRAL_SAT` (`central.sat.>`)
+- **Subject:** `central.sat.tle.<norad_id>` — one subject per satellite,
+  globally. No state coord (orbital state is universal). Consumers
+  compute passes locally with their own observer geolocation
+  (e.g. satellite.js + `navigator.geolocation`).
+- **Dedup key shape:** `<norad_id>:<epoch_iso>` — re-fetching the same TLE
+  is swallowed; CelesTrak issues a new epoch every ~8h and that produces
+  a fresh dedup key, naturally triggering a republish.
+- **Severity:** `1` (informational; no alerting).
+- **Geo:** intentionally empty (`Geo()`). TLEs are global orbital state,
+  not a surface point — consumers propagate the orbit at observe time.
+- **Event.data fields:**
+
+  | Field | Type | Notes |
+  |---|---|---|
+  | `norad_id` | int | Satellite catalog number (e.g. 25544 for ISS) |
+  | `satellite_name` | string | Upstream display name |
+  | `tle_line1`, `tle_line2` | string | Raw 69-char TLE strings; pass to satellite-js verbatim |
+  | `epoch` | string | ISO datetime decoded from Line 1 cols 19-32 (YYDDD.DDDDDDDD; Y2K rule 00-56 = 2000s, 57-99 = 1957-1999) |
+  | `classification` | string | `U` / `C` / `S` (almost always U) |
+  | `intl_designator` | string | International designator e.g. `1998-067A` (ISS) — but in the packed TLE form (`98067A`) |
+  | `source_url` | string | The exact URL the TLE was fetched from |
+- **`_enriched.orbit`:** parsed straight from Line 2 columns when valid:
+  `inclination_deg`, `mean_motion_rev_per_day`, `eccentricity` (the
+  implicit-leading-0. is reconstructed). Absent if Line 2 fails to parse.
+- **Group/extras dedup:** if a satellite appears in two configured groups
+  or in both a group and `extra_norad_ids`, it's fetched **once** (first
+  occurrence wins).
 
 \
 ---
