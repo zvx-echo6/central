@@ -1147,6 +1147,7 @@ _SAMPLE_INNER = {
     "tomtom_incidents": {"description": "Roadworks", "from": "Early Road", "to": "Slade Road"},
     "itd_511": {"event_type_short": "work_zone", "roadway_name": "I-84"},
     "itd_511_cameras": {"location": "I-84 Mountain Home", "camera_id": 42},
+    "avalanche_org": {"zone_name": "Banner Summit", "danger_name": "Considerable"},
 }
 
 # Exact expected subjects for the deterministic adapters. swpc_alerts is omitted
@@ -1170,6 +1171,7 @@ _EXPECTED_SUBJECT = {
     "tomtom_incidents": "Roadworks on Early Road → Slade Road",
     "itd_511": "Road work on I-84",
     "itd_511_cameras": "Camera: I-84 Mountain Home",
+    "avalanche_org": "Avalanche advisory — Banner Summit (Considerable)",
 }
 
 

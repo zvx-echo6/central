@@ -1,0 +1,2 @@
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{%- if d.get('zone_name') %}Avalanche advisory — {{ d.zone_name }}{% if d.get('danger_name') %} ({{ d.danger_name }}){% endif %}{% endif -%}
