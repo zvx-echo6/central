@@ -1,0 +1,4 @@
+{%- set d = (event.data.get('data') or {}).get('data') or {} -%}
+{%- if d.get('satellite_name') and d.get('peak_time') and d.get('max_elevation_deg') is not none -%}
+{{ d.satellite_name }} passes overhead at {{ d.peak_time[11:16] }} UTC — max elevation {{ "%.0f"|format(d.max_elevation_deg) }}°
+{%- endif -%}

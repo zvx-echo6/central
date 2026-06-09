@@ -1870,6 +1870,38 @@ at parameter `00060`, gage height (ft) at `00065`, water temperature (°C) at
 \
 ---
 
+### satpass_predict — server-side satellite pass alerts (v0.11.1)
+
+- **Source:** the `events` table itself — reads the latest TLE per `norad_id`
+  emitted by `celestrak_tle` within the last 14 days, then propagates each
+  one with SGP4 against every configured fixed observer.
+- **Stream:** `CENTRAL_SAT` (same stream as TLEs; v0.11.1 extends
+  `STREAM_CATEGORY_DOMAINS["CENTRAL_SAT"]` to `("tle", "pass")`).
+- **Subject:** `central.sat.pass.us.<state_lower>.<observer_slug>` — one
+  subject per observer. Multiple satellites passing the same observer
+  collapse to the same subject; the category-discriminated `Nats-Msg-Id`
+  (v0.10.8) keeps each pass distinct in JetStream's dedup window.
+- **Dedup key shape:** `<observer_slug>:<norad_id>:<aos_iso>` — re-running
+  the same poll within an hour computes the same passes and dedups; new
+  TLEs landing between polls produce slightly different propagation paths
+  and hence different AOS times, naturally triggering republishes.
+- **Severity bucket** from peak elevation: `>=60°` = 4 (zenith pass),
+  `>=30°` = 3 (high), `>=10°` = 2 (low; default gate threshold).
+- **Geo:** `centroid = (observer.lon, observer.lat)` so the GUI map plots
+  the alert at the observer point, not at the satellite track.
+- **Event.data fields:** `observer_name`, `observer_slug`, `observer_state`,
+  `norad_id`, `satellite_name`, `aos_time`, `los_time`, `peak_time`,
+  `max_elevation_deg`, `azimuth_at_aos`, `azimuth_at_los`, `duration_s`,
+  `tle_epoch` (the TLE epoch used for this prediction).
+- **Cadence:** 1h. The adapter recomputes the 24h horizon every hour;
+  new TLEs landing between polls are picked up at the next poll.
+- **Empty-TLE behaviour:** if no `celestrak_tle` events are in the table
+  (adapter still disabled, or hasn't polled yet), the adapter logs at
+  INFO and yields zero events — no exception.
+
+\
+---
+
 ## 7. Fall-off / removal semantics
 
 Central adapters fall into three buckets for handling upstream events that
