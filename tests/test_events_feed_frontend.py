@@ -1162,6 +1162,15 @@ _SAMPLE_INNER = {
         "peak_time": "2026-06-09T15:39:37+00:00",
         "max_elevation_deg": 40.3,
     },
+    "sat_positions": {
+        "satellite_name": "ISS (ZARYA)",
+        "norad_id": 25544,
+        "lat_deg": 43.6,
+        "lon_deg": -116.2,
+        "alt_km": 408.5,
+        "velocity_kmps": 7.66,
+        "heading_deg": 87.3,
+    },
 }
 
 # Exact expected subjects for the deterministic adapters. swpc_alerts is omitted
@@ -1188,6 +1197,7 @@ _EXPECTED_SUBJECT = {
     "avalanche_org": "Avalanche advisory — Banner Summit (Considerable)",
     "celestrak_tle": "TLE update: ISS (ZARYA) (NORAD 25544) — 92.9min orbit at 51.6°",
     "satpass_predict": "ISS (ZARYA) passes overhead at 15:39 UTC — max elevation 40°",
+    "sat_positions": "ISS (ZARYA) at 43.6°N 116.2°W, alt 408km, 7.7km/s",
 }
 
 

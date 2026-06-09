@@ -17,16 +17,19 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from central.adapter import SourceAdapter
+from central.adapters.sat_common import (
+    eci_to_ecef as _eci_to_ecef,
+    gmst_rad as _gmst_rad,
+    subsatellite_point as _subsatellite_point,
+)
 from central.adapters.satpass_predict import (
     Observer,
     SatpassPredictAdapter,
     SatpassPredictSettings,
     _build_pass_geometry,
-    _gmst_rad,
     _next_passes,
     _observer_ecef,
     _severity_from_elev,
-    _subsatellite_point,
     _topocentric_az_el,
     _visibility_footprint,
 )
@@ -334,9 +337,10 @@ async def test_apply_config_updates_observers_and_threshold(adapter):
 
 
 def test_central_sat_family_includes_pass_token():
-    """v0.11.1: pass.* categories also route to CENTRAL_SAT."""
+    """v0.11.1: pass.* categories also route to CENTRAL_SAT.
+    v0.12.0: position.* extends the family for sat_positions telemetry."""
     from central.supervisor import STREAM_CATEGORY_DOMAINS
-    assert STREAM_CATEGORY_DOMAINS["CENTRAL_SAT"] == ("tle", "pass")
+    assert "pass" in STREAM_CATEGORY_DOMAINS["CENTRAL_SAT"]
 
 
 def test_satpass_predict_in_space_adapter_group():
@@ -421,8 +425,7 @@ def test_subsatellite_point_real_iss_sample_via_sgp4():
     jd, fr = jday(2026, 6, 8, 19, 17, 55.071168)
     err, pos_eci, _ = sat.sgp4(jd, fr)
     assert err == 0
-    from central.adapters.satpass_predict import _eci_to_ecef, _gmst_rad as gmst
-    sat_ecef = _eci_to_ecef(pos_eci, gmst(jd, fr))
+    sat_ecef = _eci_to_ecef(pos_eci, _gmst_rad(jd, fr))
     lon, lat, alt = _subsatellite_point(sat_ecef)
     # ISS inclination is 51.6° so sub-sat latitude must stay within ±52°.
     assert -52.0 < lat < 52.0, f"ISS sub-sat lat {lat}° outside inclination envelope"

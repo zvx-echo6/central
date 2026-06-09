@@ -43,17 +43,17 @@ from pydantic import BaseModel
 from sgp4.api import Satrec, jday
 
 from central.adapter import SourceAdapter
+from central.adapters.sat_common import (
+    EARTH_RADIUS_KM,
+    eci_to_ecef,
+    gmst_rad,
+    subsatellite_point,
+)
 from central.config_models import AdapterConfig
 from central.config_store import ConfigStore
 from central.models import Event, Geo
 
 logger = logging.getLogger(__name__)
-
-# Earth equatorial radius (WGS-84). Used for observer ECEF position; we treat
-# the earth as spherical for topocentric look-angle math -- ellipsoidal effects
-# matter for centimeter-level GPS work but are well below 0.1° in elevation,
-# more than enough for "is the satellite above the horizon" decisions.
-_EARTH_RADIUS_KM = 6378.137
 
 _PASS_STEP_S = 60          # 60-second grid for elevation sampling
 _DEDUP_DDL = (
@@ -81,35 +81,11 @@ ORDER BY payload->'data'->'data'->>'norad_id', time DESC
 # --- Pure math helpers (no I/O) ---------------------------------------------
 
 
-def _gmst_rad(jd: float, fr: float) -> float:
-    """Greenwich Mean Sidereal Time in radians (Vallado, simplified).
-
-    Accurate to within milliseconds for any post-1900 epoch -- plenty for
-    horizon/elevation work.
-    """
-    t = (jd + fr - 2451545.0) / 36525.0
-    gmst_sec = (
-        67310.54841
-        + (876600.0 * 3600.0 + 8640184.812866) * t
-        + 0.093104 * t * t
-        - 6.2e-6 * t * t * t
-    )
-    return (gmst_sec % 86400.0) * (2.0 * math.pi / 86400.0)
-
-
-def _eci_to_ecef(pos_eci_km: tuple[float, float, float], theta: float) -> tuple[float, float, float]:
-    """Rotate ECI coordinates to ECEF by GMST angle theta (radians)."""
-    x, y, z = pos_eci_km
-    ct = math.cos(theta)
-    st = math.sin(theta)
-    return (ct * x + st * y, -st * x + ct * y, z)
-
-
 def _observer_ecef(lat_deg: float, lon_deg: float, elev_m: float) -> tuple[float, float, float]:
     """Observer position in ECEF km (spherical earth, sub-0.1° precision)."""
     lat_r = math.radians(lat_deg)
     lon_r = math.radians(lon_deg)
-    r = _EARTH_RADIUS_KM + elev_m / 1000.0
+    r = EARTH_RADIUS_KM + elev_m / 1000.0
     return (
         r * math.cos(lat_r) * math.cos(lon_r),
         r * math.cos(lat_r) * math.sin(lon_r),
@@ -164,7 +140,7 @@ def _sample_at(
     err, pos_eci, _ = sat.sgp4(jd, fr)
     if err:
         return None
-    sat_ecef = _eci_to_ecef(pos_eci, _gmst_rad(jd, fr))
+    sat_ecef = eci_to_ecef(pos_eci, gmst_rad(jd, fr))
     az, el = _topocentric_az_el(sat_ecef, obs_ecef_km, obs_lat_deg, obs_lon_deg)
     return az, el, sat_ecef
 
@@ -183,26 +159,6 @@ def _elev_at(
     """
     sample = _sample_at(sat, t, obs_ecef_km, obs_lat_deg, obs_lon_deg)
     return None if sample is None else (sample[0], sample[1])
-
-
-def _subsatellite_point(pos_ecef_km: tuple[float, float, float]) -> tuple[float, float, float]:
-    """ECEF (km) -> ``(lon_deg, lat_deg, alt_km)``.
-
-    Sub-satellite point is the ground location directly beneath the satellite
-    on a spherical earth. Longitude normalised to [-180, 180]. Altitude is
-    geocentric height above the equatorial radius (not WGS-84 height above
-    ellipsoid -- close enough for footprint-radius math).
-    """
-    x, y, z = pos_ecef_km
-    horizontal = math.sqrt(x * x + y * y)
-    lat = math.degrees(math.atan2(z, horizontal))
-    lon = math.degrees(math.atan2(y, x))
-    if lon > 180.0:
-        lon -= 360.0
-    elif lon < -180.0:
-        lon += 360.0
-    alt = math.sqrt(x * x + y * y + z * z) - _EARTH_RADIUS_KM
-    return lon, lat, alt
 
 
 def _visibility_footprint(
@@ -225,7 +181,7 @@ def _visibility_footprint(
     """
     if alt_km <= 0:
         return None
-    r_earth = _EARTH_RADIUS_KM
+    r_earth = EARTH_RADIUS_KM
     radius_km = r_earth * math.acos(r_earth / (r_earth + alt_km))
     angular = radius_km / r_earth
     lat1 = math.radians(lat_deg)
@@ -329,7 +285,7 @@ def _next_passes(
             t += step
             continue
         az, e, sat_ecef = sample
-        subsat = _subsatellite_point(sat_ecef)  # (lon, lat, alt)
+        subsat = subsatellite_point(sat_ecef)  # (lon, lat, alt)
         if e >= min_elevation_deg:
             if not in_pass:
                 in_pass = True

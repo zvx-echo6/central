@@ -1,0 +1,8 @@
+{# sat_positions live position telemetry. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('satellite_name') is not none %}<dt>Satellite</dt><dd>{{ d.satellite_name }} (NORAD {{ d.norad_id }})</dd>{% endif %}
+{% if d.get('lat_deg') is not none and d.get('lon_deg') is not none %}<dt>Sub-satellite point</dt><dd>{{ "%.4f"|format(d.lat_deg) }}°, {{ "%.4f"|format(d.lon_deg) }}°</dd>{% endif %}
+{% if d.get('alt_km') is not none %}<dt>Altitude</dt><dd>{{ "%.1f"|format(d.alt_km) }} km</dd>{% endif %}
+{% if d.get('velocity_kmps') is not none %}<dt>Velocity</dt><dd>{{ "%.3f"|format(d.velocity_kmps) }} km/s</dd>{% endif %}
+{% if d.get('heading_deg') is not none %}<dt>Heading</dt><dd>{{ "%.1f"|format(d.heading_deg) }}°</dd>{% endif %}
+{% if d.get('tle_epoch') is not none %}<dt>TLE epoch</dt><dd>{{ d.tle_epoch }}</dd>{% endif %}

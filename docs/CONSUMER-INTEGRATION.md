@@ -1899,6 +1899,46 @@ at parameter `00060`, gage height (ft) at `00065`, water temperature (°C) at
   (adapter still disabled, or hasn't polled yet), the adapter logs at
   INFO and yields zero events — no exception.
 
+### sat_positions — live global satellite positions (v0.12.0)
+
+- **Source:** same as `satpass_predict` — reads the latest TLE per `norad_id`
+  emitted by `celestrak_tle` (within the configurable `max_tle_age_days`
+  window, default 14 days), then propagates each with SGP4. Unlike
+  `satpass_predict`, no observer is involved — this adapter is the **global**
+  counterpart, publishing where each satellite *is* rather than when it
+  passes overhead at a fixed site.
+- **Data class:** `telemetry`. Surfaces on `/telemetry`, not `/events`; 60s
+  ticks across ~190 sats would drown discrete-event signal otherwise.
+- **Stream:** `CENTRAL_SAT` (same stream as TLEs and passes; v0.12.0 extends
+  `STREAM_CATEGORY_DOMAINS["CENTRAL_SAT"]` to `("tle", "pass", "position")`).
+- **Subject:** `central.sat.position.<norad_id>` — one subject per satellite,
+  globally (no state coord because positions are global). Consumers can
+  subscribe to `central.sat.position.>` for the whole live feed, or pin to
+  a single satellite (`central.sat.position.25544` = ISS).
+- **Dedup key shape:** `<norad_id>:<position_iso>` where `position_iso` is
+  the propagation timestamp truncated to whole seconds. Two ticks landing
+  in the same second collapse (defensive at 60s cadence).
+- **Severity:** always 1 (informational telemetry, no alerting).
+- **Geo:** `centroid = (lon_deg, lat_deg)` — the sub-satellite point, so a
+  consumer-side map can plot the satellite directly. No `geometry` overlay
+  in v1 (a 60s forward-track LineString is plausible for v0.12.1+ if a
+  consumer asks).
+- **Event.data fields:** `norad_id`, `satellite_name`, `lon_deg`, `lat_deg`,
+  `alt_km` (km above the equatorial radius, sub-satellite point altitude),
+  `velocity_kmps` (orbital speed magnitude from SGP4 ECI velocity), `heading_deg`
+  (great-circle bearing of motion, derived by finite-difference between
+  positions 1s apart; 0=N, 90=E), `tle_epoch`.
+- **Cadence:** 60s default. LEO at 60s ticks gives a watchable live map
+  (~462 km of ground track per tick at ~7.7 km/s). GEO satellites barely
+  move at minute scale; if an operator pins `track_only_norad_ids` to GEO
+  only, dropping cadence to 300s is reasonable.
+- **Settings:** `track_only_norad_ids` empty = track every NORAD ID with a
+  fresh TLE in the events table (default, derive-from-celestrak_tle).
+  Non-empty list pins to those IDs only. `max_tle_age_days = 14` bounds
+  how stale a TLE can be before propagation is considered too drifty.
+- **Empty-TLE behaviour:** logs INFO and yields zero events, same as
+  `satpass_predict`. Enable `celestrak_tle` first.
+
 \
 ---
 

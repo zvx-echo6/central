@@ -1,0 +1,6 @@
+{%- set d = (event.data.get('data') or {}).get('data') or {} -%}
+{%- if d.get('satellite_name') and d.get('lat_deg') is not none and d.get('lon_deg') is not none -%}
+{%- set ns = 'N' if d.lat_deg >= 0 else 'S' -%}
+{%- set we = 'E' if d.lon_deg >= 0 else 'W' -%}
+{{ d.satellite_name }} at {{ "%.1f"|format(d.lat_deg|abs) }}°{{ ns }} {{ "%.1f"|format(d.lon_deg|abs) }}°{{ we }}, alt {{ "%.0f"|format(d.alt_km) }}km, {{ "%.1f"|format(d.velocity_kmps) }}km/s
+{%- endif -%}
