@@ -21,11 +21,14 @@ from central.adapters.satpass_predict import (
     Observer,
     SatpassPredictAdapter,
     SatpassPredictSettings,
+    _build_pass_geometry,
     _gmst_rad,
     _next_passes,
     _observer_ecef,
     _severity_from_elev,
+    _subsatellite_point,
     _topocentric_az_el,
+    _visibility_footprint,
 )
 from central.config_models import AdapterConfig
 
@@ -375,3 +378,192 @@ def test_row_partial_renders_cleanly(adapter):
     assert "<dt>Peak</dt>" in rendered
     assert "<dt>LOS (set)</dt>" in rendered
     assert "<dt>Duration</dt>" in rendered
+
+
+# --- v0.11.2: sub-satellite point + visibility footprint + GeometryCollection
+
+
+def test_subsatellite_point_at_north_pole_returns_polar_coords():
+    """Sat at +z over geocentre -> lat=90, lon undefined (atan2 returns 0)."""
+    lon, lat, alt = _subsatellite_point((0.0, 0.0, 7000.0))
+    assert abs(lat - 90.0) < 1e-6
+    assert abs(alt - (7000.0 - 6378.137)) < 1e-6
+
+
+def test_subsatellite_point_over_equator_lon_zero():
+    """Sat on +x axis at altitude 400km over (lon=0, lat=0)."""
+    lon, lat, alt = _subsatellite_point((6378.137 + 400.0, 0.0, 0.0))
+    assert abs(lon - 0.0) < 1e-6
+    assert abs(lat - 0.0) < 1e-6
+    assert abs(alt - 400.0) < 1e-6
+
+
+def test_subsatellite_point_over_equator_at_lon_90():
+    """Sat on +y axis over (lon=90, lat=0)."""
+    lon, lat, alt = _subsatellite_point((0.0, 6778.137, 0.0))
+    assert abs(lon - 90.0) < 1e-6
+    assert abs(lat - 0.0) < 1e-6
+
+
+def test_subsatellite_point_lon_normalised_into_180_range():
+    """Sat at lon=-90 (Pacific) -> lon=-90, not 270."""
+    lon, _, _ = _subsatellite_point((0.0, -6778.137, 0.0))
+    assert -180.0 <= lon <= 180.0
+    assert abs(lon - (-90.0)) < 1e-6
+
+
+def test_subsatellite_point_real_iss_sample_via_sgp4():
+    """End-to-end against sgp4: ISS at TLE epoch -- sub-sat point should be
+    on a 51.6° inclination orbit (lat in [-52, 52]). Bit-deterministic."""
+    from sgp4.api import Satrec, jday
+    sat = Satrec.twoline2rv(_ISS_L1, _ISS_L2)
+    # Propagate at TLE epoch itself for a clean reference point.
+    jd, fr = jday(2026, 6, 8, 19, 17, 55.071168)
+    err, pos_eci, _ = sat.sgp4(jd, fr)
+    assert err == 0
+    from central.adapters.satpass_predict import _eci_to_ecef, _gmst_rad as gmst
+    sat_ecef = _eci_to_ecef(pos_eci, gmst(jd, fr))
+    lon, lat, alt = _subsatellite_point(sat_ecef)
+    # ISS inclination is 51.6° so sub-sat latitude must stay within ±52°.
+    assert -52.0 < lat < 52.0, f"ISS sub-sat lat {lat}° outside inclination envelope"
+    # ISS altitude is ~408 km nominally; allow generous range for SGP4 noise.
+    assert 350.0 < alt < 500.0, f"ISS altitude {alt}km outside expected range"
+    assert -180.0 <= lon <= 180.0
+
+
+# --- Visibility footprint --------------------------------------------------
+
+
+def test_visibility_footprint_returns_closed_32_vertex_polygon():
+    poly = _visibility_footprint(lon_deg=-116.2, lat_deg=43.6, alt_km=408.0)
+    assert poly is not None
+    assert poly["type"] == "Polygon"
+    ring = poly["coordinates"][0]
+    # 32 vertices + closing duplicate = 33 points in the ring.
+    assert len(ring) == 33
+    # First == last (closed polygon).
+    assert ring[0] == ring[-1]
+
+
+def test_visibility_footprint_iss_radius_approximation():
+    """ISS at 408km -> horizon ~2253km (spec says ~2200km)."""
+    poly = _visibility_footprint(lon_deg=0.0, lat_deg=0.0, alt_km=408.0)
+    ring = poly["coordinates"][0]
+    # At the equator with sub-sat at (0,0), the easternmost vertex is at
+    # bearing 90° (pure east), so its longitude equals the angular distance
+    # in degrees. radius_km / R_earth = angular_dist in rad; *180/pi for deg.
+    import math as m
+    r_earth = 6378.137
+    expected_angular_deg = m.degrees(r_earth * m.acos(r_earth / (r_earth + 408.0)) / r_earth)
+    # 2200km / 6378km ≈ 0.345 rad ≈ 19.76°. Expect lons in ring around ±19.76.
+    max_lon = max(p[0] for p in ring)
+    assert 18.0 < max_lon < 22.0, f"ISS east-vertex lon {max_lon}, expected ~20° (radius ~2200km)"
+    assert abs(max_lon - expected_angular_deg) < 0.5
+
+
+def test_visibility_footprint_geo_radius_approximation():
+    """GEO at 35786km -> horizon ~9000km (spec)."""
+    poly = _visibility_footprint(lon_deg=0.0, lat_deg=0.0, alt_km=35786.0)
+    ring = poly["coordinates"][0]
+    max_lon = max(p[0] for p in ring)
+    # 9000km / 6378km ≈ 1.41 rad ≈ 80.85°. Expect lons in ring spanning ±81.
+    assert 78.0 < max_lon < 83.0, f"GEO east-vertex lon {max_lon}, expected ~81°"
+
+
+def test_visibility_footprint_none_for_decayed_altitude():
+    """Negative or zero altitude -> None (orbit decayed, garbage in)."""
+    assert _visibility_footprint(0.0, 0.0, 0.0) is None
+    assert _visibility_footprint(0.0, 0.0, -100.0) is None
+
+
+def test_visibility_footprint_near_antimeridian_does_not_crash():
+    """Polar-orbit-style sub-sat at lon=179° -- vertices wrap across the
+    dateline. Documented limitation: each vertex is normalised independently
+    so the polygon may visually wrap the "wrong way" in Leaflet for sats
+    crossing ±180°. Per-vertex normalisation is the simplest approach and
+    Idaho-overhead passes stay well clear of this case.
+    """
+    poly = _visibility_footprint(lon_deg=179.0, lat_deg=0.0, alt_km=400.0)
+    assert poly is not None
+    ring = poly["coordinates"][0]
+    for lon, lat in ring:
+        # Every vertex's lon stays within [-180, 180]; no NaN / Inf.
+        assert -180.0 <= lon <= 180.0
+        assert -90.0 <= lat <= 90.0
+        import math as m
+        assert m.isfinite(lon) and m.isfinite(lat)
+
+
+# --- Ground track + GeometryCollection assembly --------------------------
+
+
+def test_ground_track_collected_during_real_iss_pass():
+    """The pinned-ref ISS pass over Treasure Valley collects multiple sub-sat
+    points from AOS through LOS. Track must be a non-empty list of (lon, lat)."""
+    passes = _next_passes(_ISS_L1, _ISS_L2, _OBS, _REF, 24, 10.0)
+    assert passes
+    track = passes[0]["ground_track"]
+    assert isinstance(track, list)
+    assert len(track) >= 2  # at least AOS + LOS samples
+    for lon, lat in track:
+        assert -180.0 <= lon <= 180.0
+        assert -90.0 <= lat <= 90.0
+
+
+def test_peak_subsat_captured_at_peak_time():
+    """peak_subsat is (lon, lat, alt) of the satellite at peak elevation."""
+    passes = _next_passes(_ISS_L1, _ISS_L2, _OBS, _REF, 24, 10.0)
+    p = passes[0]
+    assert p["peak_subsat"] is not None
+    lon, lat, alt = p["peak_subsat"]
+    assert -180.0 <= lon <= 180.0
+    # ISS inclination 51.6° → sub-sat lat in [-52, 52] always.
+    assert -52.0 < lat < 52.0
+    # ISS altitude ~400-450km.
+    assert 350.0 < alt < 500.0
+
+
+def test_build_pass_geometry_returns_geometrycollection_with_both_shapes():
+    passes = _next_passes(_ISS_L1, _ISS_L2, _OBS, _REF, 24, 10.0)
+    geom = _build_pass_geometry(passes[0])
+    assert geom is not None
+    assert geom["type"] == "GeometryCollection"
+    types = [g["type"] for g in geom["geometries"]]
+    assert "LineString" in types
+    assert "Polygon" in types
+    # LineString must have at least 2 vertices.
+    ls = next(g for g in geom["geometries"] if g["type"] == "LineString")
+    assert len(ls["coordinates"]) >= 2
+    # Polygon must be closed.
+    poly = next(g for g in geom["geometries"] if g["type"] == "Polygon")
+    ring = poly["coordinates"][0]
+    assert ring[0] == ring[-1]
+
+
+def test_build_pass_geometry_returns_none_when_inputs_missing():
+    """Defensive: pass dict with no track + no peak_subsat -> None (don't
+    write an empty GeometryCollection to the wire)."""
+    assert _build_pass_geometry({}) is None
+    assert _build_pass_geometry({"ground_track": [], "peak_subsat": None}) is None
+
+
+def test_build_pass_geometry_polygon_only_when_track_too_short():
+    """A single-sample track (only 1 vertex) is below LineString minimum;
+    we omit the LineString but keep the footprint Polygon."""
+    geom = _build_pass_geometry({
+        "ground_track": [(-116.2, 43.6)],
+        "peak_subsat": (-116.2, 43.6, 400.0),
+    })
+    assert geom is not None
+    types = [g["type"] for g in geom["geometries"]]
+    assert types == ["Polygon"]
+
+
+def test_pass_event_includes_geometry_collection(adapter):
+    """End-to-end: built Event has the GeometryCollection attached."""
+    passes = _next_passes(_ISS_L1, _ISS_L2, _OBS, _REF, 24, 10.0)
+    ev = adapter._pass_to_event(passes[0], _row_for_iss(), _OBS)
+    assert ev.geo.geometry is not None
+    assert ev.geo.geometry["type"] == "GeometryCollection"
+    # centroid stays at observer (unchanged contract).
+    assert ev.geo.centroid == (-116.2, 43.6)
