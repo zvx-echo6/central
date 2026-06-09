@@ -147,6 +147,28 @@ def _topocentric_az_el(
     return azimuth, elevation
 
 
+def _sample_at(
+    sat: Satrec,
+    t: datetime,
+    obs_ecef_km: tuple[float, float, float],
+    obs_lat_deg: float,
+    obs_lon_deg: float,
+) -> tuple[float, float, tuple[float, float, float]] | None:
+    """Sample SGP4 at instant ``t`` and return ``(azimuth_deg, elevation_deg, sat_ecef_km)``.
+
+    Single sgp4 call per sample -- the satellite ECEF position is returned so
+    the caller can also compute the sub-satellite point without a second
+    propagation. Returns ``None`` if SGP4 reports a propagation error.
+    """
+    jd, fr = jday(t.year, t.month, t.day, t.hour, t.minute, t.second + t.microsecond / 1e6)
+    err, pos_eci, _ = sat.sgp4(jd, fr)
+    if err:
+        return None
+    sat_ecef = _eci_to_ecef(pos_eci, _gmst_rad(jd, fr))
+    az, el = _topocentric_az_el(sat_ecef, obs_ecef_km, obs_lat_deg, obs_lon_deg)
+    return az, el, sat_ecef
+
+
 def _elev_at(
     sat: Satrec,
     t: datetime,
@@ -154,17 +176,104 @@ def _elev_at(
     obs_lat_deg: float,
     obs_lon_deg: float,
 ) -> tuple[float, float] | None:
-    """Compute ``(azimuth_deg, elevation_deg)`` at instant ``t`` (UTC datetime).
+    """Back-compat wrapper retained for v0.11.1 tests that expected ``(az, el)``.
 
-    Returns ``None`` if SGP4 reports a propagation error (decayed orbit, bad
-    epoch, etc.).
+    Prefer ``_sample_at`` in new code so the ECEF position is available for
+    sub-satellite point computation without a second propagation.
     """
-    jd, fr = jday(t.year, t.month, t.day, t.hour, t.minute, t.second + t.microsecond / 1e6)
-    err, pos_eci, _ = sat.sgp4(jd, fr)
-    if err:
+    sample = _sample_at(sat, t, obs_ecef_km, obs_lat_deg, obs_lon_deg)
+    return None if sample is None else (sample[0], sample[1])
+
+
+def _subsatellite_point(pos_ecef_km: tuple[float, float, float]) -> tuple[float, float, float]:
+    """ECEF (km) -> ``(lon_deg, lat_deg, alt_km)``.
+
+    Sub-satellite point is the ground location directly beneath the satellite
+    on a spherical earth. Longitude normalised to [-180, 180]. Altitude is
+    geocentric height above the equatorial radius (not WGS-84 height above
+    ellipsoid -- close enough for footprint-radius math).
+    """
+    x, y, z = pos_ecef_km
+    horizontal = math.sqrt(x * x + y * y)
+    lat = math.degrees(math.atan2(z, horizontal))
+    lon = math.degrees(math.atan2(y, x))
+    if lon > 180.0:
+        lon -= 360.0
+    elif lon < -180.0:
+        lon += 360.0
+    alt = math.sqrt(x * x + y * y + z * z) - _EARTH_RADIUS_KM
+    return lon, lat, alt
+
+
+def _visibility_footprint(
+    lon_deg: float, lat_deg: float, alt_km: float, n_vertices: int = 32,
+) -> dict[str, Any] | None:
+    """Geodesic circle visible from a satellite at altitude ``alt_km``.
+
+    Radius is the horizon distance on a spherical earth:
+    ``r = R * acos(R / (R + alt))``. ISS at 408km -> ~2253km; GEO at 35786km
+    -> ~9055km. Returns a GeoJSON Polygon (single closed ring of
+    ``n_vertices + 1`` ``[lon, lat]`` pairs); ``None`` if ``alt_km <= 0``
+    (decayed orbit / parse error).
+
+    Antimeridian behaviour: the longitude of each vertex is normalised to
+    [-180, 180] independently. For sub-satellite points well clear of the
+    dateline (which includes all Idaho-overhead passes for ISS-class
+    altitudes) the resulting polygon is well-formed in Leaflet. Polar-orbit
+    crossings near ±180° will produce a polygon that visually wraps the
+    "wrong way" around the globe -- documented limitation, not handled.
+    """
+    if alt_km <= 0:
         return None
-    sat_ecef = _eci_to_ecef(pos_eci, _gmst_rad(jd, fr))
-    return _topocentric_az_el(sat_ecef, obs_ecef_km, obs_lat_deg, obs_lon_deg)
+    r_earth = _EARTH_RADIUS_KM
+    radius_km = r_earth * math.acos(r_earth / (r_earth + alt_km))
+    angular = radius_km / r_earth
+    lat1 = math.radians(lat_deg)
+    lon1 = math.radians(lon_deg)
+    sin_lat1, cos_lat1 = math.sin(lat1), math.cos(lat1)
+    sin_d, cos_d = math.sin(angular), math.cos(angular)
+
+    ring: list[list[float]] = []
+    for i in range(n_vertices):
+        bearing = 2.0 * math.pi * i / n_vertices
+        lat2 = math.asin(sin_lat1 * cos_d + cos_lat1 * sin_d * math.cos(bearing))
+        lon2 = lon1 + math.atan2(
+            math.sin(bearing) * sin_d * cos_lat1,
+            cos_d - sin_lat1 * math.sin(lat2),
+        )
+        lon2_deg = math.degrees(lon2)
+        # Wrap each vertex into [-180, 180].
+        lon2_deg = ((lon2_deg + 180.0) % 360.0) - 180.0
+        ring.append([lon2_deg, math.degrees(lat2)])
+    ring.append(ring[0])  # close
+    return {"type": "Polygon", "coordinates": [ring]}
+
+
+def _build_pass_geometry(p: dict[str, Any]) -> dict[str, Any] | None:
+    """Assemble the GeoJSON GeometryCollection for one pass (v0.11.2).
+
+    Combines the ground-track LineString (AOS -> LOS) and the visibility-
+    footprint Polygon at peak time. Returns ``None`` if neither is buildable
+    (degenerate pass, propagation error, etc.) so the caller can omit
+    ``geo.geometry`` entirely rather than write a ``{"type": ..., ...}``
+    placeholder.
+    """
+    geometries: list[dict[str, Any]] = []
+    track = p.get("ground_track") or []
+    if len(track) >= 2:
+        geometries.append({
+            "type": "LineString",
+            "coordinates": [[lon, lat] for lon, lat in track],
+        })
+    peak_subsat = p.get("peak_subsat")
+    if peak_subsat:
+        lon, lat, alt = peak_subsat
+        footprint = _visibility_footprint(lon, lat, alt)
+        if footprint:
+            geometries.append(footprint)
+    if not geometries:
+        return None
+    return {"type": "GeometryCollection", "geometries": geometries}
 
 
 def _severity_from_elev(max_elev_deg: float) -> int:
@@ -186,7 +295,15 @@ def _next_passes(
     horizon_hours: float,
     min_elevation_deg: float,
 ) -> list[dict[str, Any]]:
-    """Walk a 60-second grid; return all passes >= min_elevation_deg in window."""
+    """Walk a 60-second grid; return all passes >= min_elevation_deg in window.
+
+    Each returned dict now (v0.11.2) also carries:
+      ``peak_subsat``: ``(lon_deg, lat_deg, alt_km)`` at the moment of peak
+        elevation, for visibility-footprint construction.
+      ``ground_track``: list of ``(lon_deg, lat_deg)`` sub-satellite points
+        sampled at the same grid from AOS through LOS, for the
+        ground-track polyline.
+    """
     try:
         sat = Satrec.twoline2rv(tle_line1, tle_line2)
     except Exception:
@@ -200,16 +317,19 @@ def _next_passes(
     peak_t: datetime | None = None
     peak_e: float = -180.0
     peak_az: float | None = None
+    peak_subsat: tuple[float, float, float] | None = None
+    track: list[tuple[float, float]] = []
 
     t = ref_time
     end = ref_time + timedelta(hours=horizon_hours)
     step = timedelta(seconds=_PASS_STEP_S)
     while t < end:
-        sample = _elev_at(sat, t, obs_ecef, observer.lat, observer.lon)
+        sample = _sample_at(sat, t, obs_ecef, observer.lat, observer.lon)
         if sample is None:
             t += step
             continue
-        az, e = sample
+        az, e, sat_ecef = sample
+        subsat = _subsatellite_point(sat_ecef)  # (lon, lat, alt)
         if e >= min_elevation_deg:
             if not in_pass:
                 in_pass = True
@@ -218,28 +338,43 @@ def _next_passes(
                 peak_t = t
                 peak_e = e
                 peak_az = az
-            elif e > peak_e:
-                peak_t = t
-                peak_e = e
-                peak_az = az
+                peak_subsat = subsat
+                track = [(subsat[0], subsat[1])]
+            else:
+                track.append((subsat[0], subsat[1]))
+                if e > peak_e:
+                    peak_t = t
+                    peak_e = e
+                    peak_az = az
+                    peak_subsat = subsat
         elif in_pass:
-            # threshold-crossing on the way down -> close the pass
+            # threshold-crossing on the way down -> close the pass; include
+            # the descending boundary point in the track so the polyline
+            # ends at LOS rather than at the last sample above min_elev.
+            track.append((subsat[0], subsat[1]))
             passes.append({
                 "aos": aos_t, "aos_az": aos_az,
                 "peak": peak_t, "peak_az": peak_az, "max_elev_deg": peak_e,
                 "los": t, "los_az": az,
+                "peak_subsat": peak_subsat,
+                "ground_track": list(track),
             })
             in_pass = False
             aos_t = aos_az = peak_t = peak_az = None
             peak_e = -180.0
+            peak_subsat = None
+            track = []
         t += step
 
-    # Pass still in progress at the horizon edge -- close it at the boundary.
+    # Pass still in progress at the horizon edge -- close it at the boundary
+    # (los_az=None signals the pass extended beyond the horizon).
     if in_pass and aos_t and peak_t:
         passes.append({
             "aos": aos_t, "aos_az": aos_az,
             "peak": peak_t, "peak_az": peak_az, "max_elev_deg": peak_e,
             "los": end, "los_az": None,
+            "peak_subsat": peak_subsat,
+            "ground_track": list(track),
         })
 
     return passes
@@ -358,6 +493,13 @@ class SatpassPredictAdapter(SourceAdapter):
         observer: Observer,
     ) -> Event:
         aos: datetime = p["aos"]
+        # v0.11.2: enrich geo.geometry with a GeometryCollection so the
+        # events-list map (Leaflet L.geoJSON handles GeometryCollection
+        # natively) renders BOTH the ground-track LineString from AOS->LOS
+        # AND the visibility-footprint Polygon at peak time. centroid stays
+        # at the observer point -- the alert is logically AT the observer,
+        # the added geometry is supplementary spatial context.
+        geometry = _build_pass_geometry(p)
         return Event(
             id=f"{observer.slug}:{row['norad_id']}:{aos.isoformat()}",
             adapter=self.name,
@@ -366,6 +508,7 @@ class SatpassPredictAdapter(SourceAdapter):
             severity=_severity_from_elev(p["max_elev_deg"]),
             geo=Geo(
                 centroid=(observer.lon, observer.lat),
+                geometry=geometry,
                 regions=[f"US-{observer.state}"],
                 primary_region=f"US-{observer.state}",
             ),
