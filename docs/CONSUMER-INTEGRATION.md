@@ -134,6 +134,7 @@ Central's archive.
 | `CENTRAL_TRAFFIC` | `central.traffic.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_TRAFFIC_FLOW` | `central.traffic_flow.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_TRAFFIC_CAMERAS` | `central.traffic_cameras.>` | 7 | 1 GiB | ✓ | ✓ |
+| `CENTRAL_AVY` | `central.avy.>` | 7 | 1 GiB | ✓ | ✓ |
 | `CENTRAL_META` | `central.meta.>` | 1 | 1 GiB | — | ✓ |
 
 Retention and storage caps are migration-seeded defaults visible in `config.streams`;
@@ -1787,6 +1788,45 @@ at parameter `00060`, gage height (ft) at `00065`, water temperature (°C) at
     "centralschemaversion": "1.0"
 }
 ```
+
+\
+---
+
+### avalanche_org — avalanche.org backcountry advisories (v0.10.10)
+
+- **Source:** `https://api.avalanche.org/v2/public/products/map-layer/<center_id>`
+  per configured forecast center (defaults: SNFAC Sawtooth, PAC Payette).
+- **Stream:** `CENTRAL_AVY` (`central.avy.>`)
+- **Subject:** `central.avy.advisory.us.<state_lower>` — one subject per state;
+  multiple zones in the same state coexist via category-discriminated
+  `Nats-Msg-Id` (v0.10.8).
+- **Dedup key shape:** `<center_id>_<zone_name_slug>` (e.g. `SNFAC_banner_summit`).
+  Slug is the zone name lowercased with non-alphanumeric runs collapsed to `_`.
+- **Severity gate (adapter-side):** only `danger_level >= 3` publishes.
+  `danger_level` of 0/1/2 (None/Low/Moderate), -1 ("no rating"), and
+  `off_season=true` are all omitted — no Event yielded.
+- **Severity mapping (danger_level → Event.severity / centralseverity):**
+  `3 (Considerable) → 2`, `4 (High) → 3`, `5 (Extreme) → 4`. Higher = more
+  severe per Central convention.
+- **Event.data fields:**
+
+  | Field | Type | Notes |
+  |---|---|---|
+  | `center_id` | string | Upstream forecast center identifier (e.g. `SNFAC`) |
+  | `zone_name` | string | Human-readable zone name (e.g. `Banner Summit`) |
+  | `danger_level` | int | 3, 4, or 5 (published levels only) |
+  | `danger_name` | string | Upstream textual label (`Considerable`/`High`/`Extreme`) |
+  | `travel_advice` | string | Truncated to 200 chars |
+  | `state` | string | 2-letter state code (uppercase) |
+  | `valid_date` | string | Upstream `start_date` ISO string (timezone-naive) |
+  | `end_date` | string | Upstream `end_date` ISO string |
+  | `off_season` | bool | Always `false` for published events |
+  | `latitude` / `longitude` | float | Polygon centroid (computed via shapely) |
+- **Geometry:** the upstream Polygon passes through as-is in `geo.geometry`.
+  MultiPolygon also supported defensively; centroid is computed from whichever.
+- **Off-season behavior:** during summer all SNFAC/PAC zones return
+  `off_season=true` + `danger_level=-1` — the adapter yields zero events,
+  by design.
 
 \
 ---

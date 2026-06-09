@@ -1,0 +1,8 @@
+{# avalanche.org backcountry advisory. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('zone_name') is not none %}<dt>Zone</dt><dd>{{ d.zone_name }}</dd>{% endif %}
+{% if d.get('center_id') is not none %}<dt>Center</dt><dd>{{ d.center_id }}</dd>{% endif %}
+{% if d.get('state') is not none %}<dt>State</dt><dd>{{ d.state }}</dd>{% endif %}
+{% if d.get('danger_level') is not none %}<dt>Danger</dt><dd>{{ d.danger_level }} ({{ d.danger_name or '?' }})</dd>{% endif %}
+{% if d.get('valid_date') is not none %}<dt>Valid</dt><dd>{{ d.valid_date }}</dd>{% endif %}
+{% if d.get('travel_advice') is not none %}<dt>Travel advice</dt><dd>{{ d.travel_advice }}</dd>{% endif %}
