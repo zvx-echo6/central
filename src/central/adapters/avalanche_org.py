@@ -76,13 +76,91 @@ _DEDUP_DDL = (
     "PRIMARY KEY (adapter, event_id))"
 )
 
+# v0.10.11: per-adapter state for tombstone emission. Tracks
+# (center_id, zone_name) of zones that PASSED the severity gate on the
+# last poll -- so we can diff against the next poll and emit retraction
+# envelopes when a zone falls below the threshold, flips off_season, or
+# disappears from the upstream feed entirely.
+_OBSERVED_DDL = (
+    "CREATE TABLE IF NOT EXISTS avalanche_org_observed ("
+    "center_id TEXT NOT NULL, zone_name TEXT NOT NULL, "
+    "state TEXT NOT NULL, "
+    "last_published_at TEXT NOT NULL, "
+    "PRIMARY KEY (center_id, zone_name))"
+)
+
+
+def _read_observed(
+    db: sqlite3.Connection,
+) -> dict[tuple[str, str], tuple[str, str]]:
+    """Return ``{(center_id, zone_name): (state, last_published_at)}``."""
+    cursor = db.execute(
+        "SELECT center_id, zone_name, state, last_published_at "
+        "FROM avalanche_org_observed"
+    )
+    return {(r[0], r[1]): (r[2], r[3]) for r in cursor.fetchall()}
+
+
+def _upsert_observed(
+    db: sqlite3.Connection,
+    current: dict[tuple[str, str], str],
+) -> None:
+    """Upsert ``current``: ``{(center_id, zone_name): state}``. Sets
+    ``last_published_at`` to now for each row."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for (cid, zn), state in current.items():
+        db.execute(
+            "INSERT OR REPLACE INTO avalanche_org_observed "
+            "(center_id, zone_name, state, last_published_at) "
+            "VALUES (?, ?, ?, ?)",
+            (cid, zn, state, now_iso),
+        )
+    db.commit()
+
+
+def _delete_observed(
+    db: sqlite3.Connection,
+    keys: set[tuple[str, str]],
+) -> None:
+    """Remove the listed ``(center_id, zone_name)`` rows. Idempotent."""
+    for (cid, zn) in keys:
+        db.execute(
+            "DELETE FROM avalanche_org_observed "
+            "WHERE center_id = ? AND zone_name = ?",
+            (cid, zn),
+        )
+    db.commit()
+
+
+def _removal_reason(upstream_props: dict[str, Any] | None) -> str:
+    """Classify why a previously-published zone is no longer publishing.
+
+    - ``off_season``: zone is still in the feed but ``off_season=true``.
+    - ``below_threshold``: zone is still in the feed but ``danger_level < 3``
+      (or any other gate-failing value like ``-1``).
+    - ``fallen_off_feed``: zone is absent from this poll's response entirely
+      (forecast center reorganised, zone deprecated). meshai's renderer is
+      expected to treat this the same as ``below_threshold`` -- both are
+      retractions, only the upstream signal differs.
+    """
+    if upstream_props is None:
+        return "fallen_off_feed"
+    if upstream_props.get("off_season"):
+        return "off_season"
+    return "below_threshold"
+
 
 def _slug(text: str) -> str:
-    """Lowercase + collapse runs of non-alphanum to single underscores.
+    """Lowercase + collapse runs of non-alphanum to single hyphens.
 
-    'Sawtooth & Western Smoky Mtns' → 'sawtooth_western_smoky_mtns'.
+    'Sawtooth & Western Smoky Mtns' → 'sawtooth-western-smoky-mtns'.
+
+    v0.10.11: meshai requested hyphens instead of underscores so the slug
+    matches the rest of their renderer's url-style key conventions. Safe
+    to swap because off-season `published_ids` for avalanche_org was 0 at
+    the time of this change -- no live event.id values to invalidate.
     """
-    return re.sub(r"[^a-zA-Z0-9]+", "_", text or "").strip("_").lower()
+    return re.sub(r"[^a-zA-Z0-9]+", "-", text or "").strip("-").lower()
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -165,6 +243,7 @@ class AvalancheOrgAdapter(SourceAdapter):
             "CREATE INDEX IF NOT EXISTS published_ids_last_seen "
             "ON published_ids (last_seen)"
         )
+        self._db.execute(_OBSERVED_DDL)
         self._db.commit()
         logger.info(
             "avalanche_org adapter started",
@@ -235,6 +314,10 @@ class AvalancheOrgAdapter(SourceAdapter):
         if centroid is None:
             return None
         lon, lat = centroid
+        try:
+            bbox = shapely_shape(geometry).bounds  # (minx, miny, maxx, maxy)
+        except Exception:
+            bbox = None
 
         valid_dt = _parse_iso(props.get("start_date")) or datetime.now(timezone.utc)
         advice = (props.get("travel_advice") or "")[:_TRAVEL_ADVICE_MAX_CHARS]
@@ -248,6 +331,7 @@ class AvalancheOrgAdapter(SourceAdapter):
             severity=severity,
             geo=Geo(
                 centroid=(lon, lat),
+                bbox=bbox,
                 geometry=geometry,
                 regions=[f"US-{state}"],
                 primary_region=f"US-{state}",
@@ -270,6 +354,7 @@ class AvalancheOrgAdapter(SourceAdapter):
     async def poll(self) -> AsyncIterator[Event]:
         if not self._session:
             raise RuntimeError("Session not initialized")
+        assert self._db is not None  # for type narrowing
 
         results = await asyncio.gather(
             *[self._fetch(c) for c in self._center_ids], return_exceptions=True,
@@ -277,6 +362,14 @@ class AvalancheOrgAdapter(SourceAdapter):
 
         yielded = 0
         omitted = 0
+        # Map every upstream feature this poll by (center_id, zone_name) so
+        # the tombstone phase can classify why a previously-published zone
+        # is no longer publishing (off_season vs below_threshold vs absent).
+        upstream_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+        # Zones that PASSED the gate this poll, with their state for the
+        # tombstone subject derivation if they fall off next time.
+        current_published: dict[tuple[str, str], str] = {}
+
         for center_id, result in zip(self._center_ids, results):
             if isinstance(result, BaseException) or result is None:
                 if isinstance(result, BaseException):
@@ -287,6 +380,10 @@ class AvalancheOrgAdapter(SourceAdapter):
                 continue
             features = result.get("features") or []
             for feat in features:
+                props = feat.get("properties") or {}
+                zone_name = props.get("name")
+                if zone_name:
+                    upstream_by_key[(center_id, zone_name)] = props
                 try:
                     ev = self._build_event_record(feat, center_id)
                 except Exception:
@@ -299,16 +396,56 @@ class AvalancheOrgAdapter(SourceAdapter):
                 if ev is None:
                     omitted += 1
                     continue
+                current_published[(center_id, ev.data["zone_name"])] = ev.data["state"]
                 yield ev
                 yielded += 1
 
+        # Tombstone phase: zones in the observed table but not in this poll's
+        # passing set get a retraction Event. Reason determined from the
+        # upstream feature's current state (if still in feed) or marked
+        # 'fallen_off_feed' if absent entirely.
+        observed_before = _read_observed(self._db)
+        removed: set[tuple[str, str]] = (
+            set(observed_before.keys()) - set(current_published.keys())
+        )
+        tombstones = 0
+        for key in removed:
+            cid, zone_name = key
+            last_state, last_published_at = observed_before[key]
+            reason = _removal_reason(upstream_by_key.get(key))
+            now = datetime.now(timezone.utc)
+            tomb_id = f"{cid}_{_slug(zone_name)}:removed:{now.isoformat()}"
+            yield Event(
+                id=tomb_id,
+                adapter=self.name,
+                category=f"avy.advisory.removed.{cid.lower()}",
+                time=now,
+                severity=0,
+                geo=Geo(),
+                data={
+                    "center_id": cid,
+                    "zone_name": zone_name,
+                    "state": last_state,
+                    "reason": reason,
+                    "last_published_at": last_published_at,
+                },
+            )
+            tombstones += 1
+
+        # Update state AFTER yielding so a supervisor crash mid-publish causes
+        # at-least-once retry on the next poll (matches wfigs convention).
+        _upsert_observed(self._db, current_published)
+        _delete_observed(self._db, removed)
         self.sweep_old_ids()
         logger.info(
             "avalanche_org poll completed",
             extra={"centers": self._center_ids,
-                   "events_yielded": yielded, "events_omitted": omitted},
+                   "events_yielded": yielded, "events_omitted": omitted,
+                   "tombstones_emitted": tombstones},
         )
 
     def subject_for(self, event: Event) -> str:
         state = (event.data.get("state") or "").lower() or "unknown"
+        if event.category.startswith("avy.advisory.removed"):
+            return f"central.avy.advisory.removed.us.{state}"
         return f"central.avy.advisory.us.{state}"
