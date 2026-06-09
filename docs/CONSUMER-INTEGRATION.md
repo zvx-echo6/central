@@ -1939,6 +1939,46 @@ at parameter `00060`, gage height (ft) at `00065`, water temperature (°C) at
 - **Empty-TLE behaviour:** logs INFO and yields zero events, same as
   `satpass_predict`. Enable `celestrak_tle` first.
 
+### n2yo_visualpasses — server-side visible-pass alerts (v0.12.1)
+
+- **Source:** the `visualpasses` endpoint at `api.n2yo.com`. Requires a
+  free n2yo API key (configured via the GUI `/api-keys` page with alias
+  `n2yo`). n2yo's servers add sun-illumination and visual-magnitude data
+  that local SGP4 propagation alone cannot compute, which is why this
+  adapter exists alongside (not replacing) `satpass_predict`.
+- **Stream:** `CENTRAL_SAT` (existing; no new stream).
+- **Subject:** `central.sat.pass.us.<state_lower>.<observer_slug>` —
+  **intentionally identical to `satpass_predict`'s subject**. A consumer
+  subscribing to e.g. `central.sat.pass.us.id.boise` will receive events
+  from BOTH adapters. **Disambiguate via `data.category`**: filter on
+  `pass.n2yo_visualpasses` for this adapter, `pass.satpass_predict` for
+  the local SGP4 flow. JetStream's category-discriminated `Nats-Msg-Id`
+  (v0.10.8) keeps both adapters' dedup windows separate even when they
+  emit for the same (observer, satellite, AOS) tuple.
+- **Dedup key shape:** `<observer_slug>:<norad_id>:<aos_iso>` — same shape
+  as `satpass_predict` by design; the category-discriminated `Nats-Msg-Id`
+  is what keeps them distinct in JetStream.
+- **Severity bucket** from visual magnitude (**lower mag = brighter**):
+  `<= -3` = 4 (very bright); `-3 .. -1` = 3 (bright, naked-eye easy);
+  `-1 .. 2` = 2 (faint, binoculars help); `> 2` = 1 (telescope-grade;
+  rarely fires since n2yo's `visualpasses` only returns sunlit passes).
+- **Geo:** `centroid = (observer.lon, observer.lat)` so the GUI map plots
+  the alert at the observer point.
+- **Event.data fields:** `observer_name`, `observer_slug`, `observer_state`,
+  `norad_id`, `satellite_name`, `aos_time`, `peak_time`, `los_time`,
+  `max_elevation_deg`, `magnitude`, `azimuth_at_aos` /`_compass`,
+  `azimuth_at_peak` /`_compass`, `azimuth_at_los` /`_compass`,
+  `duration_s`.
+- **Cadence:** 1h. The adapter recomputes the 2-day visible-pass horizon
+  every hour. Default 6 observers × 6 sats × 24 polls/day = 864
+  transactions/day, under n2yo's free-tier 1000/day quota cap.
+- **Settings:** `observers`, `norad_ids`, `days_ahead = 2`,
+  `min_visibility_seconds = 300`, `api_key_alias = "n2yo"`.
+- **Missing-key behaviour:** if no key is configured for the alias, the
+  adapter logs INFO and yields zero events — no exception. Operator adds
+  the key via GUI `/api-keys` then the adapter picks it up on the next
+  config-change notification.
+
 \
 ---
 
