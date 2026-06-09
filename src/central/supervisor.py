@@ -141,6 +141,7 @@ STREAM_CATEGORY_DOMAINS: dict[str, tuple[str, ...]] = {
     "CENTRAL_TRAFFIC_FLOW": ("flow",),
     "CENTRAL_TRAFFIC_CAMERAS": ("camera",),
     "CENTRAL_AVY": ("avy",),
+    "CENTRAL_SAT": ("tle",),
 }
 
 

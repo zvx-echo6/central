@@ -1,0 +1,10 @@
+{# CelesTrak satellite TLE. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% set orb = (d.get('_enriched') or {}).get('orbit') or {} %}
+{% if d.get('satellite_name') is not none %}<dt>Satellite</dt><dd>{{ d.satellite_name }}</dd>{% endif %}
+{% if d.get('norad_id') is not none %}<dt>NORAD ID</dt><dd><code>{{ d.norad_id }}</code></dd>{% endif %}
+{% if d.get('intl_designator') is not none %}<dt>Intl designator</dt><dd><code>{{ d.intl_designator }}</code></dd>{% endif %}
+{% if d.get('epoch') is not none %}<dt>Epoch</dt><dd>{{ d.epoch }}</dd>{% endif %}
+{% if orb.get('inclination_deg') is not none %}<dt>Inclination</dt><dd>{{ "%.2f"|format(orb.inclination_deg) }}°</dd>{% endif %}
+{% if orb.get('mean_motion_rev_per_day') is not none %}<dt>Orbital period</dt><dd>{{ "%.1f"|format(1440.0 / orb.mean_motion_rev_per_day) }} min</dd>{% endif %}
+{% if orb.get('eccentricity') is not none %}<dt>Eccentricity</dt><dd>{{ "%.6f"|format(orb.eccentricity) }}</dd>{% endif %}

@@ -1148,6 +1148,14 @@ _SAMPLE_INNER = {
     "itd_511": {"event_type_short": "work_zone", "roadway_name": "I-84"},
     "itd_511_cameras": {"location": "I-84 Mountain Home", "camera_id": 42},
     "avalanche_org": {"zone_name": "Banner Summit", "danger_name": "Considerable"},
+    "celestrak_tle": {
+        "norad_id": 25544,
+        "satellite_name": "ISS (ZARYA)",
+        "_enriched": {"orbit": {
+            "inclination_deg": 51.6336,
+            "mean_motion_rev_per_day": 15.49672912,
+        }},
+    },
 }
 
 # Exact expected subjects for the deterministic adapters. swpc_alerts is omitted
@@ -1172,6 +1180,7 @@ _EXPECTED_SUBJECT = {
     "itd_511": "Road work on I-84",
     "itd_511_cameras": "Camera: I-84 Mountain Home",
     "avalanche_org": "Avalanche advisory — Banner Summit (Considerable)",
+    "celestrak_tle": "TLE update: ISS (ZARYA) (NORAD 25544) — 92.9min orbit at 51.6°",
 }
 
 

@@ -1,0 +1,6 @@
+{%- set d = (event.data.get('data') or {}).get('data') or {} -%}
+{%- set orb = (d.get('_enriched') or {}).get('orbit') or {} -%}
+{%- if d.get('satellite_name') -%}
+TLE update: {{ d.satellite_name }} (NORAD {{ d.norad_id }})
+{%- if orb.get('mean_motion_rev_per_day') and orb.get('inclination_deg') is not none %} — {{ "%.1f"|format(1440.0 / orb.mean_motion_rev_per_day) }}min orbit at {{ "%.1f"|format(orb.inclination_deg) }}°{% endif -%}
+{%- endif -%}
