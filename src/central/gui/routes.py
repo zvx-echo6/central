@@ -946,6 +946,26 @@ async def setup_adapters_submit(request: Request) -> Response:
                 else:
                     new_settings[field.name] = []
 
+            elif field.widget == "csv_int":
+                # v0.11.3: list[int] support. Coerce per-token; drop non-numeric
+                # entries with a warning so the operator can spot typos in the log
+                # rather than getting a 500.
+                value = form.get(form_key, "").strip()
+                parsed: list[int] = []
+                if value:
+                    for tok in value.split(","):
+                        tok = tok.strip()
+                        if not tok:
+                            continue
+                        try:
+                            parsed.append(int(tok))
+                        except ValueError:
+                            logger.warning(
+                                "csv_int: dropped non-numeric token",
+                                extra={"field": field.name, "token": tok},
+                            )
+                new_settings[field.name] = parsed
+
             elif field.widget == "select":
                 value = form.get(form_key, "").strip()
                 if value and field.options and value not in field.options:
@@ -1715,6 +1735,23 @@ async def adapters_edit_submit(
                         parsed_values[field.name] = [v.strip() for v in raw.split(",") if v.strip()]
                     else:
                         parsed_values[field.name] = []
+                elif field.widget == "csv_int":
+                    # v0.11.3: parallel to "csv" but coerces each token through
+                    # int(), dropping non-numeric entries with a warning.
+                    parsed_ints: list[int] = []
+                    if raw.strip():
+                        for tok in raw.split(","):
+                            tok = tok.strip()
+                            if not tok:
+                                continue
+                            try:
+                                parsed_ints.append(int(tok))
+                            except ValueError:
+                                logger.warning(
+                                    "csv_int: dropped non-numeric token",
+                                    extra={"field": field.name, "token": tok},
+                                )
+                    parsed_values[field.name] = parsed_ints
                 elif field.widget == "select":
                     value = raw.strip() if raw else None
                     if value and field.options and value not in field.options:

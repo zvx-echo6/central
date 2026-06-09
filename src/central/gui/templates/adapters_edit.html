@@ -104,6 +104,16 @@
                 <small class="field-error">{{ errors[field.name] }}</small>
                 {% endif %}
 
+            {% elif field.widget == "csv_int" %}
+                <label for="{{ field.name }}">{{ field.label }}</label>
+                <input type="text" id="{{ field.name }}" name="{{ field.name }}"
+                       value="{{ form_data[field.name] if form_data and field.name in form_data else (field.current_value | join(',') if field.current_value else '') }}"
+                       {% if field.required %}required{% endif %}>
+                <small>Comma-separated integers{% if field.description %} — {{ field.description }}{% endif %}</small>
+                {% if errors and errors[field.name] %}
+                <small class="field-error">{{ errors[field.name] }}</small>
+                {% endif %}
+
             {% elif field.widget == "select" %}
                 <label for="{{ field.name }}">{{ field.label }}</label>
                 <select id="{{ field.name }}" name="{{ field.name }}">

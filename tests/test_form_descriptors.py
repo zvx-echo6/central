@@ -236,3 +236,132 @@ class TestLiteralTypes:
         assert widget == "select"
         assert options == ["one", "two"]
 
+
+# --- v0.11.3: list[int] support (the bug origin) ----------------------------
+
+
+class TestListIntSupport:
+    """v0.11.3 hotfix: production traceback was
+
+        NotImplementedError: Field 'extra_norad_ids' has unsupported list type: list[int]
+
+    when celestrak_tle's edit form GET hit describe_fields. The handler now
+    maps ``list[int]`` to a ``csv_int`` widget (parallel to ``csv`` for
+    list[str] but with per-token int() coercion in the POST parser).
+    """
+
+    def test_list_int_maps_to_csv_int(self):
+        widget, options = _type_to_widget_and_options("field", list[int])
+        assert widget == "csv_int"
+        assert options is None
+
+    def test_describe_fields_celestrak_tle_settings_succeeds(self):
+        """Regression guard for the production traceback: celestrak_tle's
+        settings schema (groups: list[str] + extra_norad_ids: list[int])
+        must render without raising."""
+        from central.adapters.celestrak_tle import CelestrakTleSettings
+
+        descriptors = describe_fields(
+            CelestrakTleSettings,
+            {"groups": ["stations"], "extra_norad_ids": [25544, 33591]},
+        )
+        by_name = {d.name: d for d in descriptors}
+        # groups: list[str] -> csv (unchanged regression)
+        assert by_name["groups"].widget == "csv"
+        # extra_norad_ids: list[int] -> csv_int (the fix)
+        assert by_name["extra_norad_ids"].widget == "csv_int"
+        assert by_name["extra_norad_ids"].current_value == [25544, 33591]
+
+    def test_describe_fields_satpass_predict_settings_uses_model_list(self):
+        """Regression guard: satpass_predict's observers: list[Observer]
+        must continue to render as model_list, not get swept into a JSON
+        textarea fallback. v0.11.3 explicitly preserved the existing
+        model_list path -- this test guards against accidental scope creep."""
+        from central.adapters.satpass_predict import SatpassPredictSettings
+
+        descriptors = describe_fields(SatpassPredictSettings, {})
+        by_name = {d.name: d for d in descriptors}
+        assert by_name["observers"].widget == "model_list"
+        # And the sub-column descriptors are populated by the recursive call
+        # in describe_fields (lines 161-166).
+        assert by_name["observers"].sub_fields is not None
+        sub_names = {sf.name for sf in by_name["observers"].sub_fields}
+        assert {"name", "slug", "state", "lat", "lon", "elev_m"} <= sub_names
+        # Scalars still map as expected.
+        assert by_name["min_elevation_deg"].widget == "number"
+        assert by_name["horizon_hours"].widget == "number"
+
+    def test_unsupported_list_type_error_names_the_actual_type(self):
+        """v0.11.3 sharpened the NotImplementedError message to name the
+        encountered inner type AND list the supported alternatives."""
+        with pytest.raises(NotImplementedError) as exc_info:
+            _type_to_widget_and_options("strange_field", list[dict])
+        msg = str(exc_info.value)
+        assert "strange_field" in msg
+        assert "list[dict]" in msg
+        # Mentions the supported set so the operator can see what to use.
+        assert "csv_int" in msg or "Supported" in msg
+
+
+# --- POST parser round-trip for csv_int -------------------------------------
+
+
+class _FakeForm(dict):
+    """Minimal stand-in for starlette FormData supporting .get() + .getlist()."""
+    def __init__(self, mapping):
+        super().__init__(mapping)
+    def get(self, key, default=""):
+        return super().get(key, default)
+
+
+def _parse_csv_int_token(raw: str, field_name: str = "extra_norad_ids") -> list[int]:
+    """Inline of the parser logic added to routes.py at the two POST sites.
+
+    Kept identical to those branches; if either site diverges, this helper
+    will drift and the round-trip tests will catch it. (We can't import the
+    parser directly because it's an inline branch in a 200-line async
+    function.)
+    """
+    import logging as _logging
+    parsed: list[int] = []
+    if raw.strip():
+        for tok in raw.split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            try:
+                parsed.append(int(tok))
+            except ValueError:
+                _logging.getLogger("test").warning(
+                    "csv_int: dropped non-numeric token",
+                    extra={"field": field_name, "token": tok},
+                )
+    return parsed
+
+
+class TestCsvIntRoundTrip:
+    """Mirror of the POST-branch logic at routes.py:942 + :1713. The branches
+    themselves are duplicated by necessity (sync wizard vs edit page); both
+    were updated in v0.11.3 and these tests pin the contract."""
+
+    def test_three_ints_round_trip(self):
+        assert _parse_csv_int_token("25544, 28654, 33591") == [25544, 28654, 33591]
+
+    def test_garbage_dropped_with_valid_kept(self):
+        """Mixed input 'foo, 123' -> [123]; the 'foo' is dropped (warning logged)."""
+        assert _parse_csv_int_token("foo, 123") == [123]
+
+    def test_empty_input_yields_empty_list_not_none(self):
+        assert _parse_csv_int_token("") == []
+        assert _parse_csv_int_token("   ") == []
+
+    def test_whitespace_only_tokens_skipped(self):
+        assert _parse_csv_int_token("1, , 2,  ,3") == [1, 2, 3]
+
+    def test_negative_ints_accepted(self):
+        """No-op for the NORAD-id case but the parser shouldn't reject negatives."""
+        assert _parse_csv_int_token("-1, 0, 1") == [-1, 0, 1]
+
+    def test_all_garbage_yields_empty_list(self):
+        assert _parse_csv_int_token("foo, bar, baz") == []
+

@@ -87,13 +87,26 @@ def _type_to_widget_and_options(field_name: str, field_type: type) -> tuple[str,
         if inner_type is str:
             return "csv", None
 
+        # list[int] -> csv_int (v0.11.3). Mirrors csv but the POST parser
+        # coerces each comma-separated token through int(); non-numeric
+        # tokens are dropped with a warning log. Added when
+        # celestrak_tle's extra_norad_ids: list[int] triggered the
+        # adapter-edit form to 500 on production.
+        if inner_type is int:
+            return "csv_int", None
+
         # list[<BaseModel>] -> repeatable per-row editor (sub-columns resolved
         # by describe_fields, which recurses into the row model).
         if isinstance(inner_type, type) and issubclass(inner_type, BaseModel):
             return "model_list", None
 
+        inner_name = (
+            inner_type.__name__ if isinstance(inner_type, type) else repr(inner_type)
+        ) if inner_type is not None else "?"
         raise NotImplementedError(
-            f"Field '{field_name}' has unsupported list type: list[{inner_type.__name__ if inner_type else '?'}]"
+            f"Field '{field_name}' has unsupported list type: list[{inner_name}]. "
+            f"Supported inner types: str (csv), int (csv_int), Literal[...] (checkboxes), "
+            f"BaseModel subclasses (model_list)."
         )
 
     # dict -> json textarea (generic; e.g. EnrichmentConfig.backend_settings).
