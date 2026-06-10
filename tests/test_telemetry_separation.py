@@ -13,7 +13,9 @@ from central.gui import routes
 # Adapters with data_class="telemetry" (the pinned split; grow as telemetry adapters land).
 # v0.11.0 added celestrak_tle (orbital state -- continuous-ish refresh, telemetry-class).
 # v0.12.0 added sat_positions (60s sub-sat point per tracked satellite).
-_TELEMETRY = ["celestrak_tle", "itd_511_cameras", "nwis", "sat_positions", "tomtom_flow"]
+# v0.13.0 added sat_orbits (90min forward-track LineString per satellite, every 5min).
+_TELEMETRY = ["celestrak_tle", "itd_511_cameras", "nwis", "sat_orbits",
+              "sat_positions", "tomtom_flow"]
 
 
 # --- data_class defaults / registry split -----------------------------------

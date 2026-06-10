@@ -153,6 +153,25 @@
     var FLOW_COLOR = { "1": "#2ecc71", "2": "#f1c40f", "3": "#e67e22", "4": "#e74c3c" };
     function flowColor(sev) { return FLOW_COLOR[sev] || "#7f8c8d"; }
 
+    // v0.13.0: sat_orbits colors per NORAD ID so six tracked satellites
+    // render as six distinguishable lines on the map (the v0.11.2 "all
+    // passes are orange" problem). event_id shape is "<norad_id>:<iso>"
+    // so JS reads the first colon-token. Golden-angle hue distribution
+    // (137.508° step) gives well-spread, repeatable colors per sat.
+    // Additive: other adapters keep their existing palette color.
+    function orbitColorForNoradId(norad) {
+        var hue = (norad * 137.508) % 360;
+        return "hsl(" + hue.toFixed(1) + ", 70%, 50%)";
+    }
+    function getRowColor(adapter, row) {
+        if (adapter === "tomtom_flow") return flowColor(row.dataset.severity);
+        if (adapter === "sat_orbits") {
+            var norad = parseInt((row.dataset.eventId || "").split(":")[0], 10);
+            if (!isNaN(norad)) return orbitColorForNoradId(norad);
+        }
+        return getAdapterColor(adapter);
+    }
+
     // Flatten arbitrarily-nested GeoJSON coordinates into a flat [lng, lat] list.
     function flattenCoords(coords, out) {
         if (coords.length && typeof coords[0] === "number") {
@@ -416,7 +435,7 @@
                 if (!geom) return;
 
                 var adapter = row.dataset.adapter || "";
-                var color = adapter === "tomtom_flow" ? flowColor(row.dataset.severity) : getAdapterColor(adapter);
+                var color = getRowColor(adapter, row);
                 var op = severityOpacity(row);
 
                 // Point-like geometries (Points + zero-extent polygons from

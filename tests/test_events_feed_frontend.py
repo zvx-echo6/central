@@ -1178,6 +1178,17 @@ _SAMPLE_INNER = {
         "magnitude": -3.4,
         "max_elevation_deg": 47.0,
     },
+    "sat_orbits": {
+        "satellite_name": "ISS (ZARYA)",
+        "norad_id": 25544,
+        "propagation_start_iso": "2026-06-09T22:35:00+00:00",
+        "forward_minutes": 90,
+        "sample_seconds": 60,
+        "vertex_count": 91,
+        "current_lon_deg": 170.6553,
+        "current_lat_deg": -17.1487,
+        "current_alt_km": 417.4,
+    },
 }
 
 # Exact expected subjects for the deterministic adapters. swpc_alerts is omitted
@@ -1206,6 +1217,7 @@ _EXPECTED_SUBJECT = {
     "satpass_predict": "ISS (ZARYA) passes overhead at 15:39 UTC — max elevation 40°",
     "sat_positions": "ISS (ZARYA) at 43.6°N 116.2°W, alt 408km, 7.7km/s",
     "n2yo_visualpasses": "ISS (ZARYA) visible pass at 21:14 UTC — mag -3.4, peak 47°",
+    "sat_orbits": "ISS (ZARYA) orbital track — 90min forward from 22:35 UTC",
 }
 
 

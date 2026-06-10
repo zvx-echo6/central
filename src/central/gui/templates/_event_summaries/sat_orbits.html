@@ -1,0 +1,4 @@
+{%- set d = (event.data.get('data') or {}).get('data') or {} -%}
+{%- if d.get('satellite_name') and d.get('forward_minutes') is not none and d.get('propagation_start_iso') -%}
+{{ d.satellite_name }} orbital track — {{ d.forward_minutes }}min forward from {{ d.propagation_start_iso[11:16] }} UTC
+{%- endif -%}

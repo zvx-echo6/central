@@ -1979,6 +1979,47 @@ at parameter `00060`, gage height (ft) at `00065`, water temperature (°C) at
   the key via GUI `/api-keys` then the adapter picks it up on the next
   config-change notification.
 
+### sat_orbits — forward orbital track per satellite (v0.13.0)
+
+- **Source:** same as `sat_positions` and `satpass_predict` — reads the
+  latest TLE per `norad_id` from `celestrak_tle`'s events. Empty TLE table
+  = zero events yielded, no exception.
+- **Data class:** `telemetry`. Surfaces on `/telemetry`, not `/events`;
+  these are continuous-state trajectories, not alerts.
+- **Stream:** `CENTRAL_SAT` (existing; v0.13.0 extends
+  `STREAM_CATEGORY_DOMAINS["CENTRAL_SAT"]` to
+  `("tle", "pass", "position", "orbit")`).
+- **Subject:** `central.sat.orbit.<norad_id>` — one subject per satellite.
+  Consumers can subscribe to `central.sat.orbit.>` for every tracked
+  satellite's forward track, or pin to a single satellite.
+- **Dedup key shape:** `<norad_id>:<propagation_iso>` where
+  `propagation_iso` is the propagation start time truncated to whole
+  seconds. Matches the `sat_positions` convention.
+- **Severity:** always 1 (informational telemetry).
+- **Geo:**
+  - `centroid = (current_lon_deg, current_lat_deg)` — first vertex of the
+    track, anchoring the "here's where it IS" dot on the map.
+  - `geometry` = GeoJSON `LineString` for the common case (no
+    antimeridian crossing), or `MultiLineString` when the forward track
+    crosses ±180° (polar orbits, mid-Pacific orbits). Antimeridian
+    splitting lives in `sat_common.split_antimeridian` and is shared
+    with `satpass_predict`'s ground-track render — v0.13.0 also fixes
+    the v0.11.2 satpass_predict "wrong-way wrap" bug as a sibling concern.
+- **Event.data fields:** `norad_id`, `satellite_name`,
+  `propagation_start_iso`, `forward_minutes`, `sample_seconds`,
+  `vertex_count`, `current_lon_deg`, `current_lat_deg`, `current_alt_km`,
+  `tle_epoch`.
+- **Cadence:** 300s (5 min) default. Lower than `sat_positions`' 60s
+  because a forward LineString covers ~90 minutes of orbit; the
+  trajectory doesn't change meaningfully tick-to-tick at that horizon.
+- **Settings:** `track_only_norad_ids` (empty = all fresh TLEs;
+  non-empty pins to those IDs), `forward_minutes = 90` (~1 LEO orbit),
+  `sample_seconds = 60` (~90 vertices per event), `max_tle_age_days = 14`.
+- **GUI rendering:** sat_orbits events are colored **per-NORAD-ID** in
+  the events map (golden-angle HSL hue distribution off `norad_id`) so
+  multiple tracked satellites render as distinguishable lines. Other
+  adapters keep their existing per-adapter palette color.
+
 \
 ---
 

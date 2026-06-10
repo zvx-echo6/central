@@ -20,6 +20,7 @@ from central.adapters.sat_common import (
     EARTH_RADIUS_KM,
     eci_to_ecef,
     gmst_rad,
+    split_antimeridian,
     subsatellite_point,
 )
 
@@ -91,6 +92,65 @@ class TestSubsatellitePoint:
         lon, _, _ = subsatellite_point((0.0, -(EARTH_RADIUS_KM + 400.0), 0.0))
         assert -180.0 <= lon <= 180.0
         assert lon == pytest.approx(-90.0)
+
+
+class TestSplitAntimeridian:
+    """v0.13.0 splitter. Returns None for <2 vertices; LineString for tracks
+    with no crossing; MultiLineString when crossings exist. Each crossing
+    closes the current segment at sign(prev)*180 with linearly-interpolated
+    lat and starts the next at sign(cur)*180 with the same lat."""
+
+    def test_none_for_empty(self):
+        assert split_antimeridian([]) is None
+
+    def test_none_for_single_vertex(self):
+        assert split_antimeridian([(0.0, 0.0)]) is None
+
+    def test_linestring_for_no_crossing(self):
+        result = split_antimeridian([(0.0, 0.0), (10.0, 5.0), (20.0, 0.0)])
+        assert result["type"] == "LineString"
+        assert len(result["coordinates"]) == 3
+
+    def test_multilinestring_for_eastward_crossing(self):
+        """+170 -> +179 -> -179 -> -170 crosses +180 once."""
+        result = split_antimeridian([
+            (170.0, 0.0), (179.0, 0.0), (-179.0, 0.0), (-170.0, 0.0),
+        ])
+        assert result["type"] == "MultiLineString"
+        assert len(result["coordinates"]) == 2
+        # First segment closes at +180
+        assert result["coordinates"][0][-1] == [180.0, 0.0]
+        # Second segment starts at -180
+        assert result["coordinates"][1][0] == [-180.0, 0.0]
+
+    def test_multilinestring_for_westward_crossing(self):
+        """-170 -> -179 -> +179 -> +170 crosses -180 once."""
+        result = split_antimeridian([
+            (-170.0, 0.0), (-179.0, 0.0), (179.0, 0.0), (170.0, 0.0),
+        ])
+        assert result["type"] == "MultiLineString"
+        assert len(result["coordinates"]) == 2
+        # First segment closes at -180; second starts at +180.
+        assert result["coordinates"][0][-1] == [-180.0, 0.0]
+        assert result["coordinates"][1][0] == [180.0, 0.0]
+
+    def test_two_crossings_produce_three_segments(self):
+        """Polar-orbit-like sequence crossing the dateline twice in 6 vertices."""
+        result = split_antimeridian([
+            (170.0, 50.0), (179.0, 60.0), (-179.0, 70.0),
+            (-179.0, -70.0), (179.0, -60.0), (170.0, -50.0),
+        ])
+        assert result["type"] == "MultiLineString"
+        assert len(result["coordinates"]) == 3
+
+    def test_interpolated_lat_at_crossing(self):
+        """Lat interpolates linearly between pre- and post-crossing vertices.
+        +179 lat=0 -> -179 lat=10 should put the +/-180 vertex at lat=5."""
+        result = split_antimeridian([(179.0, 0.0), (-179.0, 10.0)])
+        assert result["type"] == "MultiLineString"
+        # Crossing point lat is 5.0
+        assert result["coordinates"][0][-1] == [180.0, 5.0]
+        assert result["coordinates"][1][0] == [-180.0, 5.0]
 
 
 class TestIssRoundTripViaSgp4:
