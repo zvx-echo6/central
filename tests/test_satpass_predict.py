@@ -543,6 +543,32 @@ def test_build_pass_geometry_returns_geometrycollection_with_both_shapes():
     assert ring[0] == ring[-1]
 
 
+def test_build_pass_geometry_uses_split_antimeridian_for_polar_track():
+    """v0.13.0: a synthesized polar-orbit ground_track that crosses +/-180
+    must produce a MultiLineString inside the GeometryCollection, NOT the
+    "wrong-way wrap" LineString the v0.11.2 inline builder produced.
+    Wired into _build_pass_geometry via sat_common.split_antimeridian."""
+    polar_track = [
+        (170.0, 60.0), (175.0, 65.0), (179.0, 70.0),
+        (-179.0, 75.0), (-175.0, 80.0), (-170.0, 85.0),
+    ]
+    geom = _build_pass_geometry({
+        "ground_track": polar_track,
+        "peak_subsat": (-179.0, 75.0, 400.0),
+    })
+    assert geom is not None
+    assert geom["type"] == "GeometryCollection"
+    types = [g["type"] for g in geom["geometries"]]
+    assert "MultiLineString" in types, (
+        f"polar track must split at antimeridian; got types={types}"
+    )
+    mls = next(g for g in geom["geometries"] if g["type"] == "MultiLineString")
+    assert len(mls["coordinates"]) == 2  # one crossing -> two segments
+    # First segment closes at +180; second starts at -180.
+    assert mls["coordinates"][0][-1][0] == 180.0
+    assert mls["coordinates"][1][0][0] == -180.0
+
+
 def test_build_pass_geometry_returns_none_when_inputs_missing():
     """Defensive: pass dict with no track + no peak_subsat -> None (don't
     write an empty GeometryCollection to the wire)."""

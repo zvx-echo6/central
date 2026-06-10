@@ -1,0 +1,12 @@
+{# sat_orbits forward-orbit-track telemetry. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('satellite_name') is not none %}<dt>Satellite</dt><dd>{{ d.satellite_name }} (NORAD {{ d.norad_id }})</dd>{% endif %}
+{% if d.get('forward_minutes') is not none %}<dt>Forward duration</dt><dd>{{ d.forward_minutes }} minutes</dd>{% endif %}
+{% if d.get('current_lat_deg') is not none and d.get('current_lon_deg') is not none %}
+{%- set ns = 'N' if d.current_lat_deg >= 0 else 'S' -%}
+{%- set we = 'E' if d.current_lon_deg >= 0 else 'W' -%}
+<dt>Current position</dt><dd>{{ "%.4f"|format(d.current_lat_deg|abs) }}°{{ ns }}, {{ "%.4f"|format(d.current_lon_deg|abs) }}°{{ we }}</dd>{% endif %}
+{% if d.get('current_alt_km') is not none %}<dt>Current altitude</dt><dd>{{ "%.1f"|format(d.current_alt_km) }} km</dd>{% endif %}
+{% if d.get('sample_seconds') is not none %}<dt>Sample resolution</dt><dd>every {{ d.sample_seconds }} seconds</dd>{% endif %}
+{% if d.get('vertex_count') is not none %}<dt>Vertex count</dt><dd>{{ d.vertex_count }}</dd>{% endif %}
+{% if d.get('tle_epoch') is not none %}<dt>TLE epoch</dt><dd>{{ d.tle_epoch }}</dd>{% endif %}

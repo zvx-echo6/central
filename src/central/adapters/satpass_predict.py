@@ -47,6 +47,7 @@ from central.adapters.sat_common import (
     EARTH_RADIUS_KM,
     eci_to_ecef,
     gmst_rad,
+    split_antimeridian,
     subsatellite_point,
 )
 from central.config_models import AdapterConfig
@@ -216,11 +217,15 @@ def _build_pass_geometry(p: dict[str, Any]) -> dict[str, Any] | None:
     """
     geometries: list[dict[str, Any]] = []
     track = p.get("ground_track") or []
-    if len(track) >= 2:
-        geometries.append({
-            "type": "LineString",
-            "coordinates": [[lon, lat] for lon, lat in track],
-        })
+    # v0.13.0: ground-track goes through split_antimeridian so polar-orbit
+    # passes crossing the dateline render as MultiLineString instead of
+    # the visible "wrong-way wrap" Leaflet draws when consecutive vertices
+    # jump +179 -> -179. For non-crossing tracks (the common case incl.
+    # all CONUS ISS passes) the splitter returns a LineString identical
+    # in shape to the prior inline construction.
+    track_geom = split_antimeridian(list(track))
+    if track_geom is not None:
+        geometries.append(track_geom)
     peak_subsat = p.get("peak_subsat")
     if peak_subsat:
         lon, lat, alt = peak_subsat
