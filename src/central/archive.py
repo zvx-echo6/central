@@ -23,8 +23,8 @@ from central.monitoring_area import (
     MONITORING_AREA_REFRESH_S,
     MonitoringArea,
     build_geom_json,
-    classify_geom,
-    load_monitoring_area,
+    classify_geom_areas,
+    load_monitoring_areas,
 )
 from central.streams import STREAMS as STREAM_REGISTRY
 
@@ -87,8 +87,20 @@ class ArchiveConsumer:
         self._js: JetStreamContext | None = None
         self._pool: asyncpg.Pool | None = None
         self._shutdown_event = asyncio.Event()
-        self._monitoring_area: MonitoringArea | None = None
+        self._monitoring_areas: list[MonitoringArea] = []
         self._dropped: dict[str, int] = {}
+
+    @property
+    def _monitoring_area(self) -> MonitoringArea | None:
+        """Back-compat single-area accessor (pre-v0.14.0): the first area, or None.
+
+        v0.14.0 holds a list internally; this property keeps single-area callers
+        and tests working. Setting it wraps the value into a one-element list."""
+        return self._monitoring_areas[0] if self._monitoring_areas else None
+
+    @_monitoring_area.setter
+    def _monitoring_area(self, area: MonitoringArea | None) -> None:
+        self._monitoring_areas = [area] if area is not None else []
 
     async def connect(self) -> None:
         """Connect to NATS and PostgreSQL."""
@@ -116,7 +128,7 @@ class ArchiveConsumer:
         logger.info("Disconnected")
 
     async def _load_monitoring_area(self) -> None:
-        """Load (or refresh) the system monitoring-area bbox from config.system.
+        """Load (or refresh) the system monitoring areas from config.monitoring_areas.
 
         On any error keep the last-known value and warn -- the filter must never
         block archiving because a config read failed."""
@@ -124,7 +136,7 @@ class ArchiveConsumer:
             return
         try:
             async with self._pool.acquire() as conn:
-                self._monitoring_area = await load_monitoring_area(conn)
+                self._monitoring_areas = await load_monitoring_areas(conn)
         except Exception as e:
             logger.warning(
                 "Could not load monitoring area; keeping previous value",
@@ -237,7 +249,7 @@ class ArchiveConsumer:
 
         geom_json = build_geom_json(geo_data)
 
-        verdict = classify_geom(geom_json, self._monitoring_area)
+        verdict = classify_geom_areas(geom_json, self._monitoring_areas)
         if verdict == "out-of-bounds":
             self._dropped[adapter] = self._dropped.get(adapter, 0) + 1
             logger.debug(
@@ -354,13 +366,16 @@ class ArchiveConsumer:
         await self.connect()
         await self._cleanup_orphaned_consumer()
         await self._load_monitoring_area()
-        area = self._monitoring_area
         logger.info(
             "Archive consumer ready",
-            extra={"monitoring_area": (
-                {"north": area.north, "south": area.south,
-                 "east": area.east, "west": area.west} if area else None
-            )},
+            extra={
+                "monitoring_areas": len(self._monitoring_areas),
+                "bounds": [
+                    {"north": a.north, "south": a.south,
+                     "east": a.east, "west": a.west}
+                    for a in self._monitoring_areas
+                ],
+            },
         )
 
     async def run(self) -> None:

@@ -20,10 +20,14 @@ from central.monitoring_area import (
     MonitoringArea,
     build_geom_json,
     classify_geom,
+    classify_geom_areas,
     load_monitoring_area,
+    load_monitoring_areas,
 )
 
 IDAHO = MonitoringArea(north=44.5, south=41.8, east=-111.0, west=-117.5)
+# A second, disjoint area to exercise set-union semantics (the NYC metro box).
+NYC_BOX = MonitoringArea(north=41.0, south=40.3, east=-73.5, west=-74.5)
 
 
 def _pt(lon, lat):
@@ -115,6 +119,55 @@ class TestClassifyGeom:
 
     def test_unknown_geom_type_keeps_failopen(self):
         assert classify_geom(json.dumps({"type": "Nonsense"}), IDAHO) == "invalid-geom"
+
+
+class TestClassifyGeomAreas:
+    """v0.14.0 set-union: keep if the geometry intersects ANY area."""
+
+    def test_empty_list_keeps_everything(self):
+        assert classify_geom_areas(_pt(-74.0, 40.7), []) == "no-area"
+
+    def test_null_geom_always_kept(self):
+        assert classify_geom_areas(None, [IDAHO]) == "null-geom"
+        assert classify_geom_areas(None, []) == "null-geom"
+
+    def test_single_area_matches_single_bbox_behavior(self):
+        # Same verdicts as the legacy single-area classify_geom for a 1-list.
+        assert classify_geom_areas(_pt(-114.0, 43.5), [IDAHO]) == "in-bounds"
+        assert classify_geom_areas(_pt(-74.0, 40.7), [IDAHO]) == "out-of-bounds"
+
+    def test_kept_if_in_either_area(self):
+        # Boise -> IDAHO; NYC -> NYC_BOX. Union keeps both.
+        assert classify_geom_areas(_pt(-114.0, 43.5), [IDAHO, NYC_BOX]) == "in-bounds"
+        assert classify_geom_areas(_pt(-74.0, 40.7), [IDAHO, NYC_BOX]) == "in-bounds"
+
+    def test_dropped_only_when_outside_every_area(self):
+        # London is in neither box.
+        assert classify_geom_areas(_pt(-0.13, 51.5), [IDAHO, NYC_BOX]) == "out-of-bounds"
+
+    def test_invalid_geom_fails_open(self):
+        assert classify_geom_areas("{bad json", [IDAHO]) == "invalid-geom"
+
+    def test_overlapping_areas_still_in_bounds(self):
+        overlap = MonitoringArea(north=44.0, south=42.0, east=-112.0, west=-118.0)
+        assert classify_geom_areas(_pt(-114.0, 43.0), [IDAHO, overlap]) == "in-bounds"
+
+
+@pytest.mark.asyncio
+class TestLoadMonitoringAreas:
+    async def test_returns_all_rows_as_areas(self):
+        conn = MagicMock()
+        conn.fetch = AsyncMock(return_value=[
+            {"north": 44.5, "south": 41.8, "east": -111.0, "west": -117.5},
+            {"north": 41.0, "south": 40.3, "east": -73.5, "west": -74.5},
+        ])
+        areas = await load_monitoring_areas(conn)
+        assert areas == [IDAHO, NYC_BOX]
+
+    async def test_empty_table_returns_empty_list(self):
+        conn = MagicMock()
+        conn.fetch = AsyncMock(return_value=[])
+        assert await load_monitoring_areas(conn) == []
 
 
 @pytest.mark.asyncio

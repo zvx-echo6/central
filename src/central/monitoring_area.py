@@ -80,15 +80,21 @@ def build_geom_json(geo_data: dict[str, Any] | None) -> str | None:
     return None
 
 
-def classify_geom(geom_json: str | None, area: MonitoringArea | None) -> str:
-    """Classify a GeoJSON string against the monitoring area.
+def classify_geom_areas(
+    geom_json: str | None, areas: list[MonitoringArea]
+) -> str:
+    """Classify a GeoJSON string against a list of monitoring areas (set union).
 
     Returns one of:
       'null-geom'     -- no geometry; always kept (SWPC trio, .removed tombstones)
-      'no-area'       -- no monitoring area configured; keep everything
-      'in-bounds'     -- geometry intersects the area; keep
-      'out-of-bounds' -- geometry lies entirely outside the area; drop
+      'no-area'       -- empty area list; keep everything (pre-feature default)
+      'in-bounds'     -- geometry intersects AT LEAST ONE area; keep
+      'out-of-bounds' -- geometry lies entirely outside every area; drop
       'invalid-geom'  -- geometry could not be evaluated; kept (fail-open) + warn
+
+    v0.14.0 generalizes the single-bbox ``classify_geom``: an event is kept if it
+    intersects ANY configured area. Areas may overlap. An empty list means "no
+    area configured" and keeps everything, exactly as a NULL single bbox did.
 
     Uses ``intersects()`` so border-straddlers and points-on-edge are kept
     (matches PostGIS ``ST_Intersects``). The filter must never drop an event
@@ -96,13 +102,25 @@ def classify_geom(geom_json: str | None, area: MonitoringArea | None) -> str:
     """
     if geom_json is None:
         return "null-geom"
-    if area is None:
+    if not areas:
         return "no-area"
     try:
         geom = shape(json.loads(geom_json))
-        return "in-bounds" if geom.intersects(area.as_box()) else "out-of-bounds"
+        for area in areas:
+            if geom.intersects(area.as_box()):
+                return "in-bounds"
+        return "out-of-bounds"
     except Exception:
         return "invalid-geom"
+
+
+def classify_geom(geom_json: str | None, area: MonitoringArea | None) -> str:
+    """Single-area back-compat shim over :func:`classify_geom_areas` (v0.14.0).
+
+    Preserves the pre-v0.14.0 signature and verdicts byte-for-byte: ``None`` area
+    -> ``'no-area'`` (an empty list), a present area -> a one-element list.
+    """
+    return classify_geom_areas(geom_json, [area] if area is not None else [])
 
 
 async def load_monitoring_area(conn: asyncpg.Connection) -> MonitoringArea | None:
@@ -128,3 +146,26 @@ async def load_monitoring_area(conn: asyncpg.Connection) -> MonitoringArea | Non
             west=row["monitor_west"],
         )
     return None
+
+
+async def load_monitoring_areas(conn: asyncpg.Connection) -> list[MonitoringArea]:
+    """Read the system monitoring areas from ``config.monitoring_areas`` (v0.14.0).
+
+    Returns a list of every configured area, ordered by name for stable logging
+    and rendering. An empty list (no rows) means "no area configured" -> the
+    filter keeps everything (see :func:`classify_geom_areas`).
+
+    Column names (north/south/east/west) match the ``MonitoringArea`` fields so
+    the row maps straight onto the dataclass. Callers own pool acquisition and
+    any exception handling (archive/supervisor keep the last-known value on a
+    read failure and warn).
+    """
+    rows = await conn.fetch(
+        "SELECT north, south, east, west FROM config.monitoring_areas ORDER BY name"
+    )
+    return [
+        MonitoringArea(
+            north=r["north"], south=r["south"], east=r["east"], west=r["west"]
+        )
+        for r in rows
+    ]
