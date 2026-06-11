@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Central — Monitoring Area{% endblock %}
+{% block title %}Central — Monitoring Areas{% endblock %}
 
 {% block head %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
@@ -10,136 +10,192 @@
 {% endblock %}
 
 {% block content %}
-<h1>Monitoring Area</h1>
+<h1>Monitoring Areas</h1>
 <p class="muted">
-    Events whose geometry falls entirely outside this box are dropped by the
-    archive before they reach the events table. Events with no geometry (e.g.
-    space-weather alerts, removal tombstones) are always kept. Changes apply
-    within about a minute — no restart required.
+    An event is archived (and published to subscribers) if its geometry intersects
+    <strong>any</strong> area below — the areas form a set-union, so add as many
+    non-contiguous regions as you need. Events with no geometry (space-weather
+    alerts, removal tombstones) are always kept. With no areas configured, every
+    event is kept. Changes apply within about a minute — no restart required.
 </p>
 
-<form method="post" action="/monitoring-area">
+{% if error %}<div class="flash flash-error">{{ error }}</div>{% endif %}
+{% if not areas %}
+<div class="flash flash-warn">No areas configured — archive will keep every event.</div>
+{% endif %}
+
+<div id="area-map" style="height: 440px; margin-bottom: 1rem; border: 1px solid var(--rule); border-radius: var(--radius);"></div>
+
+<button type="button" id="add-area-btn" class="btn-contrast">Add area</button>
+
+<form id="area-editor" method="post" action="/monitoring-area" style="display:none; margin-top: 1rem;">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-
-    <div id="region-picker-container"
-         data-north="{{ area.north }}"
-         data-south="{{ area.south }}"
-         data-east="{{ area.east }}"
-         data-west="{{ area.west }}"
-         data-tile-url="{{ tile_url }}"
-         data-tile-attr="{{ tile_attribution }}">
-
-        <div id="region-map" style="height: 420px; margin-bottom: 1rem; border: 1px solid var(--rule); border-radius: var(--radius);"></div>
-
-        <div class="cols">
-            <div>
-                <label for="monitor_north">North</label>
-                <input type="number" id="monitor_north" name="monitor_north" step="0.0001" min="-90" max="90" readonly value="{{ area.north }}">
-                {% if errors and errors.north %}<small class="field-error">{{ errors.north }}</small>{% endif %}
-            </div>
-            <div>
-                <label for="monitor_south">South</label>
-                <input type="number" id="monitor_south" name="monitor_south" step="0.0001" min="-90" max="90" readonly value="{{ area.south }}">
-                {% if errors and errors.south %}<small class="field-error">{{ errors.south }}</small>{% endif %}
-            </div>
-            <div>
-                <label for="monitor_east">East</label>
-                <input type="number" id="monitor_east" name="monitor_east" step="0.0001" min="-180" max="180" readonly value="{{ area.east }}">
-                {% if errors and errors.east %}<small class="field-error">{{ errors.east }}</small>{% endif %}
-            </div>
-            <div>
-                <label for="monitor_west">West</label>
-                <input type="number" id="monitor_west" name="monitor_west" step="0.0001" min="-180" max="180" readonly value="{{ area.west }}">
-                {% if errors and errors.west %}<small class="field-error">{{ errors.west }}</small>{% endif %}
-            </div>
+    <div class="cols">
+        <div>
+            <label for="ed-name">Name</label>
+            <input type="text" id="ed-name" name="name" required maxlength="64" autocomplete="off">
         </div>
-
-        <button type="button" id="region-reset-btn" class="btn-secondary" style="margin-top: 12px;">Reset to Saved</button>
+        <div>
+            <label for="ed-north">North</label>
+            <input type="number" id="ed-north" name="north" step="0.0001" min="-90" max="90" readonly>
+        </div>
+        <div>
+            <label for="ed-south">South</label>
+            <input type="number" id="ed-south" name="south" step="0.0001" min="-90" max="90" readonly>
+        </div>
+        <div>
+            <label for="ed-east">East</label>
+            <input type="number" id="ed-east" name="east" step="0.0001" min="-180" max="180" readonly>
+        </div>
+        <div>
+            <label for="ed-west">West</label>
+            <input type="number" id="ed-west" name="west" step="0.0001" min="-180" max="180" readonly>
+        </div>
     </div>
-
-    <div style="margin-top: 1rem;">
-        <button type="submit" class="btn-primary">Save Monitoring Area</button>
-    </div>
+    <p class="muted" style="margin-top:.5rem;">Drag the rectangle's corners on the map to set the bounds.</p>
+    <button type="submit" id="ed-save" class="btn-contrast">Create area</button>
+    <button type="button" id="ed-cancel" class="btn-secondary">Cancel</button>
 </form>
 
+{% if areas %}
+<div class="table-wrap" style="margin-top: 1.5rem;">
+<table>
+    <thead><tr><th></th><th>Name</th><th>Bounds (N, S, E, W)</th><th></th><th></th></tr></thead>
+    <tbody>
+    {% for a in areas %}
+        <tr data-id="{{ a.id }}" data-name="{{ a.name }}">
+            <td><span class="area-swatch" data-name="{{ a.name }}" style="display:inline-block;width:14px;height:14px;border-radius:3px;"></span></td>
+            <td>{{ a.name }}</td>
+            <td class="muted mono">{{ "%.3f"|format(a.north) }}, {{ "%.3f"|format(a.south) }}, {{ "%.3f"|format(a.east) }}, {{ "%.3f"|format(a.west) }}</td>
+            <td><button type="button" class="btn-outline edit-btn" data-id="{{ a.id }}" style="height:30px;padding:0 12px;">Edit</button></td>
+            <td>
+                <form method="post" action="/monitoring-area/{{ a.id }}/delete" onsubmit="return confirm('Delete area &quot;{{ a.name }}&quot;?');" style="margin:0;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn-danger" style="height:30px;padding:0 12px;">Delete</button>
+                </form>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% endif %}
+
+<script id="areas-data" type="application/json">{{ areas | tojson }}</script>
+<script id="defaults-data" type="application/json">{{ default_bounds | tojson }}</script>
+<script id="formvalues-data" type="application/json">{{ form_values | tojson }}</script>
+<script id="editid-data" type="application/json">{{ edit_id | tojson }}</script>
+
 <script>
-(function() {
-    const container = document.getElementById('region-picker-container');
-    const savedNorth = parseFloat(container.dataset.north);
-    const savedSouth = parseFloat(container.dataset.south);
-    const savedEast = parseFloat(container.dataset.east);
-    const savedWest = parseFloat(container.dataset.west);
-    const tileUrl = container.dataset.tileUrl || 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-    const tileAttr = container.dataset.tileAttr || '&copy; OpenStreetMap contributors';
+(function () {
+    const areas = JSON.parse(document.getElementById('areas-data').textContent || '[]');
+    const defaults = JSON.parse(document.getElementById('defaults-data').textContent);
+    const formValues = JSON.parse(document.getElementById('formvalues-data').textContent || 'null');
+    const editId = JSON.parse(document.getElementById('editid-data').textContent || 'null');
+    const tileUrl = {{ tile_url | tojson }};
+    const tileAttr = {{ tile_attribution | tojson }};
 
-    const centerLat = (savedNorth + savedSouth) / 2;
-    const centerLng = (savedEast + savedWest) / 2;
-    const map = L.map('region-map').setView([centerLat, centerLng], 5);
+    // Golden-angle hue per area name (same 137.508 step as events_list.html's
+    // per-NORAD coloring) so areas render as well-spread, repeatable colors.
+    function hueForName(name) {
+        let h = 0;
+        for (let i = 0; i < name.length; i++) { h = (h * 31 + name.charCodeAt(i)) >>> 0; }
+        return (h * 137.508) % 360;
+    }
+    function colorForName(name) { return 'hsl(' + hueForName(name).toFixed(1) + ', 70%, 50%)'; }
 
+    const map = L.map('area-map');
     L.tileLayer(tileUrl, { attribution: tileAttr, maxZoom: 18 }).addTo(map);
-    setTimeout(function() { map.invalidateSize(); }, 100);
+    setTimeout(function () { map.invalidateSize(); }, 100);
 
-    const bounds = L.latLngBounds(
-        L.latLng(savedSouth, savedWest),
-        L.latLng(savedNorth, savedEast)
-    );
-    map.fitBounds(bounds.pad(0.1));
-
-    let rectangle = L.rectangle(bounds, { color: '#3388ff', weight: 2, fillOpacity: 0.2 });
-
-    const drawnItems = new L.FeatureGroup();
-    drawnItems.addLayer(rectangle);
-    map.addLayer(drawnItems);
-
-    const drawControl = new L.Control.Draw({
-        draw: {
-            rectangle: { shapeOptions: { color: '#3388ff', weight: 2, fillOpacity: 0.2 } },
-            polyline: false, polygon: false, circle: false, marker: false, circlemarker: false
-        },
-        edit: { featureGroup: drawnItems, edit: false, remove: false }
+    // Draw every configured area as a colored, tooltipped rectangle.
+    const rects = {};
+    const group = L.featureGroup().addTo(map);
+    areas.forEach(function (a) {
+        const r = L.rectangle([[a.south, a.west], [a.north, a.east]],
+            { color: colorForName(a.name), weight: 2, fillOpacity: 0.15 });
+        r.bindTooltip(a.name, { permanent: false });
+        r.addTo(group);
+        rects[a.id] = r;
     });
-    map.addControl(drawControl);
-    rectangle.editing.enable();
 
-    const northInput = document.getElementById('monitor_north');
-    const southInput = document.getElementById('monitor_south');
-    const eastInput = document.getElementById('monitor_east');
-    const westInput = document.getElementById('monitor_west');
-
-    function updateInputs() {
-        const b = rectangle.getBounds();
-        northInput.value = b.getNorth().toFixed(4);
-        southInput.value = b.getSouth().toFixed(4);
-        eastInput.value = b.getEast().toFixed(4);
-        westInput.value = b.getWest().toFixed(4);
+    // Auto-fit to all areas + 10% padding; fall back to the default seed bounds.
+    if (areas.length) {
+        map.fitBounds(group.getBounds().pad(0.1));
+    } else {
+        map.setView([(defaults.north + defaults.south) / 2,
+                     (defaults.east + defaults.west) / 2], 5);
     }
 
-    rectangle.on('edit', updateInputs);
-
-    map.on(L.Draw.Event.CREATED, function(e) {
-        drawnItems.clearLayers();
-        rectangle = e.layer;
-        rectangle.setStyle({ color: '#3388ff', weight: 2, fillOpacity: 0.2 });
-        drawnItems.addLayer(rectangle);
-        rectangle.editing.enable();
-        rectangle.on('edit', updateInputs);
-        updateInputs();
+    document.querySelectorAll('.area-swatch').forEach(function (s) {
+        s.style.background = colorForName(s.dataset.name);
     });
 
-    document.getElementById('region-reset-btn').addEventListener('click', function() {
-        const originalBounds = L.latLngBounds(
-            L.latLng(savedSouth, savedWest),
-            L.latLng(savedNorth, savedEast)
-        );
-        drawnItems.clearLayers();
-        rectangle = L.rectangle(originalBounds, { color: '#3388ff', weight: 2, fillOpacity: 0.2 });
-        drawnItems.addLayer(rectangle);
-        rectangle.editing.enable();
-        rectangle.on('edit', updateInputs);
-        updateInputs();
+    const editor = document.getElementById('area-editor');
+    const fName = document.getElementById('ed-name');
+    const fN = document.getElementById('ed-north'), fS = document.getElementById('ed-south');
+    const fE = document.getElementById('ed-east'), fW = document.getElementById('ed-west');
+    const saveBtn = document.getElementById('ed-save');
+    let editRect = null;
+
+    function syncInputs() {
+        const b = editRect.getBounds();
+        fN.value = b.getNorth().toFixed(4); fS.value = b.getSouth().toFixed(4);
+        fE.value = b.getEast().toFixed(4);  fW.value = b.getWest().toFixed(4);
+    }
+    function beginEdit(rect) {
+        if (editRect && editRect.editing) { editRect.editing.disable(); }
+        editRect = rect;
+        rect.editing.enable();          // leaflet.draw corner handles (no new dep)
+        rect.on('edit', syncInputs);
+        syncInputs();
+    }
+    function openEditor(action, label) {
+        editor.action = action; saveBtn.textContent = label; editor.style.display = 'block';
+    }
+    function closeEditor() {
+        if (rects['__new__']) { group.removeLayer(rects['__new__']); delete rects['__new__']; }
+        if (editRect && editRect.editing) { editRect.editing.disable(); }
+        editor.style.display = 'none';
+    }
+
+    document.getElementById('add-area-btn').addEventListener('click', function () {
+        if (rects['__new__']) { group.removeLayer(rects['__new__']); }
+        const c = map.getCenter();
+        const r = L.rectangle([[c.lat - 1, c.lng - 1], [c.lat + 1, c.lng + 1]],
+            { color: '#3388ff', weight: 2, fillOpacity: 0.2 }).addTo(group);
+        rects['__new__'] = r;
+        fName.value = '';
+        openEditor('/monitoring-area', 'Create area');
+        beginEdit(r);
     });
 
-    updateInputs();
+    document.querySelectorAll('.edit-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            const id = btn.dataset.id;
+            const tr = btn.closest('tr');
+            fName.value = tr.dataset.name;
+            openEditor('/monitoring-area/' + id + '/update', 'Save changes');
+            beginEdit(rects[id]);
+            map.fitBounds(rects[id].getBounds().pad(0.3));
+        });
+    });
+
+    document.getElementById('ed-cancel').addEventListener('click', closeEditor);
+
+    // Re-open the editor pre-filled after a server-side validation error.
+    if (formValues) {
+        if (editId !== null && document.querySelector('.edit-btn[data-id="' + editId + '"]')) {
+            document.querySelector('.edit-btn[data-id="' + editId + '"]').click();
+        } else {
+            document.getElementById('add-area-btn').click();
+        }
+        if (formValues.name) { fName.value = formValues.name; }
+        if (formValues.north) { fN.value = formValues.north; }
+        if (formValues.south) { fS.value = formValues.south; }
+        if (formValues.east)  { fE.value = formValues.east; }
+        if (formValues.west)  { fW.value = formValues.west; }
+    }
 })();
 </script>
 {% endblock %}

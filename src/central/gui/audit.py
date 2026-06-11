@@ -15,6 +15,9 @@ API_KEY_CREATE = "api_key.create"
 API_KEY_ROTATE = "api_key.rotate"
 API_KEY_DELETE = "api_key.delete"
 SYSTEM_UPDATE = "system.update"
+MONITORING_AREA_CREATE = "monitoring_area.create"
+MONITORING_AREA_UPDATE = "monitoring_area.update"
+MONITORING_AREA_DELETE = "monitoring_area.delete"
 SETUP_COMPLETE = "setup.complete"
 
 

@@ -14,7 +14,7 @@ import asyncpg
 
 from central.config_models import AdapterConfig, EnrichmentConfig, StreamConfig
 from central.crypto import decrypt, encrypt
-from central.monitoring_area import MonitoringArea, load_monitoring_area
+from central.monitoring_area import MonitoringArea, load_monitoring_areas
 
 logger = logging.getLogger(__name__)
 
@@ -66,15 +66,25 @@ class ConfigStore:
     # System configuration
     # -------------------------------------------------------------------------
 
-    async def get_monitoring_area(self) -> MonitoringArea | None:
-        """Read the system monitoring-area bbox from ``config.system``.
+    async def get_monitoring_areas(self) -> list[MonitoringArea]:
+        """Read the system monitoring areas from ``config.monitoring_areas`` (v0.14.0).
 
-        Returns ``None`` if no row is set or any monitor_* column is NULL.
-        Used by both archive (for the INSERT-time filter) and supervisor (for
-        the publish-time filter, v0.10.2).
+        Returns every configured area (empty list = keep everything). Used by
+        both archive (INSERT-time filter) and supervisor (publish-time filter)
+        to apply set-union bbox semantics.
         """
         async with self._pool.acquire() as conn:
-            return await load_monitoring_area(conn)
+            return await load_monitoring_areas(conn)
+
+    async def get_monitoring_area(self) -> MonitoringArea | None:
+        """Single-area back-compat shim (pre-v0.14.0): the first configured area.
+
+        Reads the new ``config.monitoring_areas`` table and returns its first row
+        (by name) or ``None`` when the list is empty, mirroring the old
+        ``config.system`` single-bbox read for any lingering single-area caller.
+        """
+        areas = await self.get_monitoring_areas()
+        return areas[0] if areas else None
 
     # -------------------------------------------------------------------------
     # Adapter configuration

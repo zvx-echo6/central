@@ -35,7 +35,7 @@ from central.monitoring_area import (
     MONITORING_AREA_REFRESH_S,
     MonitoringArea,
     build_geom_json,
-    classify_geom,
+    classify_geom_areas,
 )
 from central.stream_manager import StreamManager
 from central.streams import STREAMS as STREAM_REGISTRY
@@ -243,8 +243,20 @@ class Supervisor:
         # ACK-but-don't-insert behavior at the supervisor->NATS hop so
         # subscribers (meshai, Navi) never see out-of-area events. Refreshed
         # every MONITORING_AREA_REFRESH_S from config.system.
-        self._monitoring_area: MonitoringArea | None = None
+        self._monitoring_areas: list[MonitoringArea] = []
         self._dropped_publish: dict[str, int] = {}
+
+    @property
+    def _monitoring_area(self) -> MonitoringArea | None:
+        """Back-compat single-area accessor (pre-v0.14.0): the first area, or None.
+
+        v0.14.0 holds a list internally; this property keeps single-area callers
+        and tests working. Setting it wraps the value into a one-element list."""
+        return self._monitoring_areas[0] if self._monitoring_areas else None
+
+    @_monitoring_area.setter
+    def _monitoring_area(self, area: MonitoringArea | None) -> None:
+        self._monitoring_areas = [area] if area is not None else []
 
     async def connect(self) -> None:
         """Connect to NATS."""
@@ -257,19 +269,22 @@ class Supervisor:
         # on failure keep the last value and warn -- never block startup over a
         # config read.
         try:
-            self._monitoring_area = await self._config_store.get_monitoring_area()
+            self._monitoring_areas = await self._config_store.get_monitoring_areas()
         except Exception as e:
             logger.warning(
-                "Could not load monitoring area at startup; publish filter no-ops until refresh",
+                "Could not load monitoring areas at startup; publish filter no-ops until refresh",
                 extra={"error": str(e)},
             )
-        area = self._monitoring_area
         logger.info(
-            "Publish-time monitoring area loaded",
-            extra={"monitoring_area": (
-                {"north": area.north, "south": area.south,
-                 "east": area.east, "west": area.west} if area else None
-            )},
+            "Publish-time monitoring areas loaded",
+            extra={
+                "monitoring_areas": len(self._monitoring_areas),
+                "bounds": [
+                    {"north": a.north, "south": a.south,
+                     "east": a.east, "west": a.west}
+                    for a in self._monitoring_areas
+                ],
+            },
         )
 
     async def disconnect(self) -> None:
@@ -313,7 +328,7 @@ class Supervisor:
                 )
             except asyncio.TimeoutError:
                 try:
-                    self._monitoring_area = await self._config_store.get_monitoring_area()
+                    self._monitoring_areas = await self._config_store.get_monitoring_areas()
                 except Exception as e:
                     logger.warning(
                         "Could not refresh monitoring area; keeping previous value",
@@ -419,7 +434,7 @@ class Supervisor:
                     geom_json = build_geom_json(
                         event.geo.model_dump() if event.geo else None
                     )
-                    verdict = classify_geom(geom_json, self._monitoring_area)
+                    verdict = classify_geom_areas(geom_json, self._monitoring_areas)
                     if verdict == "out-of-bounds":
                         self._dropped_publish[state.name] = (
                             self._dropped_publish.get(state.name, 0) + 1

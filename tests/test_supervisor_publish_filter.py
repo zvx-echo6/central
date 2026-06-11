@@ -71,6 +71,9 @@ def sup_factory():
         store.set_adapter_last_error = AsyncMock()
         store.get_api_key = AsyncMock(return_value=None)
         store.get_monitoring_area = AsyncMock(return_value=area)
+        store.get_monitoring_areas = AsyncMock(
+            return_value=[area] if area is not None else []
+        )
         config_source = MagicMock()
         config_source.get_enrichment_config = AsyncMock(return_value=EnrichmentConfig())
         sup = sup_mod.Supervisor(
@@ -173,7 +176,7 @@ async def test_refresh_loop_reloads_area_and_logs_summary(
     sup = sup_factory(None)
     sup._dropped_publish = {"mock": 7}
     monkeypatch.setattr(sup_mod, "MONITORING_AREA_REFRESH_S", 0.05)
-    sup._config_store.get_monitoring_area = AsyncMock(return_value=IDAHO)
+    sup._config_store.get_monitoring_areas = AsyncMock(return_value=[IDAHO])
     with caplog.at_level(logging.INFO):
         task = asyncio.create_task(sup._refresh_monitoring_area_loop())
         await asyncio.sleep(0.15)

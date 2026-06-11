@@ -80,3 +80,40 @@ class TestProcessMessageFilter:
         await c._process_message(msg, conn)
         conn.execute.assert_awaited_once()
         assert c._dropped == {}
+
+
+# NYC metro box -- disjoint from IDAHO, for set-union (v0.14.0) coverage.
+NYC_BOX = MonitoringArea(north=41.0, south=40.3, east=-73.5, west=-74.5)
+
+
+class TestProcessMessageMultiArea:
+    """v0.14.0: archive keeps an event if it intersects ANY configured area."""
+
+    @pytest.mark.asyncio
+    async def test_dropped_when_outside_the_only_configured_area(self):
+        # Boise event, but only the NYC area is configured -> dropped.
+        c = ArchiveConsumer("nats://x", "postgresql://x")
+        c._monitoring_areas = [NYC_BOX]
+        conn = AsyncMock()
+        await c._process_message(_make_msg(_envelope("nws", -114.0, 43.5)), conn)
+        conn.execute.assert_not_called()
+        assert c._dropped == {"nws": 1}
+
+    @pytest.mark.asyncio
+    async def test_kept_when_inside_any_of_several_areas(self):
+        # Same Boise event, but IDAHO is also configured -> kept via union.
+        c = ArchiveConsumer("nats://x", "postgresql://x")
+        c._monitoring_areas = [NYC_BOX, IDAHO]
+        conn = AsyncMock()
+        await c._process_message(_make_msg(_envelope("nws", -114.0, 43.5)), conn)
+        conn.execute.assert_awaited_once()
+        assert c._dropped == {}
+
+    @pytest.mark.asyncio
+    async def test_empty_list_keeps_everything(self):
+        c = ArchiveConsumer("nats://x", "postgresql://x")
+        c._monitoring_areas = []
+        conn = AsyncMock()
+        await c._process_message(_make_msg(_envelope("wzdx", -74.0, 40.7)), conn)
+        conn.execute.assert_awaited_once()
+        assert c._dropped == {}

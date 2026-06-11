@@ -44,6 +44,9 @@ from central.gui.audit import (
     AUTH_LOGIN_FAILED,
     AUTH_LOGOUT,
     AUTH_PASSWORD_CHANGE,
+    MONITORING_AREA_CREATE,
+    MONITORING_AREA_DELETE,
+    MONITORING_AREA_UPDATE,
     OPERATOR_CREATE,
     SETUP_COMPLETE,
     STREAM_UPDATE,
@@ -2386,72 +2389,51 @@ async def enrichment_update(request: Request) -> Response:
 
 # --- Monitoring area (system-level archive bbox filter) --------------------
 
+# v0.14.0: monitoring areas are a named list (config.monitoring_areas) with
+# set-union semantics -- an event is kept if it intersects ANY area. The legacy
+# single bbox lived on config.system.monitor_* (still present, unused as of
+# v0.14.0); _DEFAULT_MONITOR stays here as the "Add area" seed + regression guard.
 _DEFAULT_MONITOR = {"north": 49.0, "south": 41.8, "east": -111.0, "west": -117.5}
+_DEFAULT_TILE = {
+    "tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    "tile_attribution": "&copy; OpenStreetMap contributors",
+}
 
 
-async def _read_monitoring_area(conn) -> dict[str, Any]:
-    """Read the monitoring-area bbox + map tile settings from config.system."""
+async def _read_tile_settings(conn) -> dict[str, str]:
+    """Map tile URL + attribution (shared GUI map settings on config.system)."""
     row = await conn.fetchrow(
-        "SELECT monitor_north, monitor_south, monitor_east, monitor_west, "
-        "map_tile_url, map_attribution FROM config.system WHERE id = true"
+        "SELECT map_tile_url, map_attribution FROM config.system WHERE id = true"
     )
-    if row is None:
-        return {
-            **_DEFAULT_MONITOR,
-            "tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-            "tile_attribution": "&copy; OpenStreetMap contributors",
-        }
-    return {
-        "north": row["monitor_north"], "south": row["monitor_south"],
-        "east": row["monitor_east"], "west": row["monitor_west"],
-        "tile_url": row["map_tile_url"],
-        "tile_attribution": row["map_attribution"],
-    }
+    if row is None or not row["map_tile_url"]:
+        return dict(_DEFAULT_TILE)
+    return {"tile_url": row["map_tile_url"], "tile_attribution": row["map_attribution"]}
 
 
-@router.get("/monitoring-area", response_class=HTMLResponse)
-async def monitoring_area_form(request: Request) -> HTMLResponse:
-    """Render the system monitoring-area editor (one draggable Leaflet rectangle).
-
-    Events whose geometry falls entirely outside this box are dropped by the
-    archive-level bbox filter; null-geom events are always kept."""
-    templates = _get_templates()
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        area = await _read_monitoring_area(conn)
-    return templates.TemplateResponse(
-        request=request,
-        name="monitoring_area.html",
-        context={
-            "operator": getattr(request.state, "operator", None),
-            "csrf_token": request.state.csrf_token,
-            "area": area,
-            "tile_url": area["tile_url"],
-            "tile_attribution": area["tile_attribution"],
-        },
+async def _read_monitoring_areas(conn) -> list[dict[str, Any]]:
+    """Read every configured monitoring area (v0.14.0 set-union bbox filter)."""
+    rows = await conn.fetch(
+        "SELECT id, name, north, south, east, west "
+        "FROM config.monitoring_areas ORDER BY name"
     )
+    return [dict(r) for r in rows]
 
 
-@router.post("/monitoring-area")
-async def monitoring_area_update(request: Request) -> Response:
-    """Validate + persist the monitoring-area bbox. The archive applies the new
-    bounds within ~60s via its background refresh (no restart needed)."""
-    templates = _get_templates()
-    pool = get_pool()
-
-    form = await request.form()
-    if not form.get("csrf_token") or form.get("csrf_token") != request.state.csrf_token:
-        raise CsrfValidationError("Invalid CSRF token")
-
+def _validate_area_form(form) -> tuple[dict[str, Any], dict[str, str]]:
+    """Validate a monitoring-area create/update form -> (values, errors)."""
     errors: dict[str, str] = {}
-    vals: dict[str, float] = {}
+    vals: dict[str, Any] = {}
+    name = (form.get("name") or "").strip()
+    if not name:
+        errors["name"] = "Name is required"
+    else:
+        vals["name"] = name
     for key, lo, hi in (
         ("north", -90.0, 90.0), ("south", -90.0, 90.0),
         ("east", -180.0, 180.0), ("west", -180.0, 180.0),
     ):
-        raw = form.get(f"monitor_{key}", "")
         try:
-            v = float(raw)
+            v = float(form.get(key, ""))
         except (TypeError, ValueError):
             errors[key] = f"{key.title()} must be a number"
             continue
@@ -2459,56 +2441,162 @@ async def monitoring_area_update(request: Request) -> Response:
             errors[key] = f"{key.title()} must be between {lo:g} and {hi:g}"
         else:
             vals[key] = v
+    if vals.get("north") is not None and vals.get("south") is not None and \
+            vals["north"] <= vals["south"]:
+        errors["north"] = "North must be greater than South"
+    if vals.get("east") is not None and vals.get("west") is not None and \
+            vals["east"] <= vals["west"]:
+        errors["east"] = "East must be greater than West"
+    return vals, errors
 
-    if not errors:
-        if vals["north"] <= vals["south"]:
-            errors["north"] = "North must be greater than South"
-        if vals["east"] <= vals["west"]:
-            errors["east"] = "East must be greater than West"
 
-    if errors:
-        async with pool.acquire() as conn:
-            saved = await _read_monitoring_area(conn)
-        render_area = {
-            "north": form.get("monitor_north") or saved["north"],
-            "south": form.get("monitor_south") or saved["south"],
-            "east": form.get("monitor_east") or saved["east"],
-            "west": form.get("monitor_west") or saved["west"],
-        }
-        return templates.TemplateResponse(
-            request=request,
-            name="monitoring_area.html",
-            context={
-                "operator": getattr(request.state, "operator", None),
-                "csrf_token": request.state.csrf_token,
-                "area": render_area,
-                "tile_url": saved["tile_url"],
-                "tile_attribution": saved["tile_attribution"],
-                "errors": errors,
-            },
-            status_code=200,
-        )
+async def _render_monitoring_areas(
+    request, templates, conn, *, error=None, form_values=None,
+    edit_id=None, status=200,
+) -> HTMLResponse:
+    """Render the monitoring-areas page; reused by GET and the error paths."""
+    areas = await _read_monitoring_areas(conn)
+    tile = await _read_tile_settings(conn)
+    return templates.TemplateResponse(
+        request=request,
+        name="monitoring_area.html",
+        context={
+            "operator": getattr(request.state, "operator", None),
+            "csrf_token": request.state.csrf_token,
+            "areas": areas,
+            "tile_url": tile["tile_url"],
+            "tile_attribution": tile["tile_attribution"],
+            "default_bounds": _DEFAULT_MONITOR,
+            "error": error,
+            "form_values": form_values,
+            "edit_id": edit_id,
+        },
+        status_code=status,
+    )
 
+
+def _require_csrf(form, request) -> None:
+    if not form.get("csrf_token") or form.get("csrf_token") != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
+
+
+@router.get("/monitoring-area", response_class=HTMLResponse)
+async def monitoring_area_list(request: Request) -> HTMLResponse:
+    """List the configured monitoring areas on a shared map.
+
+    An event is archived/published if its geometry intersects ANY area; no-geom
+    events are always kept; an empty list keeps every event. The archive +
+    supervisor pick up edits within ~60s via their background refresh."""
+    templates = _get_templates()
+    pool = get_pool()
     async with pool.acquire() as conn:
-        old = await conn.fetchrow(
-            "SELECT monitor_north, monitor_south, monitor_east, monitor_west "
-            "FROM config.system WHERE id = true"
-        )
-        await conn.execute(
-            "UPDATE config.system SET monitor_north=$1, monitor_south=$2, "
-            "monitor_east=$3, monitor_west=$4 WHERE id = true",
-            vals["north"], vals["south"], vals["east"], vals["west"],
-        )
+        return await _render_monitoring_areas(request, templates, conn)
+
+
+@router.post("/monitoring-area")
+async def monitoring_area_create(request: Request) -> Response:
+    """Create a new named monitoring area."""
+    from asyncpg.exceptions import UniqueViolationError
+    templates = _get_templates()
+    pool = get_pool()
+    form = await request.form()
+    _require_csrf(form, request)
+    vals, errors = _validate_area_form(form)
+    async with pool.acquire() as conn:
+        if errors:
+            return await _render_monitoring_areas(
+                request, templates, conn, error="; ".join(errors.values()),
+                form_values=dict(form),
+            )
+        try:
+            await conn.execute(
+                "INSERT INTO config.monitoring_areas (name, north, south, east, west) "
+                "VALUES ($1, $2, $3, $4, $5)",
+                vals["name"], vals["north"], vals["south"], vals["east"], vals["west"],
+            )
+        except UniqueViolationError:
+            return await _render_monitoring_areas(
+                request, templates, conn,
+                error=f"An area named '{vals['name']}' already exists.",
+                form_values=dict(form),
+            )
         operator = getattr(request.state, "operator", None)
         await write_audit(
-            conn, SYSTEM_UPDATE,
+            conn, MONITORING_AREA_CREATE,
             operator_id=operator.id if operator else None,
-            target="monitoring_area",
-            before=dict(old) if old else None,
-            after={"monitor_north": vals["north"], "monitor_south": vals["south"],
-                   "monitor_east": vals["east"], "monitor_west": vals["west"]},
+            target=f"monitoring_area:{vals['name']}", after=vals,
         )
+    return RedirectResponse(url="/monitoring-area", status_code=302)
 
+
+@router.post("/monitoring-area/{area_id}/update")
+async def monitoring_area_update(request: Request, area_id: int) -> Response:
+    """Update an existing monitoring area's name and/or bounds."""
+    from asyncpg.exceptions import UniqueViolationError
+    templates = _get_templates()
+    pool = get_pool()
+    form = await request.form()
+    _require_csrf(form, request)
+    vals, errors = _validate_area_form(form)
+    async with pool.acquire() as conn:
+        if errors:
+            return await _render_monitoring_areas(
+                request, templates, conn, error="; ".join(errors.values()),
+                form_values=dict(form), edit_id=area_id,
+            )
+        old = await conn.fetchrow(
+            "SELECT name, north, south, east, west "
+            "FROM config.monitoring_areas WHERE id = $1", area_id,
+        )
+        if old is None:
+            return await _render_monitoring_areas(
+                request, templates, conn,
+                error="That area no longer exists.", status=404,
+            )
+        try:
+            await conn.execute(
+                "UPDATE config.monitoring_areas SET name=$1, north=$2, south=$3, "
+                "east=$4, west=$5, updated_at=now() WHERE id=$6",
+                vals["name"], vals["north"], vals["south"], vals["east"],
+                vals["west"], area_id,
+            )
+        except UniqueViolationError:
+            return await _render_monitoring_areas(
+                request, templates, conn,
+                error=f"An area named '{vals['name']}' already exists.",
+                form_values=dict(form), edit_id=area_id,
+            )
+        operator = getattr(request.state, "operator", None)
+        await write_audit(
+            conn, MONITORING_AREA_UPDATE,
+            operator_id=operator.id if operator else None,
+            target=f"monitoring_area:{vals['name']}",
+            before=dict(old), after=vals,
+        )
+    return RedirectResponse(url="/monitoring-area", status_code=302)
+
+
+@router.post("/monitoring-area/{area_id}/delete")
+async def monitoring_area_delete(request: Request, area_id: int) -> Response:
+    """Delete a monitoring area. Removing the last one keeps every event."""
+    pool = get_pool()
+    form = await request.form()
+    _require_csrf(form, request)
+    async with pool.acquire() as conn:
+        old = await conn.fetchrow(
+            "SELECT name, north, south, east, west "
+            "FROM config.monitoring_areas WHERE id = $1", area_id,
+        )
+        await conn.execute(
+            "DELETE FROM config.monitoring_areas WHERE id = $1", area_id,
+        )
+        if old is not None:
+            operator = getattr(request.state, "operator", None)
+            await write_audit(
+                conn, MONITORING_AREA_DELETE,
+                operator_id=operator.id if operator else None,
+                target=f"monitoring_area:{old['name']}", before=dict(old),
+            )
     return RedirectResponse(url="/monitoring-area", status_code=302)
 
 
