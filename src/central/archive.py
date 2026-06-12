@@ -36,6 +36,15 @@ BATCH_SIZE = 100
 FETCH_TIMEOUT = 5.0
 ACK_WAIT = 30
 
+# v0.14.2: adapters whose events are global-by-design (satellite telemetry) and
+# must bypass the geographic monitoring-area bbox filter. The archive consumer
+# only has the adapter NAME at runtime (it reads off the wire, not the adapter
+# class), so it can't reach SourceAdapter.bypass_bbox_filter directly -- this
+# static set is the consumer-side mirror. It MUST stay in sync with the adapter
+# classes that set bypass_bbox_filter = True; tests/test_bypass_bbox_consistency.py
+# fails CI if the two drift.
+_BYPASS_BBOX_ADAPTERS = {"sat_positions", "sat_orbits"}
+
 
 def consumer_name_for(stream: str) -> str:
     """Generate consumer name for a stream."""
@@ -89,6 +98,9 @@ class ArchiveConsumer:
         self._shutdown_event = asyncio.Event()
         self._monitoring_areas: list[MonitoringArea] = []
         self._dropped: dict[str, int] = {}
+        # v0.14.2: events archived unconditionally because their adapter is in
+        # _BYPASS_BBOX_ADAPTERS (global-by-design satellite telemetry).
+        self._bypassed: dict[str, int] = {}
 
     @property
     def _monitoring_area(self) -> MonitoringArea | None:
@@ -249,20 +261,29 @@ class ArchiveConsumer:
 
         geom_json = build_geom_json(geo_data)
 
-        verdict = classify_geom_areas(geom_json, self._monitoring_areas)
-        if verdict == "out-of-bounds":
-            self._dropped[adapter] = self._dropped.get(adapter, 0) + 1
-            logger.debug(
-                "Dropped out-of-bounds event (archive bbox filter)",
-                extra={"id": event_id, "adapter": adapter, "category": category},
-            )
-            await msg.ack()
-            return
-        if verdict == "invalid-geom":
-            logger.warning(
-                "Geom could not be evaluated for bbox filter; archiving",
-                extra={"id": event_id, "adapter": adapter},
-            )
+        # v0.14.2: global-by-design adapters (satellite telemetry) bypass the
+        # geographic monitoring-area filter entirely -- mirrors the supervisor's
+        # SourceAdapter.bypass_bbox_filter carve-out, but keyed on adapter NAME
+        # because the consumer reads events off the wire, not the adapter class.
+        # _BYPASS_BBOX_ADAPTERS must stay in sync with the adapter class attrs
+        # (tests/test_bypass_bbox_consistency.py enforces it).
+        if adapter in _BYPASS_BBOX_ADAPTERS:
+            self._bypassed[adapter] = self._bypassed.get(adapter, 0) + 1
+        else:
+            verdict = classify_geom_areas(geom_json, self._monitoring_areas)
+            if verdict == "out-of-bounds":
+                self._dropped[adapter] = self._dropped.get(adapter, 0) + 1
+                logger.debug(
+                    "Dropped out-of-bounds event (archive bbox filter)",
+                    extra={"id": event_id, "adapter": adapter, "category": category},
+                )
+                await msg.ack()
+                return
+            if verdict == "invalid-geom":
+                logger.warning(
+                    "Geom could not be evaluated for bbox filter; archiving",
+                    extra={"id": event_id, "adapter": adapter},
+                )
 
         try:
             if geom_json:
@@ -377,6 +398,8 @@ class ArchiveConsumer:
                 ],
             },
         )
+        # v0.14.2: surface the global-by-design carve-out for operators.
+        logger.info("Bypass-bbox adapters: %s", sorted(_BYPASS_BBOX_ADAPTERS))
 
     async def run(self) -> None:
         """Run consume loops for all streams until shutdown."""
