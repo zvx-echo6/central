@@ -245,6 +245,10 @@ class Supervisor:
         # every MONITORING_AREA_REFRESH_S from config.system.
         self._monitoring_areas: list[MonitoringArea] = []
         self._dropped_publish: dict[str, int] = {}
+        # v0.14.2: events published unconditionally because their adapter sets
+        # bypass_bbox_filter (global-by-design satellite telemetry). Counted
+        # separately so operators can confirm the carve-out is doing work.
+        self._bypassed_publish: dict[str, int] = {}
 
     @property
     def _monitoring_area(self) -> MonitoringArea | None:
@@ -286,6 +290,13 @@ class Supervisor:
                 ],
             },
         )
+        # v0.14.2: surface the global-by-design carve-out so operators can see
+        # which adapters skip the bbox filter.
+        bypass_adapters = sorted(
+            name for name, cls in self._adapters.items()
+            if getattr(cls, "bypass_bbox_filter", False)
+        )
+        logger.info("Bypass-bbox adapters: %s", bypass_adapters)
 
     async def disconnect(self) -> None:
         """Disconnect from NATS."""
@@ -334,10 +345,13 @@ class Supervisor:
                         "Could not refresh monitoring area; keeping previous value",
                         extra={"error": str(e)},
                     )
-                if self._dropped_publish:
+                if self._dropped_publish or self._bypassed_publish:
                     logger.info(
                         "publish bbox filter drop summary (cumulative)",
-                        extra={"dropped_by_adapter": dict(self._dropped_publish)},
+                        extra={
+                            "dropped_by_adapter": dict(self._dropped_publish),
+                            "bypassed_by_adapter": dict(self._bypassed_publish),
+                        },
                     )
 
     def _create_adapter(self, config: AdapterConfig) -> SourceAdapter:
@@ -425,35 +439,45 @@ class Supervisor:
 
                     subject = state.adapter.subject_for(event)
 
-                    # v0.10.2 publish-time monitoring-area filter. Mirrors
-                    # archive's classify->ACK pattern but here we just `continue`
-                    # without mark_published -- if the area widens later the
-                    # next poll re-yields the same id and we'll publish it
-                    # naturally. Marking published on drop would be a forward-
-                    # only blackhole.
-                    geom_json = build_geom_json(
-                        event.geo.model_dump() if event.geo else None
-                    )
-                    verdict = classify_geom_areas(geom_json, self._monitoring_areas)
-                    if verdict == "out-of-bounds":
-                        self._dropped_publish[state.name] = (
-                            self._dropped_publish.get(state.name, 0) + 1
+                    # v0.14.2: global-by-design adapters (satellite telemetry)
+                    # bypass the geographic monitoring-area filter entirely --
+                    # their events are worldwide and a regional bbox would drop
+                    # nearly all of them. Count separately for observability, then
+                    # fall through to the shared publish path below.
+                    if state.adapter.bypass_bbox_filter:
+                        self._bypassed_publish[state.name] = (
+                            self._bypassed_publish.get(state.name, 0) + 1
                         )
-                        logger.debug(
-                            "Dropped out-of-bounds event at publish (monitoring-area filter)",
-                            extra={
-                                "id": event.id,
-                                "adapter": state.name,
-                                "category": event.category,
-                                "subject": subject,
-                            },
+                    else:
+                        # v0.10.2 publish-time monitoring-area filter. Mirrors
+                        # archive's classify->ACK pattern but here we just
+                        # `continue` without mark_published -- if the area widens
+                        # later the next poll re-yields the same id and we'll
+                        # publish it naturally. Marking published on drop would
+                        # be a forward-only blackhole.
+                        geom_json = build_geom_json(
+                            event.geo.model_dump() if event.geo else None
                         )
-                        continue
-                    if verdict == "invalid-geom":
-                        logger.warning(
-                            "Geom could not be evaluated for publish-time bbox filter; publishing",
-                            extra={"id": event.id, "adapter": state.name},
-                        )
+                        verdict = classify_geom_areas(geom_json, self._monitoring_areas)
+                        if verdict == "out-of-bounds":
+                            self._dropped_publish[state.name] = (
+                                self._dropped_publish.get(state.name, 0) + 1
+                            )
+                            logger.debug(
+                                "Dropped out-of-bounds event at publish (monitoring-area filter)",
+                                extra={
+                                    "id": event.id,
+                                    "adapter": state.name,
+                                    "category": event.category,
+                                    "subject": subject,
+                                },
+                            )
+                            continue
+                        if verdict == "invalid-geom":
+                            logger.warning(
+                                "Geom could not be evaluated for publish-time bbox filter; publishing",
+                                extra={"id": event.id, "adapter": state.name},
+                            )
 
                     # Publish
                     await self._publish_event(subject, envelope, msg_id)

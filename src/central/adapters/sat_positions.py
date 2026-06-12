@@ -130,6 +130,12 @@ class SatPositionsAdapter(SourceAdapter):
     default_cadence_s = 60
     data_class = "telemetry"
     enrichment_locations = []
+    # Global-by-design: one event per satellite per poll with the sub-satellite
+    # point as centroid -- a worldwide firehose. A geographic monitoring area
+    # (e.g. Idaho) would drop ~99.7% of it, defeating "where is the ISS" global
+    # queries. Skip the publish-time/archive bbox filter (v0.14.2). Keep in sync
+    # with archive._BYPASS_BBOX_ADAPTERS.
+    bypass_bbox_filter = True
 
     def __init__(
         self,

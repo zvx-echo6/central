@@ -117,3 +117,30 @@ class TestProcessMessageMultiArea:
         await c._process_message(_make_msg(_envelope("wzdx", -74.0, 40.7)), conn)
         conn.execute.assert_awaited_once()
         assert c._dropped == {}
+
+
+class TestBypassBboxAdapters:
+    """v0.14.2: _BYPASS_BBOX_ADAPTERS skip the bbox filter at archive time."""
+
+    @pytest.mark.asyncio
+    async def test_sat_positions_archived_when_out_of_bounds(self):
+        # ISS sub-sat point over NYC, only IDAHO configured -> normally dropped,
+        # but sat_positions is global-by-design so it bypasses and inserts.
+        c = ArchiveConsumer("nats://x", "postgresql://x")
+        c._monitoring_area = IDAHO
+        conn = AsyncMock()
+        await c._process_message(_make_msg(_envelope("sat_positions", -74.0, 40.7)), conn)
+        conn.execute.assert_awaited_once()
+        assert c._dropped == {}
+        assert c._bypassed == {"sat_positions": 1}
+
+    @pytest.mark.asyncio
+    async def test_tomtom_flow_still_dropped(self):
+        # Regression guard: a non-bypass adapter is still filtered out-of-bounds.
+        c = ArchiveConsumer("nats://x", "postgresql://x")
+        c._monitoring_area = IDAHO
+        conn = AsyncMock()
+        await c._process_message(_make_msg(_envelope("tomtom_flow", -74.0, 40.7)), conn)
+        conn.execute.assert_not_called()
+        assert c._dropped == {"tomtom_flow": 1}
+        assert c._bypassed == {}

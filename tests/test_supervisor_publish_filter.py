@@ -32,6 +32,9 @@ def _ev(eid: str, geo: Geo) -> Event:
 class _MockAdapter:
     requires_api_key = None
     enrichment_locations = ()
+    bypass_bbox_filter = False  # v0.14.2: real adapters inherit this from
+    # SourceAdapter; the mock declares it so _run_adapter_loop's direct attr
+    # access works. Bypass tests use _BypassMockAdapter (overrides True).
 
     def __init__(self, config, *_args) -> None:
         self.config = config
@@ -90,8 +93,8 @@ def sup_factory():
     return _build
 
 
-async def _drive(sup, events):
-    adapter = _MockAdapter(MagicMock(cadence_s=3600))
+async def _drive(sup, events, adapter_cls=_MockAdapter):
+    adapter = adapter_cls(MagicMock(cadence_s=3600))
     adapter.events = events
     config = AdapterConfig(
         name="mock", enabled=True, cadence_s=3600, settings={},
@@ -187,3 +190,50 @@ async def test_refresh_loop_reloads_area_and_logs_summary(
     assert any(
         "publish bbox filter drop summary" in r.message for r in caplog.records
     )
+
+
+# --- v0.14.2: global-by-design satellite telemetry bypasses the bbox filter ---
+
+class _BypassMockAdapter(_MockAdapter):
+    """Stand-in for a global-by-design adapter (sat_positions/sat_orbits)."""
+    bypass_bbox_filter = True
+
+
+class TestBypassBboxAdapters:
+    @pytest.mark.asyncio
+    async def test_sat_positions_publishes_when_out_of_bounds(self, sup_factory):
+        """Centroid over NYC (outside Idaho) still publishes; not dropped."""
+        sup = sup_factory(IDAHO)
+        a = await _drive(
+            sup, [_ev("iss", Geo(centroid=NYC))], adapter_cls=_BypassMockAdapter
+        )
+        assert sup._publish_event.await_count == 1
+        assert a.published == {"iss"}
+        assert sup._dropped_publish == {}
+        assert sup._bypassed_publish == {"mock": 1}
+
+    @pytest.mark.asyncio
+    async def test_sat_orbits_publishes_when_linestring_outside_idaho(self, sup_factory):
+        """An equatorial forward-track LineString never intersects Idaho, yet publishes."""
+        sup = sup_factory(IDAHO)
+        equator = Geo(geometry={
+            "type": "LineString",
+            "coordinates": [[0.0, 0.0], [10.0, 0.0], [20.0, 1.0]],
+        })
+        a = await _drive(
+            sup, [_ev("orbit1", equator)], adapter_cls=_BypassMockAdapter
+        )
+        assert sup._publish_event.await_count == 1
+        assert a.published == {"orbit1"}
+        assert sup._dropped_publish == {}
+        assert sup._bypassed_publish == {"mock": 1}
+
+    @pytest.mark.asyncio
+    async def test_tomtom_flow_still_drops_when_out_of_bounds(self, sup_factory):
+        """Regression guard: a non-bypass adapter is still filtered (NYC drops)."""
+        sup = sup_factory(IDAHO)
+        a = await _drive(sup, [_ev("flow1", Geo(centroid=NYC))])  # _MockAdapter: bypass False
+        sup._publish_event.assert_not_called()
+        assert a.published == set()
+        assert sup._dropped_publish == {"mock": 1}
+        assert sup._bypassed_publish == {}

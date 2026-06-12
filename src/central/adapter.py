@@ -57,6 +57,15 @@ class SourceAdapter(ABC):
     gauges) that would drown discrete-event signal; shown on /telemetry instead.
     GUI-only — does not affect publishing or the events.json contract."""
 
+    bypass_bbox_filter: bool = False
+    """Set True for adapters whose events are global-by-design (satellite
+    telemetry, space weather) and should never be filtered by a geographic
+    monitoring area. The supervisor publishes such events unconditionally,
+    skipping the publish-time ``classify_geom_areas`` check (v0.14.2). The
+    archive consumer mirrors this via the module-level ``_BYPASS_BBOX_ADAPTERS``
+    set in ``central.archive`` -- the two MUST stay in sync (enforced by
+    ``tests/test_bypass_bbox_consistency.py``)."""
+
     @abstractmethod
     async def poll(self) -> AsyncIterator[Event]:
         """

@@ -121,6 +121,11 @@ class SatOrbitsAdapter(SourceAdapter):
     default_cadence_s = 300  # 5 min
     data_class = "telemetry"
     enrichment_locations = []
+    # Global-by-design: forward-orbit LineStrings (mostly polar) span the globe,
+    # not a region. A geographic monitoring area would drop nearly all of them.
+    # Skip the publish-time/archive bbox filter (v0.14.2). Keep in sync with
+    # archive._BYPASS_BBOX_ADAPTERS.
+    bypass_bbox_filter = True
 
     def __init__(
         self,
