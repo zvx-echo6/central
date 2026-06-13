@@ -321,9 +321,14 @@ class WFIGSIncidentsAdapter(SourceAdapter):
             else:
                 geo = Geo(regions=regions, primary_region=primary_region)
 
-            # Build event with normalized values in data
+            # Build event with normalized values in data.
+            # v0.14.3: the dedup key includes ModifiedOnDateTime_dt so each
+            # genuine upstream modification mints a new id and republishes,
+            # while identical re-polls (same modified time) still dedup. The
+            # bare IrwinID published a fire once and silenced every later
+            # acreage/containment update.
             event = Event(
-                id=irwin_id,
+                id=f"{irwin_id}:{props.get('ModifiedOnDateTime_dt')}",
                 adapter=self.name,
                 category=f"fire.incident.{incident_type}",
                 time=discovery_time or datetime.now(timezone.utc),
