@@ -285,7 +285,9 @@ class TestWFIGSIncidentsAdapter:
 
         # First event: Glacier Fire
         event = events[0]
-        assert event.id == "GUID-001-GLACIER"
+        # v0.14.3: dedup key is IrwinID + ModifiedOnDateTime_dt so updates
+        # republish (see TestWFIGSIncidentsUpdatePropagation below).
+        assert event.id == f"GUID-001-GLACIER:{_FIXTURE_NOW_MS}"
         assert event.adapter == "wfigs_incidents"
         # Category uses normalized incident type
         assert event.category == "fire.incident.wildfire"  # NOT fire.incident.wf
@@ -487,7 +489,10 @@ class TestWFIGSIncidentsAdapter:
         await adapter.shutdown()
 
         yielded_ids = sorted(e.id for e in events)
-        assert yielded_ids == ["FRESH-25D", "FRESH-NOW"], (
+        # v0.14.3: id is now IrwinID + ModifiedOnDateTime_dt.
+        assert yielded_ids == sorted(
+            [f"FRESH-25D:{modified_25d_ago_ms}", f"FRESH-NOW:{now_ms}"]
+        ), (
             f"recency filter mis-fired; yielded={yielded_ids!r} "
             "(expected the 2 within the 30-day cutoff, dropping the 60-day one)"
         )
@@ -829,3 +834,137 @@ class TestWFIGSPerimetersAdapter:
             "_last_poll_time was the in-memory cursor driving the broken "
             "incremental where-clause; do not re-add"
         )
+
+
+# --- v0.14.3: incident UPDATE propagation -------------------------------------
+# The dedup key is now IrwinID + ModifiedOnDateTime_dt (was bare IrwinID, which
+# published a fire once and silenced every later acreage/containment update).
+# These tests pin both halves: unchanged records still collapse; modified records
+# republish with a distinct id; subject derivation is untouched.
+
+def _incident_response(irwin: str, mod_dt, county: str = "Ada", name: str = "Test Fire"):
+    """Single Idaho incident feature with a controllable ModifiedOnDateTime_dt."""
+    return {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [-116.2, 43.6]},  # Idaho
+            "properties": {
+                "IrwinID": irwin,
+                "IncidentName": name,
+                "IncidentTypeCategory": "WF",
+                "DailyAcres": 100,
+                "PercentContained": 0,
+                "FireDiscoveryDateTime": 1716000000000,
+                "ModifiedOnDateTime_dt": mod_dt,
+                "POOState": "US-ID",
+                "POOCounty": county,
+            },
+        }],
+    }
+
+
+async def _poll_once(adapter, response):
+    mr = AsyncMock()
+    mr.raise_for_status = MagicMock()
+    mr.json = AsyncMock(return_value=response)
+    with patch.object(
+        adapter._session, "get",
+        return_value=AsyncMock(__aenter__=AsyncMock(return_value=mr), __aexit__=AsyncMock()),
+    ):
+        return [e async for e in adapter.poll()]
+
+
+def _dedup_publish(adapter, events):
+    """Mirror the supervisor's publish gate: skip ids already in published_ids,
+    else mark + 'publish'. Returns the events that would actually be published."""
+    published = []
+    for e in events:
+        if adapter.is_published(e.id):
+            adapter.bump_last_seen(e.id)
+            continue
+        adapter.mark_published(e.id)
+        published.append(e)
+    return published
+
+
+class TestWFIGSIncidentsUpdatePropagation:
+    """v0.14.3: dedup key includes ModifiedOnDateTime_dt."""
+
+    def _adapter(self, tmp_path: Path):
+        from central.adapters.wfigs_incidents import WFIGSIncidentsAdapter
+        config = AdapterConfig(
+            name="wfigs_incidents", enabled=True, cadence_s=300,
+            settings={
+                "region": {"north": 49.0, "south": 31.0, "east": -102.0, "west": -124.0},
+                "state": "US-ID",
+            },
+            updated_at=datetime.now(timezone.utc),
+        )
+        return WFIGSIncidentsAdapter(config, MagicMock(), tmp_path / "cursors.db")
+
+    @pytest.mark.asyncio
+    async def test_unchanged_record_dedups_across_polls(self, tmp_path: Path):
+        """Same IrwinID + same ModifiedOnDateTime_dt: first publishes, second deduped."""
+        adapter = self._adapter(tmp_path)
+        await adapter.startup()
+        now_ms = int(time.time()) * 1000  # recent -> passes the 30-day recency floor
+        resp = _incident_response("GUID-A", now_ms)
+
+        pub1 = _dedup_publish(adapter, await _poll_once(adapter, resp))
+        pub2 = _dedup_publish(adapter, await _poll_once(adapter, resp))
+
+        await adapter.shutdown()
+        assert len(pub1) == 1
+        assert len(pub2) == 0  # collapsed via published_ids on the identical key
+        assert pub1[0].id == f"GUID-A:{now_ms}"
+
+    @pytest.mark.asyncio
+    async def test_modified_record_republishes_with_distinct_id(self, tmp_path: Path):
+        """Same IrwinID, DIFFERENT ModifiedOnDateTime_dt: BOTH publish, distinct ids.
+
+        This is the load-bearing test: it proves the silencing is fixed."""
+        adapter = self._adapter(tmp_path)
+        await adapter.startup()
+        now_ms = int(time.time()) * 1000
+        t1, t2 = now_ms - 600_000, now_ms  # both recent, distinct (upstream modified)
+        pub1 = _dedup_publish(adapter, await _poll_once(adapter, _incident_response("GUID-A", t1)))
+        pub2 = _dedup_publish(adapter, await _poll_once(adapter, _incident_response("GUID-A", t2)))
+
+        await adapter.shutdown()
+        assert len(pub1) == 1
+        assert len(pub2) == 1  # the modification propagated, not silenced
+        assert pub1[0].id == f"GUID-A:{t1}"
+        assert pub2[0].id == f"GUID-A:{t2}"
+        assert pub1[0].id != pub2[0].id
+
+    @pytest.mark.asyncio
+    async def test_subject_derivation_unchanged(self, tmp_path: Path):
+        """The new id does not affect subject_for: still central.fire.incident.<state>.<county>."""
+        adapter = self._adapter(tmp_path)
+        await adapter.startup()
+        now_ms = int(time.time()) * 1000
+        events = await _poll_once(adapter, _incident_response("GUID-A", now_ms, county="Ada"))
+        await adapter.shutdown()
+        assert len(events) == 1
+        assert events[0].id == f"GUID-A:{now_ms}"
+        assert adapter.subject_for(events[0]) == "central.fire.incident.id.ada"
+
+    @pytest.mark.asyncio
+    async def test_none_modified_time_is_deterministic(self, tmp_path: Path, monkeypatch):
+        """Defensive: a None ModifiedOnDateTime_dt yields a deterministic ':None'
+        id without raising. (In production the recency filter drops such features
+        first; widen the cutoff here so the construction path is exercised.)"""
+        import central.adapters.wfigs_incidents as wi
+        monkeypatch.setattr(wi, "_RECENCY_CUTOFF_S", 10**13)  # cutoff in the past -> nothing filtered
+        adapter = self._adapter(tmp_path)
+        await adapter.startup()
+        resp = _incident_response("GUID-A", None)
+
+        pub1 = _dedup_publish(adapter, await _poll_once(adapter, resp))
+        pub2 = _dedup_publish(adapter, await _poll_once(adapter, resp))
+
+        await adapter.shutdown()
+        assert len(pub1) == 1
+        assert pub1[0].id == "GUID-A:None"
+        assert len(pub2) == 0  # still dedups consistently on the ':None' key
