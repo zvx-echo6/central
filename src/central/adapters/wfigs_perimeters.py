@@ -287,9 +287,15 @@ class WFIGSPerimetersAdapter(SourceAdapter):
             )
 
             # Build event with geometry in data
-            # Use normalized field names in event data for consistency
+            # Use normalized field names in event data for consistency.
+            # v0.14.4: the dedup key includes attr_ModifiedOnDateTime_dt so each
+            # genuine upstream perimeter refinement mints a new id and
+            # republishes, while identical re-polls (same modified time) still
+            # dedup. The bare IrwinID published a perimeter once and silenced
+            # every later geometry refinement (same fix as v0.14.3 for the
+            # sibling wfigs_incidents adapter).
             event = Event(
-                id=irwin_id,
+                id=f"{irwin_id}:{props.get('attr_ModifiedOnDateTime_dt')}",
                 adapter=self.name,
                 category=f"fire.perimeter.{incident_type}",
                 time=discovery_time or datetime.now(timezone.utc),

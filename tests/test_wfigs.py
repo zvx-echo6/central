@@ -690,7 +690,9 @@ class TestWFIGSPerimetersAdapter:
         assert len(events) == 1
 
         event = events[0]
-        assert event.id == "GUID-001-GLACIER"
+        # v0.14.4: dedup key is IrwinID + attr_ModifiedOnDateTime_dt so perimeter
+        # refinements republish (see TestWFIGSPerimetersUpdatePropagation below).
+        assert event.id == "GUID-001-GLACIER:1716100000000"
         assert event.adapter == "wfigs_perimeters"
         # Category uses normalized incident type
         assert event.category == "fire.perimeter.wildfire"  # NOT fire.perimeter.wf
@@ -864,6 +866,33 @@ def _incident_response(irwin: str, mod_dt, county: str = "Ada", name: str = "Tes
     }
 
 
+def _perimeter_response(irwin: str, mod_dt, county: str = "Ada", name: str = "Test Fire"):
+    """Single perimeter feature (attr_*/poly_* prefixed) with a controllable
+    attr_ModifiedOnDateTime_dt and a Polygon intersecting the test region bbox."""
+    return {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [[
+                [-116.6, 43.4], [-116.4, 43.4], [-116.4, 43.6],
+                [-116.6, 43.6], [-116.6, 43.4],
+            ]]},  # Idaho
+            "properties": {
+                "attr_IrwinID": irwin,
+                "attr_IncidentName": name,
+                "attr_IncidentTypeCategory": "WF",
+                "attr_IncidentSize": 100,
+                "poly_GISAcres": 98.5,
+                "attr_PercentContained": 0,
+                "attr_FireDiscoveryDateTime": 1716000000000,
+                "attr_ModifiedOnDateTime_dt": mod_dt,
+                "attr_POOState": "US-ID",
+                "attr_POOCounty": county,
+            },
+        }],
+    }
+
+
 async def _poll_once(adapter, response):
     mr = AsyncMock()
     mr.raise_for_status = MagicMock()
@@ -967,4 +996,89 @@ class TestWFIGSIncidentsUpdatePropagation:
         await adapter.shutdown()
         assert len(pub1) == 1
         assert pub1[0].id == "GUID-A:None"
+        assert len(pub2) == 0  # still dedups consistently on the ':None' key
+
+
+# --- v0.14.4: perimeter UPDATE propagation ------------------------------------
+# Same fix as v0.14.3 applied to the sibling wfigs_perimeters adapter: the dedup
+# key is now attr_IrwinID + attr_ModifiedOnDateTime_dt (was bare attr_IrwinID,
+# which published a perimeter once and silenced every later geometry refinement).
+# Note: wfigs_perimeters has NO client-side recency filter, so the None path
+# needs no monkeypatch (unlike incidents).
+
+class TestWFIGSPerimetersUpdatePropagation:
+    """v0.14.4: dedup key includes attr_ModifiedOnDateTime_dt."""
+
+    def _adapter(self, tmp_path: Path):
+        from central.adapters.wfigs_perimeters import WFIGSPerimetersAdapter
+        config = AdapterConfig(
+            name="wfigs_perimeters", enabled=True, cadence_s=300,
+            settings={"region": {"north": 49.0, "south": 31.0, "east": -102.0, "west": -124.0}},
+            updated_at=datetime.now(timezone.utc),
+        )
+        return WFIGSPerimetersAdapter(config, MagicMock(), tmp_path / "cursors.db")
+
+    @pytest.mark.asyncio
+    async def test_unchanged_perimeter_dedups_across_polls(self, tmp_path: Path):
+        """Same IrwinID + same attr_ModifiedOnDateTime_dt: first publishes, second deduped."""
+        adapter = self._adapter(tmp_path)
+        await adapter.startup()
+        resp = _perimeter_response("GUID-P", 1_716_100_000_000)
+
+        pub1 = _dedup_publish(adapter, await _poll_once(adapter, resp))
+        pub2 = _dedup_publish(adapter, await _poll_once(adapter, resp))
+
+        await adapter.shutdown()
+        assert len(pub1) == 1
+        assert len(pub2) == 0  # collapsed via published_ids on the identical key
+        assert pub1[0].id == "GUID-P:1716100000000"
+
+    @pytest.mark.asyncio
+    async def test_modified_perimeter_republishes_with_distinct_id(self, tmp_path: Path):
+        """Same IrwinID, DIFFERENT attr_ModifiedOnDateTime_dt: BOTH publish, distinct ids.
+
+        This is the load-bearing test: it proves the perimeter silencing is fixed."""
+        adapter = self._adapter(tmp_path)
+        await adapter.startup()
+        resp_t1 = _perimeter_response("GUID-P", 1_716_100_000_000)
+        resp_t2 = _perimeter_response("GUID-P", 1_716_100_300_000)  # perimeter refined upstream
+
+        pub1 = _dedup_publish(adapter, await _poll_once(adapter, resp_t1))
+        pub2 = _dedup_publish(adapter, await _poll_once(adapter, resp_t2))
+
+        await adapter.shutdown()
+        assert len(pub1) == 1
+        assert len(pub2) == 1  # the refinement propagated, not silenced
+        assert pub1[0].id == "GUID-P:1716100000000"
+        assert pub2[0].id == "GUID-P:1716100300000"
+        assert pub1[0].id != pub2[0].id
+
+    @pytest.mark.asyncio
+    async def test_subject_derivation_unchanged(self, tmp_path: Path):
+        """The new id does not affect subject_for: still central.fire.perimeter.<state>.<county>."""
+        adapter = self._adapter(tmp_path)
+        await adapter.startup()
+        events = await _poll_once(
+            adapter, _perimeter_response("GUID-P", 1_716_100_300_000, county="Ada")
+        )
+        await adapter.shutdown()
+        assert len(events) == 1
+        assert events[0].id == "GUID-P:1716100300000"
+        assert adapter.subject_for(events[0]) == "central.fire.perimeter.id.ada"
+
+    @pytest.mark.asyncio
+    async def test_none_modified_time_is_deterministic(self, tmp_path: Path):
+        """Defensive: a None attr_ModifiedOnDateTime_dt yields a deterministic
+        ':None' id without raising. No recency filter on perimeters, so this
+        reaches the construction path directly (no monkeypatch needed)."""
+        adapter = self._adapter(tmp_path)
+        await adapter.startup()
+        resp = _perimeter_response("GUID-P", None)
+
+        pub1 = _dedup_publish(adapter, await _poll_once(adapter, resp))
+        pub2 = _dedup_publish(adapter, await _poll_once(adapter, resp))
+
+        await adapter.shutdown()
+        assert len(pub1) == 1
+        assert pub1[0].id == "GUID-P:None"
         assert len(pub2) == 0  # still dedups consistently on the ':None' key
