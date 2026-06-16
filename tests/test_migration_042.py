@@ -38,3 +38,10 @@ def test_does_not_drop_old_columns_in_v0_14_0():
     upper = _NORM.upper()
     assert "DROP COLUMN" not in upper
     assert "DROP TABLE" not in upper
+
+
+def test_grants_table_and_sequence_ownership_to_central():
+    # v0.14.5: applied-as-postgres left the table/sequence postgres-owned; the
+    # file now re-asserts central ownership so fresh installs are self-healing.
+    assert "ALTER TABLE config.monitoring_areas OWNER TO central" in _NORM
+    assert "ALTER SEQUENCE config.monitoring_areas_id_seq OWNER TO central" in _NORM
