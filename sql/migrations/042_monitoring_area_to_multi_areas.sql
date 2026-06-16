@@ -46,3 +46,13 @@ WHERE id = true
   AND monitor_east  IS NOT NULL
   AND monitor_west  IS NOT NULL
 ON CONFLICT (name) DO NOTHING;
+
+-- Ownership fix (v0.14.5). During the v0.14.0 prod deploy (2026-06-12) this
+-- migration was applied as `sudo -u postgres`, so the table + its SERIAL
+-- sequence ended up owned by postgres while the `central` app role expects
+-- ownership-based access (it could read but not manage the new config table).
+-- We patched prod inline with these same ALTERs; making them part of the file
+-- keeps fresh installs self-healing. Idempotent: a no-op when already owned by
+-- central. (See central-manual-migration-owner-role.)
+ALTER TABLE config.monitoring_areas OWNER TO central;
+ALTER SEQUENCE config.monitoring_areas_id_seq OWNER TO central;
