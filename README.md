@@ -1,10 +1,17 @@
 # Central
 
-Central is the data hub spine for the infrastructure. Adapters normalize upstream sources into a canonical event shape, publish CloudEvents to NATS/JetStream, and archive to TimescaleDB for historical query. Single-LXC deployment.
+Central is the data hub spine for the Echo6 infrastructure. Adapters normalize upstream sources into a canonical event shape, publish CloudEvents to NATS/JetStream, and archive to TimescaleDB for historical query. Single-LXC deployment.
 
 ## Status
 
-Phase 0 — scaffold. Not yet operational.
+**Live in production** (v0.14.5) on utility CT 104 (`central.echo6.mesh`).
+
+~25 adapters across domains: traffic, wildfire, weather, space-weather, hydrology, earthquakes, avalanche, disasters, and satellite. Events flow CloudEvents -> NATS/JetStream -> TimescaleDB/PostGIS. FastAPI + HTMX GUI/API on :8000.
+
+Three systemd services manage the deployment:
+- `central-supervisor` — adapter lifecycle manager
+- `central-archive` — NATS consumer persisting events to TimescaleDB
+- `central-gui` — FastAPI + HTMX web interface / API (:8000)
 
 ## Architecture
 
