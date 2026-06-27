@@ -36,14 +36,15 @@ BATCH_SIZE = 100
 FETCH_TIMEOUT = 5.0
 ACK_WAIT = 30
 
-# v0.14.2: adapters whose events are global-by-design (satellite telemetry) and
-# must bypass the geographic monitoring-area bbox filter. The archive consumer
-# only has the adapter NAME at runtime (it reads off the wire, not the adapter
-# class), so it can't reach SourceAdapter.bypass_bbox_filter directly -- this
-# static set is the consumer-side mirror. It MUST stay in sync with the adapter
-# classes that set bypass_bbox_filter = True; tests/test_bypass_bbox_consistency.py
-# fails CI if the two drift.
-_BYPASS_BBOX_ADAPTERS = {"sat_positions", "sat_orbits"}
+# v0.14.2: adapters whose events are global-by-design (satellite telemetry,
+# global disaster feeds) and must bypass the geographic monitoring-area bbox
+# filter. The archive consumer only has the adapter NAME at runtime (it reads
+# off the wire, not the adapter class), so it can't reach
+# SourceAdapter.bypass_bbox_filter directly -- this static set is the
+# consumer-side mirror. It MUST stay in sync with the adapter classes that set
+# bypass_bbox_filter = True; tests/test_bypass_bbox_consistency.py fails CI if
+# the two drift.
+_BYPASS_BBOX_ADAPTERS = {"sat_positions", "sat_orbits", "eonet"}
 
 
 def consumer_name_for(stream: str) -> str:

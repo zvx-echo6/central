@@ -152,6 +152,12 @@ class EONETAdapter(SourceAdapter):
 
     # Event lat/lon mirrored from Geo.centroid into event.data (see poll()).
     enrichment_locations = [("latitude", "longitude")]
+    # Global-by-design: EONET disaster events (earthquakes, floods, wildfires,
+    # etc.) span the entire globe. A geographic monitoring area (e.g. Idaho)
+    # drops everything outside the bbox, yielding zero events. Skip the
+    # publish-time/archive bbox filter (mirrors v0.14.2/#108 satellite exemption).
+    # Keep in sync with archive._BYPASS_BBOX_ADAPTERS.
+    bypass_bbox_filter = True
 
     def __init__(
         self,
