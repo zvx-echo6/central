@@ -2258,7 +2258,8 @@ async def consumers_list(request: Request) -> HTMLResponse:
 @router.post("/consumers/{stream}/{consumer}/delete", response_class=HTMLResponse)
 async def consumers_delete(request: Request, stream: str, consumer: str) -> Response:
     """Delete a JetStream consumer."""
-    pool = get_pool()
+    from central.gui.nats import get_js
+
     operator = request.state.operator
 
     form = await request.form()
@@ -2296,6 +2297,7 @@ async def consumers_delete(request: Request, stream: str, consumer: str) -> Resp
         return RedirectResponse("/consumers", status_code=302)
 
     # Write audit log
+    pool = get_pool()
     async with pool.acquire() as conn:
         await write_audit(
             conn,

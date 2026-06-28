@@ -169,6 +169,105 @@ class TestConsumersListWithConsumers:
         assert fire["consumers"] == []
 
 
+class TestConsumersListHtmlRender:
+    """Render consumers_list.html through the real Jinja2 environment.
+
+    Stronger than the context-dict checks above: these prove the values
+    actually reach the rendered HTML body. Guards two regressions:
+      - the consumer NAME must appear in the rendered HTML (proves the
+        ``await js.consumers_info(...)`` list reaches the template, not the
+        coroutine/async-iterator bug)
+      - Optional[int] count fields that are None must not render the literal
+        string ``None`` (they are guarded to an em dash).
+    """
+
+    PROTECTED_LABEL = '<span class="muted" style="font-size: 0.85em;">central-owned</span>'
+
+    def _render(self, streams):
+        from central.gui import templates as templates_mod
+        template = templates_mod.env.get_template("consumers_list.html")
+        return template.render(
+            operator=MagicMock(username="testop"),
+            csrf_token="test_csrf",
+            streams=streams,
+        )
+
+    def test_consumer_name_appears_in_html(self):
+        streams = [
+            {
+                "stream": "CENTRAL_WX",
+                "error": None,
+                "consumers": [
+                    {
+                        "name": "meshai-wx",
+                        "num_pending": 1000,
+                        "num_ack_pending": 0,
+                        "num_redelivered": 0,
+                        "num_waiting": 0,
+                        "created": datetime(2026, 5, 17, 12, 0, 0, tzinfo=timezone.utc),
+                        "protected": False,
+                    },
+                ],
+            },
+        ]
+        html = self._render(streams)
+        assert "meshai-wx" in html
+        # Non-protected consumer renders a delete form
+        assert "/consumers/CENTRAL_WX/meshai-wx/delete" in html
+        # ...and not the central-owned label span (which only the legend prose
+        # mentions, so we match the exact span markup, not the bare phrase)
+        assert self.PROTECTED_LABEL not in html
+
+    def test_protected_consumer_renders_label_not_button(self):
+        streams = [
+            {
+                "stream": "CENTRAL_WX",
+                "error": None,
+                "consumers": [
+                    {
+                        "name": "archive-CENTRAL_WX",
+                        "num_pending": 5,
+                        "num_ack_pending": 0,
+                        "num_redelivered": 0,
+                        "num_waiting": 1,
+                        "created": datetime(2026, 5, 17, 12, 0, 0, tzinfo=timezone.utc),
+                        "protected": True,
+                    },
+                ],
+            },
+        ]
+        html = self._render(streams)
+        assert "archive-CENTRAL_WX" in html
+        assert self.PROTECTED_LABEL in html
+        # No delete form for the protected consumer
+        assert "/consumers/CENTRAL_WX/archive-CENTRAL_WX/delete" not in html
+
+    def test_none_counts_render_dash_not_literal_none(self):
+        streams = [
+            {
+                "stream": "CENTRAL_WX",
+                "error": None,
+                "consumers": [
+                    {
+                        "name": "meshai-wx",
+                        "num_pending": None,
+                        "num_ack_pending": None,
+                        "num_redelivered": None,
+                        "num_waiting": None,
+                        "created": None,
+                        "protected": False,
+                    },
+                ],
+            },
+        ]
+        html = self._render(streams)
+        assert "meshai-wx" in html
+        # The literal "None" must never leak into a rendered table cell
+        assert ">None<" not in html
+        # The guarded fallback em dash is rendered instead
+        assert "—" in html
+
+
 class TestConsumersDeleteArchiveGuard:
     """POST /consumers/{stream}/archive-*/delete must be refused."""
 
