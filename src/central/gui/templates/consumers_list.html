@@ -32,10 +32,10 @@ has no active subscriber — it is safe to delete if it is not a central-owned c
         {% for c in stream.consumers %}
             <tr>
                 <td style="padding: 0.25rem 0.5rem;">{{ c.name }}</td>
-                <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_pending }}</td>
-                <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_ack_pending }}</td>
-                <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_redelivered }}</td>
-                <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_waiting }}</td>
+                <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_pending if c.num_pending is not none else '—' }}</td>
+                <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_ack_pending if c.num_ack_pending is not none else '—' }}</td>
+                <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_redelivered if c.num_redelivered is not none else '—' }}</td>
+                <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_waiting if c.num_waiting is not none else '—' }}</td>
                 <td style="padding: 0.25rem 0.5rem;">{{ c.created.isoformat() if c.created else '—' }}</td>
                 <td style="text-align: center; padding: 0.25rem 0.5rem;">
                     {% if c.protected %}

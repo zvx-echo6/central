@@ -2217,7 +2217,7 @@ async def consumers_list(request: Request) -> HTMLResponse:
 
         if js is not None:
             try:
-                async for ci in js.consumers_info(stream_name):
+                for ci in await js.consumers_info(stream_name):
                     consumers.append({
                         "name": ci.name,
                         "num_pending": ci.num_pending,

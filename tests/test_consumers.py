@@ -25,14 +25,11 @@ def _make_consumer_info(name: str, num_pending: int = 0, num_ack_pending: int = 
 
 
 def _make_js_with_consumers(consumers_by_stream: dict):
-    """Build a mock JetStreamContext whose consumers_info is an async generator."""
+    """Build a mock JetStreamContext whose consumers_info is a coroutine returning a list."""
     mock_js = MagicMock()
-
-    async def consumers_info(stream_name):
-        for ci in consumers_by_stream.get(stream_name, []):
-            yield ci
-
-    mock_js.consumers_info = consumers_info
+    mock_js.consumers_info = AsyncMock(
+        side_effect=lambda stream, **kw: consumers_by_stream.get(stream, [])
+    )
     mock_js.consumer_info = AsyncMock()
     mock_js.delete_consumer = AsyncMock()
     return mock_js
@@ -108,6 +105,13 @@ class TestConsumersListWithConsumers:
         assert meshai_c["num_pending"] == 1000
         assert meshai_c["num_waiting"] == 0
 
+        # Regression guard: consumer names must appear in the template context so
+        # they are rendered into the HTML body (guards against the coroutine/iterator
+        # bug where consumers_info was consumed as an async-iterable instead of awaited).
+        consumer_names_in_context = {c["name"] for c in wx["consumers"]}
+        assert "archive-CENTRAL_WX" in consumer_names_in_context
+        assert "meshai-wx" in consumer_names_in_context
+
     @pytest.mark.asyncio
     async def test_stream_with_no_consumers_shows_empty(self):
         from central.gui.routes import consumers_list
@@ -147,9 +151,8 @@ class TestConsumersListWithConsumers:
         async def consumers_info_raising(stream_name):
             if stream_name == "CENTRAL_FIRE":
                 raise RuntimeError("stream not found")
-            # other streams: empty
-            return
-            yield  # make it an async generator
+            # other streams: empty list (coroutine returning a list, not an async generator)
+            return []
 
         mock_js.consumers_info = consumers_info_raising
 
