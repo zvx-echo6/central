@@ -44,6 +44,7 @@ from central.gui.audit import (
     AUTH_LOGIN_FAILED,
     AUTH_LOGOUT,
     AUTH_PASSWORD_CHANGE,
+    CONSUMER_DELETE,
     MONITORING_AREA_CREATE,
     MONITORING_AREA_DELETE,
     MONITORING_AREA_UPDATE,
@@ -2192,6 +2193,120 @@ async def streams_update(
         )
 
     return RedirectResponse(url="/streams", status_code=302)
+
+
+# =============================================================================
+# Consumers routes
+# =============================================================================
+
+
+@router.get("/consumers", response_class=HTMLResponse)
+async def consumers_list(request: Request) -> HTMLResponse:
+    """List all JetStream consumers across all registered streams."""
+    from central.gui.nats import get_js
+
+    templates = _get_templates()
+    operator = request.state.operator
+    js = get_js()
+
+    streams_data = []
+    for stream_entry in STREAM_REGISTRY:
+        stream_name = stream_entry.name
+        consumers = []
+        stream_error = None
+
+        if js is not None:
+            try:
+                async for ci in js.consumers_info(stream_name):
+                    consumers.append({
+                        "name": ci.name,
+                        "num_pending": ci.num_pending,
+                        "num_ack_pending": ci.num_ack_pending,
+                        "num_redelivered": ci.num_redelivered,
+                        "num_waiting": ci.num_waiting,
+                        "created": ci.created,
+                        "protected": ci.name.startswith("archive-"),
+                    })
+            except Exception as e:
+                logger.warning(
+                    "consumers_info failed",
+                    extra={"stream": stream_name, "err": type(e).__name__},
+                )
+                stream_error = f"unavailable: {type(e).__name__}"
+        else:
+            stream_error = "NATS unavailable"
+
+        streams_data.append({
+            "stream": stream_name,
+            "consumers": consumers,
+            "error": stream_error,
+        })
+
+    csrf_token = request.state.csrf_token
+    response = templates.TemplateResponse(
+        request=request,
+        name="consumers_list.html",
+        context={
+            "operator": operator,
+            "csrf_token": csrf_token,
+            "streams": streams_data,
+        },
+    )
+    return response
+
+
+@router.post("/consumers/{stream}/{consumer}/delete", response_class=HTMLResponse)
+async def consumers_delete(request: Request, stream: str, consumer: str) -> Response:
+    """Delete a JetStream consumer."""
+    pool = get_pool()
+    operator = request.state.operator
+
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
+
+    # Hard guard: never delete archive-* consumers even if path is forged
+    if consumer.startswith("archive-"):
+        return RedirectResponse("/consumers", status_code=302)
+
+    js = get_js()
+    if js is None:
+        return RedirectResponse("/consumers", status_code=302)
+
+    # Capture before state from NATS for audit log
+    try:
+        before_info = await js.consumer_info(stream, consumer)
+        before = {
+            "name": before_info.name,
+            "stream": stream,
+            "num_pending": before_info.num_pending,
+        }
+    except Exception:
+        before = {"name": consumer, "stream": stream}
+
+    # Delete the consumer
+    try:
+        await js.delete_consumer(stream, consumer)
+    except Exception:
+        logger.exception(
+            "delete_consumer failed",
+            extra={"stream": stream, "consumer": consumer},
+        )
+        return RedirectResponse("/consumers", status_code=302)
+
+    # Write audit log
+    async with pool.acquire() as conn:
+        await write_audit(
+            conn,
+            CONSUMER_DELETE,
+            operator_id=operator.id,
+            target=f"{stream}/{consumer}",
+            before=before,
+            after=None,
+        )
+
+    return RedirectResponse("/consumers", status_code=302)
 
 
 # =============================================================================
