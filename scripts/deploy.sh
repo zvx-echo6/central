@@ -25,6 +25,7 @@ CENTRAL_USER=central
 UV=/usr/local/bin/uv
 BACKUP_DIR=/var/backups/central
 UNITS=(central-supervisor central-archive central-gui)
+ENV_FILE=/etc/central/central.env
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,6 +44,14 @@ die() {
 # Run a command as $CENTRAL_USER via sudo.
 cen() {
     sudo -u "$CENTRAL_USER" "$@"
+}
+
+# Run central-migrate as $CENTRAL_USER with the service's working directory and
+# environment file, matching what the systemd unit provides via WorkingDirectory=
+# and EnvironmentFile=.  Without this, central-migrate tries to read .env from
+# the caller's cwd and fails with PermissionError.
+cen_migrate() {
+    sudo -u "$CENTRAL_USER" bash -c "cd '$DEPLOY_DIR' && set -a && . '$ENV_FILE' && set +a && '$VENV/bin/central-migrate' $*"
 }
 
 # ---------------------------------------------------------------------------
@@ -138,7 +147,7 @@ done
 
 # 4. Migration drift gate — refuse to deploy onto a drifted migration state.
 log "Migration drift check (--check)"
-cen "$VENV/bin/central-migrate" --check \
+cen_migrate --check \
     || die "Migration drift detected (central-migrate --check exited non-zero). Resolve drift before deploying."
 
 # 5. Ensure backup directory exists and is owned by $CENTRAL_USER.
@@ -205,7 +214,7 @@ cen bash -c "cd '$DEPLOY_DIR' && '$UV' sync"
 
 # 12. Migration preview — show what would run without applying.
 log "Migration dry-run (preview)"
-cen "$VENV/bin/central-migrate" --dry-run
+cen_migrate --dry-run
 
 # 13. CONFIRM gate — unless -y was passed.
 #
@@ -235,7 +244,7 @@ fi
 
 # 14. Apply migrations.
 log "Applying migrations"
-cen "$VENV/bin/central-migrate"
+cen_migrate
 
 # 15. Restart all three systemd units.
 log "Restarting services"
@@ -263,7 +272,7 @@ fi
 
 # 17. Post-deploy migration check — should be clean (0 pending).
 log "Post-deploy migration check (--check)"
-cen "$VENV/bin/central-migrate" --check \
+cen_migrate --check \
     || die "Post-deploy migration check failed — schema may be inconsistent."
 
 # 18. Health check — up to 5 retries with 2-second sleep between attempts.
