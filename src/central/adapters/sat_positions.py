@@ -136,6 +136,9 @@ class SatPositionsAdapter(SourceAdapter):
     # queries. Skip the publish-time/archive bbox filter (v0.14.2). Keep in sync
     # with archive._BYPASS_BBOX_ADAPTERS.
     bypass_bbox_filter = True
+    # Dedup IDs are "<norad_id>:<position_iso>" -- unique per second by design,
+    # so a 14-day window accumulates ~3.5M rows unnecessarily. 1 day is enough.
+    dedup_sweep_days = 1
 
     def __init__(
         self,
@@ -155,6 +158,10 @@ class SatPositionsAdapter(SourceAdapter):
 
     async def startup(self) -> None:
         self._db = sqlite3.connect(self._cursor_db_path)
+        # WAL + NORMAL sync: eliminates per-commit fsync overhead on cursors.db.
+        # WAL mode is file-level persistent; applies to all adapters on this DB.
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.execute(_DEDUP_DDL)
         self._db.execute(
             "CREATE INDEX IF NOT EXISTS published_ids_last_seen ON published_ids (last_seen)"
