@@ -8,7 +8,7 @@
 <em>Pending</em> and zero <em>Waiting</em> has accumulated unacknowledged messages and
 has no active subscriber — it is safe to delete if it is not a central-owned consumer.</p>
 
-<div class="cols">
+<div class="consumer-streams">
 {% for stream in streams %}
 <article>
     <header><strong>{{ stream.stream }}</strong></header>
@@ -16,6 +16,7 @@ has no active subscriber — it is safe to delete if it is not a central-owned c
     {% if stream.error %}
     <p class="error" style="margin-top: 0.5rem;">({{ stream.error }})</p>
     {% elif stream.consumers %}
+    <div class="consumer-table-wrap">
     <table style="width: 100%; border-collapse: collapse; margin-top: 0.5rem;">
         <thead>
             <tr>
@@ -52,6 +53,7 @@ has no active subscriber — it is safe to delete if it is not a central-owned c
         {% endfor %}
         </tbody>
     </table>
+    </div>
     {% else %}
     <p class="muted" style="margin-top: 0.5rem;">(no consumers)</p>
     {% endif %}
