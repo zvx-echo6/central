@@ -355,10 +355,18 @@ class Supervisor:
                     )
 
     def _create_adapter(self, config: AdapterConfig) -> SourceAdapter:
-        """Create an adapter instance based on config name."""
-        cls = self._adapters.get(config.name)
+        """Create an adapter instance based on config kind (class identity).
+
+        config.kind names the adapter *class* in the registry (discover_adapters
+        keys by SourceAdapter.name on the class).  config.name is the unique
+        *instance* identifier and is unchanged here — runtime state, logs, and
+        dedup tables continue to key on config.name.
+        """
+        cls = self._adapters.get(config.kind)
         if cls is None:
-            raise ValueError(f"Unknown adapter type: {config.name}")
+            raise ValueError(
+                f"Unknown adapter kind: {config.kind!r} (instance: {config.name!r})"
+            )
         return cls(
             config=config,
             config_store=self._config_store,
@@ -524,8 +532,9 @@ class Supervisor:
         # API key precondition — resolve via per-row settings[api_key_field]
         # (operator-selected alias), falling back to the class-attribute
         # default when settings hasn't been set. Returns None when no key
-        # is required.
-        adapter_cls = self._adapters.get(config.name)
+        # is required. Resolve the class by config.kind (class identity), not
+        # config.name (instance identity) — mirrors _create_adapter.
+        adapter_cls = self._adapters.get(config.kind)
         alias = resolve_api_key_alias(adapter_cls, config.settings)
         if alias is not None:
             key_value = await self._config_store.get_api_key(alias)

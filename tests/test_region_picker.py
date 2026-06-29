@@ -27,6 +27,7 @@ class TestRegionPickerInTemplate:
         mock_conn.fetchrow.side_effect = [
             {  # Adapter row
                 "name": "firms",
+                "kind": "firms",
                 "enabled": True,
                 "cadence_s": 300,
                 "settings": {
@@ -94,6 +95,7 @@ class TestRegionValidation:
         mock_conn = AsyncMock()
         mock_conn.fetchrow.return_value = {
             "name": "firms",
+            "kind": "firms",
             "enabled": True,
             "cadence_s": 300,
             "settings": {"api_key_alias": "firms", "satellites": ["VIIRS_SNPP_NRT"], "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}},
@@ -153,6 +155,7 @@ class TestRegionValidation:
         mock_conn.fetchrow.side_effect = [
             {
                 "name": "firms",
+                "kind": "firms",
                 "enabled": True,
                 "cadence_s": 300,
                 "settings": {"api_key_alias": "firms", "satellites": ["VIIRS_SNPP_NRT"], "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}},
@@ -209,6 +212,7 @@ class TestRegionValidation:
         mock_conn.fetchrow.side_effect = [
             {
                 "name": "firms",
+                "kind": "firms",
                 "enabled": True,
                 "cadence_s": 300,
                 "settings": {"api_key_alias": "firms", "satellites": ["VIIRS_SNPP_NRT"], "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}},
@@ -265,6 +269,7 @@ class TestRegionValidation:
         mock_conn.fetchrow.side_effect = [
             {
                 "name": "firms",
+                "kind": "firms",
                 "enabled": True,
                 "cadence_s": 300,
                 "settings": {"api_key_alias": "firms", "satellites": ["VIIRS_SNPP_NRT"], "region": {"north": 49.5, "south": 31.0, "east": -102.0, "west": -124.5}},
@@ -323,6 +328,7 @@ class TestRegionAuditLog:
         mock_conn = AsyncMock()
         mock_conn.fetchrow.return_value = {
             "name": "firms",
+            "kind": "firms",
             "enabled": True,
             "cadence_s": 300,
             "settings": {

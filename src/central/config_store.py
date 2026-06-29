@@ -95,7 +95,7 @@ class ConfigStore:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT name, enabled, cadence_s, settings, paused_at, updated_at
+                SELECT name, kind, enabled, cadence_s, settings, paused_at, updated_at
                 FROM config.adapters
                 WHERE name = $1
                 """,
@@ -110,7 +110,7 @@ class ConfigStore:
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT name, enabled, cadence_s, settings, paused_at, updated_at
+                SELECT name, kind, enabled, cadence_s, settings, paused_at, updated_at
                 FROM config.adapters
                 ORDER BY name
                 """

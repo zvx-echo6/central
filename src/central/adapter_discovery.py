@@ -30,5 +30,7 @@ def discover_adapters() -> dict[str, type[SourceAdapter]]:
                 and attr is not SourceAdapter
                 and hasattr(attr, "name")
             ):
+                # attr.name is the *kind* (class identity); AdapterConfig.name
+                # is the instance identity.  For all built-ins kind == name.
                 registry[attr.name] = attr
     return registry

@@ -30,7 +30,15 @@ class RegionConfig(BaseModel):
 class AdapterConfig(BaseModel):
     """Configuration for a single adapter."""
 
-    name: str = Field(description="Unique adapter identifier")
+    name: str = Field(description="Unique adapter identifier (instance identity)")
+    kind: str | None = Field(
+        default=None,
+        description=(
+            "Adapter class identifier (registry key / class identity). "
+            "Matches SourceAdapter.name on the class.  Defaults to `name` "
+            "for back-compat when the DB column is absent or NULL (pre-043)."
+        ),
+    )
     enabled: bool = Field(default=True, description="Whether adapter is active")
     cadence_s: int = Field(ge=10, description="Poll interval in seconds")
     settings: dict[str, Any] = Field(
@@ -40,6 +48,13 @@ class AdapterConfig(BaseModel):
         default=None, description="When adapter was paused, if paused"
     )
     updated_at: datetime = Field(description="Last configuration update time")
+
+    @model_validator(mode="after")
+    def _backfill_kind(self) -> "AdapterConfig":
+        """Default kind to name when the DB column is NULL or absent (pre-043)."""
+        if self.kind is None:
+            self.kind = self.name
+        return self
 
     @property
     def is_paused(self) -> bool:

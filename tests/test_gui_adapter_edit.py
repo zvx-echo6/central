@@ -116,7 +116,7 @@ def _post_req(pairs, cadence_s="1800"):
 def _pool(settings=_SETTINGS):
     conn = AsyncMock()
     conn.fetchrow.side_effect = [
-        {"name": "tomtom_incidents", "enabled": True, "cadence_s": 1800, "settings": settings,
+        {"name": "tomtom_incidents", "kind": "tomtom_incidents", "enabled": True, "cadence_s": 1800, "settings": settings,
          "paused_at": None, "updated_at": None, "last_error": None},
         {"map_tile_url": None, "map_attribution": None},
     ]

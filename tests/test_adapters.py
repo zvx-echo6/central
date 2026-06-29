@@ -42,9 +42,9 @@ class TestAdaptersListAuthenticated:
 
         mock_conn = AsyncMock()
         mock_conn.fetch.return_value = [
-            {"name": "firms", "enabled": True, "cadence_s": 300, "settings": {"api_key_alias": "firms"}, "paused_at": None, "updated_at": None, "last_error": None},
-            {"name": "nws", "enabled": True, "cadence_s": 60, "settings": {"contact_email": "test@test.com"}, "paused_at": None, "updated_at": None, "last_error": None},
-            {"name": "usgs_quake", "enabled": True, "cadence_s": 120, "settings": {"feed": "all_hour"}, "paused_at": None, "updated_at": None, "last_error": None},
+            {"name": "firms", "kind": "firms", "enabled": True, "cadence_s": 300, "settings": {"api_key_alias": "firms"}, "paused_at": None, "updated_at": None, "last_error": None},
+            {"name": "nws", "kind": "nws", "enabled": True, "cadence_s": 60, "settings": {"contact_email": "test@test.com"}, "paused_at": None, "updated_at": None, "last_error": None},
+            {"name": "usgs_quake", "kind": "usgs_quake", "enabled": True, "cadence_s": 120, "settings": {"feed": "all_hour"}, "paused_at": None, "updated_at": None, "last_error": None},
         ]
 
         mock_pool = MagicMock()
@@ -97,6 +97,7 @@ class TestAdaptersEditForm:
         mock_conn.fetchrow.side_effect = [
             {
                 "name": "nws",
+                "kind": "nws",
                 "enabled": True,
                 "cadence_s": 60,
                 "settings": {"contact_email": "test@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},
@@ -178,6 +179,7 @@ class TestAdaptersEditSubmit:
         mock_conn = AsyncMock()
         mock_conn.fetchrow.return_value = {
             "name": "nws",
+            "kind": "nws",
             "enabled": True,
             "cadence_s": 60,
             "settings": {"contact_email": "old@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},
@@ -227,6 +229,7 @@ class TestAdaptersEditSubmit:
         mock_conn.fetchrow.side_effect = [
             {
                 "name": "nws",
+                "kind": "nws",
                 "enabled": True,
                 "cadence_s": 60,
                 "settings": {"contact_email": "test@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},
@@ -286,6 +289,7 @@ class TestAdaptersAudit:
         mock_conn = AsyncMock()
         mock_conn.fetchrow.return_value = {
             "name": "nws",
+            "kind": "nws",
             "enabled": True,
             "cadence_s": 60,
             "settings": {"contact_email": "old@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},
@@ -350,6 +354,7 @@ class TestAdaptersJsonbRegression:
         mock_conn = AsyncMock()
         mock_conn.fetchrow.return_value = {
             "name": "nws",
+            "kind": "nws",
             "enabled": True,
             "cadence_s": 60,
             "settings": {"contact_email": "old@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},  # dict, as asyncpg returns
@@ -402,6 +407,7 @@ class TestAdaptersJsonbRegression:
         mock_conn = AsyncMock()
         mock_conn.fetchrow.return_value = {
             "name": "nws",
+            "kind": "nws",
             "enabled": True,
             "cadence_s": 60,
             "settings": {"contact_email": "old@example.com", "region": {"north": 49, "south": 24, "east": -66, "west": -125}},  # dict
@@ -443,7 +449,7 @@ class TestAdaptersJsonbRegression:
         mock_conn = MagicMock()
         mock_conn.fetchrow = AsyncMock(side_effect=[
             # Adapter row
-            {"name": "firms", "enabled": True, "cadence_s": 300, "settings": {},
+            {"name": "firms", "kind": "firms", "enabled": True, "cadence_s": 300, "settings": {},
              "paused_at": None, "updated_at": None, "last_error": None},
             # System row
             {"map_tile_url": "https://tile.example.com", "map_attribution": "Test"},
