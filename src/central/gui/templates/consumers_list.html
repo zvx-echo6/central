@@ -25,6 +25,8 @@ has no active subscriber — it is safe to delete if it is not a central-owned c
                 <th style="text-align: right; padding: 0.25rem 0.5rem;">Ack Pending</th>
                 <th style="text-align: right; padding: 0.25rem 0.5rem;">Redelivered</th>
                 <th style="text-align: right; padding: 0.25rem 0.5rem;">Waiting</th>
+                <th style="text-align: right; padding: 0.25rem 0.5rem;">Delivered</th>
+                <th style="text-align: right; padding: 0.25rem 0.5rem;">Confirmed</th>
                 <th style="text-align: left; padding: 0.25rem 0.5rem;">Created</th>
                 <th style="text-align: center; padding: 0.25rem 0.5rem;">Action</th>
             </tr>
@@ -37,6 +39,8 @@ has no active subscriber — it is safe to delete if it is not a central-owned c
                 <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_ack_pending if c.num_ack_pending is not none else '—' }}</td>
                 <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_redelivered if c.num_redelivered is not none else '—' }}</td>
                 <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_waiting if c.num_waiting is not none else '—' }}</td>
+                <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.delivered if c.delivered is not none else '—' }}</td>
+                <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.acked if c.acked is not none else '—' }}</td>
                 <td style="padding: 0.25rem 0.5rem;">{{ c.created.isoformat() if c.created else '—' }}</td>
                 <td style="text-align: center; padding: 0.25rem 0.5rem;">
                     {% if c.protected %}
@@ -64,7 +68,10 @@ has no active subscriber — it is safe to delete if it is not a central-owned c
 <p class="muted" style="margin-top: 1rem; font-size: 0.9em;">
     <strong>Legend:</strong> <em>Pending</em> = messages not yet delivered to this consumer;
     <em>Ack Pending</em> = delivered but not yet acknowledged;
-    <em>Waiting</em> = active pull requests from a live subscriber.
+    <em>Waiting</em> = active pull requests from a live subscriber;
+    <em>Delivered</em> = total messages this consumer has received from the stream (lifetime counter);
+    <em>Confirmed</em> = total messages this consumer has acknowledged (processed) — these are consumer-level
+    counters (the subscriber got/acked it) and are NOT confirmation that the message reached a mesh device.
     A consumer with high <em>Pending</em> and zero <em>Waiting</em> is abandoned — no subscriber
     is pulling from it and messages are piling up.
     Consumers marked <em>central-owned</em> (archive-*) are managed by central and cannot be deleted here.
