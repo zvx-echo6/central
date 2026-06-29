@@ -2,6 +2,7 @@
 
 import os
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,13 +14,16 @@ os.environ.setdefault("CENTRAL_NATS_URL", "nats://localhost:4222")
 
 
 def _make_consumer_info(name: str, num_pending: int = 0, num_ack_pending: int = 0,
-                        num_redelivered: int = 0, num_waiting: int = 0):
+                        num_redelivered: int = 0, num_waiting: int = 0,
+                        delivered_seq: int = 0, ack_floor_seq: int = 0):
     ci = MagicMock()
     ci.name = name
     ci.num_pending = num_pending
     ci.num_ack_pending = num_ack_pending
     ci.num_redelivered = num_redelivered
     ci.num_waiting = num_waiting
+    ci.delivered = SimpleNamespace(consumer_seq=delivered_seq)
+    ci.ack_floor = SimpleNamespace(consumer_seq=ack_floor_seq)
     ci.created = datetime(2026, 5, 17, 12, 0, 0, tzinfo=timezone.utc)
     return ci
 
@@ -204,6 +208,8 @@ class TestConsumersListHtmlRender:
                         "num_ack_pending": 0,
                         "num_redelivered": 0,
                         "num_waiting": 0,
+                        "delivered": 5000,
+                        "acked": 4000,
                         "created": datetime(2026, 5, 17, 12, 0, 0, tzinfo=timezone.utc),
                         "protected": False,
                     },
@@ -230,6 +236,8 @@ class TestConsumersListHtmlRender:
                         "num_ack_pending": 0,
                         "num_redelivered": 0,
                         "num_waiting": 1,
+                        "delivered": 100,
+                        "acked": 95,
                         "created": datetime(2026, 5, 17, 12, 0, 0, tzinfo=timezone.utc),
                         "protected": True,
                     },
@@ -254,6 +262,8 @@ class TestConsumersListHtmlRender:
                         "num_ack_pending": None,
                         "num_redelivered": None,
                         "num_waiting": None,
+                        "delivered": None,
+                        "acked": None,
                         "created": None,
                         "protected": False,
                     },
@@ -266,6 +276,34 @@ class TestConsumersListHtmlRender:
         assert ">None<" not in html
         # The guarded fallback em dash is rendered instead
         assert "—" in html
+
+    def test_delivered_and_confirmed_columns_render(self):
+        streams = [
+            {
+                "stream": "CENTRAL_WX",
+                "error": None,
+                "consumers": [
+                    {
+                        "name": "meshai-wx",
+                        "num_pending": 10,
+                        "num_ack_pending": 2,
+                        "num_redelivered": 0,
+                        "num_waiting": 1,
+                        "delivered": 7777,
+                        "acked": 6543,
+                        "created": datetime(2026, 5, 17, 12, 0, 0, tzinfo=timezone.utc),
+                        "protected": False,
+                    },
+                ],
+            },
+        ]
+        html = self._render(streams)
+        # Delivered and Confirmed column headers are present
+        assert "Delivered" in html
+        assert "Confirmed" in html
+        # The actual counter values appear in the rendered HTML
+        assert "7777" in html
+        assert "6543" in html
 
 
 class TestConsumersDeleteArchiveGuard:

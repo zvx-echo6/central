@@ -2224,6 +2224,8 @@ async def consumers_list(request: Request) -> HTMLResponse:
                         "num_ack_pending": ci.num_ack_pending,
                         "num_redelivered": ci.num_redelivered,
                         "num_waiting": ci.num_waiting,
+                        "delivered": getattr(getattr(ci, "delivered", None), "consumer_seq", None),
+                        "acked": getattr(getattr(ci, "ack_floor", None), "consumer_seq", None),
                         "created": ci.created,
                         "protected": ci.name.startswith("archive-"),
                     })
