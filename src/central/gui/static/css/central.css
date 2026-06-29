@@ -194,6 +194,15 @@ button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .cols { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 
+/* ─── consumers page: full-width stacked stream blocks ──────────────────── */
+/* Unlike .cols (multi-column grid used by streams/dashboard), these stream
+   blocks need the full page width because each table has 7 columns. */
+.consumer-streams { display: flex; flex-direction: column; gap: 16px; }
+.consumer-streams > article { margin-bottom: 0; width: 100%; }
+/* Safety net: scroll horizontally on very narrow viewports instead of
+   overflowing the card border. Default desktop view shows the full table. */
+.consumer-table-wrap { overflow-x: auto; }
+
 /* cards (formerly the framework's <article>) */
 article, .card {
   border: 1px solid var(--rule);
