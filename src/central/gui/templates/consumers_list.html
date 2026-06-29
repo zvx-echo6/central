@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Central — Consumers{% endblock %}
+
+{% block content %}
+<h1>Consumers</h1>
+<p class="muted">JetStream consumers across all registered streams. A consumer with high
+<em>Pending</em> and zero <em>Waiting</em> has accumulated unacknowledged messages and
+has no active subscriber — it is safe to delete if it is not a central-owned consumer.</p>
+
+<div class="cols">
+{% for stream in streams %}
+<article>
+    <header><strong>{{ stream.stream }}</strong></header>
+
+    {% if stream.error %}
+    <p class="error" style="margin-top: 0.5rem;">({{ stream.error }})</p>
+    {% elif stream.consumers %}
+    <table style="width: 100%; border-collapse: collapse; margin-top: 0.5rem;">
+        <thead>
+            <tr>
+                <th style="text-align: left; padding: 0.25rem 0.5rem;">Name</th>
+                <th style="text-align: right; padding: 0.25rem 0.5rem;">Pending</th>
+                <th style="text-align: right; padding: 0.25rem 0.5rem;">Ack Pending</th>
+                <th style="text-align: right; padding: 0.25rem 0.5rem;">Redelivered</th>
+                <th style="text-align: right; padding: 0.25rem 0.5rem;">Waiting</th>
+                <th style="text-align: left; padding: 0.25rem 0.5rem;">Created</th>
+                <th style="text-align: center; padding: 0.25rem 0.5rem;">Action</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for c in stream.consumers %}
+            <tr>
+                <td style="padding: 0.25rem 0.5rem;">{{ c.name }}</td>
+                <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_pending if c.num_pending is not none else '—' }}</td>
+                <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_ack_pending if c.num_ack_pending is not none else '—' }}</td>
+                <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_redelivered if c.num_redelivered is not none else '—' }}</td>
+                <td style="text-align: right; padding: 0.25rem 0.5rem;">{{ c.num_waiting if c.num_waiting is not none else '—' }}</td>
+                <td style="padding: 0.25rem 0.5rem;">{{ c.created.isoformat() if c.created else '—' }}</td>
+                <td style="text-align: center; padding: 0.25rem 0.5rem;">
+                    {% if c.protected %}
+                    <span class="muted" style="font-size: 0.85em;">central-owned</span>
+                    {% else %}
+                    <form method="post" action="/consumers/{{ stream.stream }}/{{ c.name }}/delete" style="margin: 0;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn-danger" style="height: 28px; padding: 0 10px; font-size: 0.85em;"
+                                onclick="return confirm('Delete consumer {{ c.name }} on {{ stream.stream }}? This cannot be undone.')">Delete</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="muted" style="margin-top: 0.5rem;">(no consumers)</p>
+    {% endif %}
+</article>
+{% endfor %}
+</div>
+
+<p class="muted" style="margin-top: 1rem; font-size: 0.9em;">
+    <strong>Legend:</strong> <em>Pending</em> = messages not yet delivered to this consumer;
+    <em>Ack Pending</em> = delivered but not yet acknowledged;
+    <em>Waiting</em> = active pull requests from a live subscriber.
+    A consumer with high <em>Pending</em> and zero <em>Waiting</em> is abandoned — no subscriber
+    is pulling from it and messages are piling up.
+    Consumers marked <em>central-owned</em> (archive-*) are managed by central and cannot be deleted here.
+</p>
+{% endblock %}
