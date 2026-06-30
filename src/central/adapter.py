@@ -66,6 +66,12 @@ class SourceAdapter(ABC):
     set in ``central.archive`` -- the two MUST stay in sync (enforced by
     ``tests/test_bypass_bbox_consistency.py``)."""
 
+    operator_creatable: bool = False
+    """True for adapters that operators may instantiate many times from the
+    GUI (one config.adapters row per instance, each with a unique name and
+    kind=<class_name>).  False (default) for singleton built-ins where the
+    name equals the kind and the row is seeded by migrations."""
+
     @abstractmethod
     async def poll(self) -> AsyncIterator[Event]:
         """

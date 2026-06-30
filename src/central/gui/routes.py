@@ -36,6 +36,8 @@ from central.gui.auth import (
     verify_password,
 )
 from central.gui.audit import (
+    ADAPTER_CREATE,
+    ADAPTER_DELETE,
     ADAPTER_UPDATE,
     API_KEY_CREATE,
     API_KEY_DELETE,
@@ -99,6 +101,10 @@ ALIAS_REGEX = re.compile(r"^[a-zA-Z0-9_]+$")
 
 # Email validation regex (simple but effective)
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+
+# Adapter instance-name regex: must start with a lowercase letter, followed by
+# 1–63 lowercase letters, digits, or underscores (total 2–64 chars).
+ADAPTER_NAME_REGEX = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 
 
 def _get_templates():
@@ -1437,6 +1443,164 @@ async def change_password_submit(
 # =============================================================================
 
 
+def _parse_adapter_settings(
+    form,
+    adapter_cls,
+    current_settings: dict,
+    cadence_s: int,
+) -> tuple[dict, dict[str, str]]:
+    """Parse and validate adapter settings from a form submission.
+
+    Shared by ``adapters_edit_submit`` and ``adapters_create_submit`` so that
+    field parsing, region handling, Pydantic validation, and quota-blocking live
+    in exactly one place.
+
+    Args:
+        form: Starlette ``FormData`` from ``await request.form()``.
+        adapter_cls: The resolved ``SourceAdapter`` subclass, or ``None``.
+        current_settings: Existing settings dict (``{}`` for a new adapter).
+            Used by ``describe_fields`` to populate ``field.current_value``.
+        cadence_s: Validated cadence for quota estimation.
+
+    Returns:
+        ``(new_settings, errors)`` — on success ``errors`` is empty and
+        ``new_settings`` is the Pydantic-validated dict; on failure
+        ``new_settings`` is ``{}`` and ``errors`` maps field names to messages.
+    """
+    errors: dict[str, str] = {}
+
+    if not (adapter_cls and hasattr(adapter_cls, "settings_schema")):
+        # No schema — preserve existing settings unchanged.
+        return dict(current_settings), errors
+
+    schema = adapter_cls.settings_schema
+    fields = describe_fields(schema, current_settings)
+
+    parsed_values: dict = {}
+
+    for field in fields:
+        raw = form.get(field.name, "")
+
+        if field.widget == "text":
+            parsed_values[field.name] = raw.strip() if raw else None
+        elif field.widget == "number":
+            try:
+                parsed_values[field.name] = int(raw) if raw else None
+            except ValueError:
+                errors[field.name] = f"{field.label} must be a number"
+        elif field.widget == "checkbox":
+            parsed_values[field.name] = field.name in form
+        elif field.widget == "csv":
+            if raw.strip():
+                parsed_values[field.name] = [v.strip() for v in raw.split(",") if v.strip()]
+            else:
+                parsed_values[field.name] = []
+        elif field.widget == "csv_int":
+            parsed_ints: list[int] = []
+            if raw.strip():
+                for tok in raw.split(","):
+                    tok = tok.strip()
+                    if not tok:
+                        continue
+                    try:
+                        parsed_ints.append(int(tok))
+                    except ValueError:
+                        logger.warning(
+                            "csv_int: dropped non-numeric token",
+                            extra={"field": field.name, "token": tok},
+                        )
+            parsed_values[field.name] = parsed_ints
+        elif field.widget == "select":
+            value = raw.strip() if raw else None
+            if value and field.options and value not in field.options:
+                errors[field.name] = f"Invalid {field.label.lower()}"
+            else:
+                parsed_values[field.name] = value
+        elif field.widget == "checkboxes":
+            values = form.getlist(field.name)
+            if field.options:
+                invalid = [v for v in values if v not in field.options]
+                if invalid:
+                    errors[field.name] = f"Invalid values: {', '.join(invalid)}"
+                else:
+                    parsed_values[field.name] = values
+            else:
+                parsed_values[field.name] = values
+        elif field.widget == "api_key_select":
+            value = raw.strip() if raw else None
+            parsed_values[field.name] = value
+        elif field.widget == "model_list":
+            rows = _parse_model_list(form, field)
+            parsed_values[field.name] = rows
+        elif field.widget == "region":
+            pass  # handled in the region block below
+
+    # Region fields (common to adapters that expose a bounding-box region).
+    region_north_str = form.get("region_north", "").strip()
+    region_south_str = form.get("region_south", "").strip()
+    region_east_str  = form.get("region_east",  "").strip()
+    region_west_str  = form.get("region_west",  "").strip()
+    has_region = any([region_north_str, region_south_str, region_east_str, region_west_str])
+
+    if has_region:
+        try:
+            region_north = float(region_north_str)
+            region_south = float(region_south_str)
+            region_east  = float(region_east_str)
+            region_west  = float(region_west_str)
+            if not (-90 <= region_south < region_north <= 90):
+                errors["region"] = (
+                    "Invalid latitude: south must be less than north, "
+                    "both between -90 and 90"
+                )
+            elif not (-180 <= region_west < region_east <= 180):
+                errors["region"] = (
+                    "Invalid longitude: west must be less than east, "
+                    "both between -180 and 180"
+                )
+            else:
+                parsed_values["region"] = {
+                    "north": region_north,
+                    "south": region_south,
+                    "east":  region_east,
+                    "west":  region_west,
+                }
+        except ValueError:
+            errors["region"] = "Region coordinates must be valid numbers"
+    else:
+        parsed_values["region"] = None
+
+    if errors:
+        return {}, errors
+
+    # Pydantic validation + quota check.
+    try:
+        validated_data = {k: v for k, v in parsed_values.items() if v is not None}
+        validated = schema(**validated_data)
+        new_settings = validated.model_dump(mode="json")
+
+        q = adapter_cls.quota_estimate(validated, cadence_s)
+        if q and q.get("blocked"):
+            ml = next((f.name for f in fields if f.widget == "model_list"), "quota")
+            errors[ml] = (
+                f"Estimated {q['calls_per_month']:,} calls/month exceeds the "
+                f"{q['cap']:,}/month free-tier cap — raise cadence or remove rows."
+            )
+            return {}, errors
+    except ValidationError as e:
+        ml_name = next((f.name for f in fields if f.widget == "model_list"), None)
+        for err in e.errors():
+            loc = err["loc"]
+            key = str(loc[0]) if loc else (ml_name or "unknown")
+            if len(loc) >= 2 and isinstance(loc[1], int):
+                errors[key] = f"Row {loc[1] + 1}: {err['msg']}"
+            else:
+                errors[key] = err["msg"]
+        return {}, errors
+
+    return new_settings, errors
+
+
 @router.get("/adapters", response_class=HTMLResponse)
 async def adapters_list(
     request: Request,
@@ -1471,6 +1635,10 @@ async def adapters_list(
             )
             api_key_missing = not has_key
 
+            # Operator instances have a name that is NOT a registered kind key.
+            # Built-ins always have name == kind which IS in the registry.
+            deletable = row["name"] not in adapter_classes
+
             adapters.append({
                 "name": row["name"],
                 "display_name": getattr(adapter_cls, "display_name", row["name"]) if adapter_cls else row["name"],
@@ -1482,6 +1650,7 @@ async def adapters_list(
                 "last_error": row["last_error"],
                 "api_key_missing": api_key_missing,
                 "requires_api_key_alias": requires_api_key_alias,
+                "deletable": deletable,
             })
 
     csrf_token = request.state.csrf_token
@@ -1528,6 +1697,202 @@ def _parse_model_list(form, field) -> list[dict]:
         if any(v != "" for v in row.values()):
             out.append(row)
     return out
+
+
+@router.get("/adapters/new", response_class=HTMLResponse)
+async def adapters_create_form(request: Request) -> Response:
+    """Render the create-adapter form.
+
+    Lists only adapter kinds where ``operator_creatable is True`` so operators
+    can instantiate them freely without touching Python code.
+    """
+    templates = _get_templates()
+    pool = get_pool()
+    operator = request.state.operator
+    csrf_token = request.state.csrf_token
+
+    adapter_classes = _adapter_classes()
+    creatable_kinds = {
+        kind: cls
+        for kind, cls in adapter_classes.items()
+        if getattr(cls, "operator_creatable", False)
+    }
+
+    if not creatable_kinds:
+        return Response(status_code=404, content="No operator-creatable adapter kinds are registered.")
+
+    # NOTE: single creatable kind today; multi-kind HTMX field-swap is a future enhancement.
+    first_kind, first_cls = next(iter(creatable_kinds.items()))
+
+    fields = []
+    if hasattr(first_cls, "settings_schema"):
+        fields = describe_fields(first_cls.settings_schema, {})
+        if first_cls.api_key_field is not None:
+            for f in fields:
+                if f.name == first_cls.api_key_field:
+                    f.widget = "api_key_select"
+
+    async with pool.acquire() as conn:
+        api_key_rows = await conn.fetch("SELECT alias FROM config.api_keys ORDER BY alias")
+    api_keys = [{"alias": r["alias"]} for r in api_key_rows]
+
+    return templates.TemplateResponse(
+        request=request,
+        name="adapters_new.html",
+        context={
+            "operator": operator,
+            "csrf_token": csrf_token,
+            "creatable_kinds": [
+                {"kind": kind, "display_name": getattr(cls, "display_name", kind)}
+                for kind, cls in creatable_kinds.items()
+            ],
+            "selected_kind": first_kind,
+            "default_cadence_s": first_cls.default_cadence_s,
+            "fields": fields,
+            "api_keys": api_keys,
+            "errors": None,
+            "form_data": None,
+        },
+    )
+
+
+@router.post("/adapters/new")
+async def adapters_create_submit(request: Request) -> Response:
+    """Process the create-adapter form (first INSERT in the codebase)."""
+    templates = _get_templates()
+    pool = get_pool()
+    operator = request.state.operator
+
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
+
+    adapter_classes = _adapter_classes()
+    creatable_kinds = {
+        kind: cls
+        for kind, cls in adapter_classes.items()
+        if getattr(cls, "operator_creatable", False)
+    }
+
+    kind     = (form.get("kind") or "").strip()
+    name     = (form.get("name") or "").strip()
+    enabled  = "enabled" in form
+    cadence_s_str = form.get("cadence_s", "")
+
+    errors: dict[str, str] = {}
+    form_data: dict[str, Any] = {
+        "kind":      kind,
+        "name":      name,
+        "enabled":   enabled,
+        "cadence_s": cadence_s_str,
+    }
+
+    # Validate kind — must be operator-creatable.
+    kind_cls = creatable_kinds.get(kind)
+    if kind not in creatable_kinds:
+        errors["kind"] = f"'{kind}' is not a valid operator-creatable adapter kind."
+
+    # Validate instance name.
+    if "kind" not in errors:
+        if not ADAPTER_NAME_REGEX.match(name):
+            errors["name"] = (
+                "Name must start with a lowercase letter followed by 1–63 "
+                "lowercase letters, digits, or underscores."
+            )
+        elif name in adapter_classes:
+            errors["name"] = (
+                f"'{name}' is a reserved kind name and cannot be used as an "
+                "instance name."
+            )
+
+    # Validate cadence_s.
+    cadence_s = 0
+    try:
+        cadence_s = int(cadence_s_str)
+        if cadence_s < 10:
+            errors["cadence_s"] = "Input should be greater than or equal to 10"
+    except ValueError:
+        errors["cadence_s"] = "Cadence must be a valid integer"
+
+    # Check for duplicate name in DB (only when name passed format + kind checks).
+    if "name" not in errors and "kind" not in errors:
+        async with pool.acquire() as conn:
+            existing = await conn.fetchval(
+                "SELECT 1 FROM config.adapters WHERE name = $1", name
+            )
+        if existing:
+            return Response(
+                status_code=409,
+                content=f"An adapter named '{name}' already exists.",
+            )
+
+    # Parse + validate settings via the shared helper.
+    new_settings: dict = {}
+    if not errors and kind_cls:
+        new_settings, settings_errors = _parse_adapter_settings(
+            form, kind_cls, {}, cadence_s
+        )
+        errors.update(settings_errors)
+
+    # Re-render on error.
+    if errors:
+        fields = []
+        if kind_cls and hasattr(kind_cls, "settings_schema"):
+            fields = describe_fields(kind_cls.settings_schema, {})
+            if kind_cls.api_key_field is not None:
+                for f in fields:
+                    if f.name == kind_cls.api_key_field:
+                        f.widget = "api_key_select"
+            # Populate form_data for settings fields so inputs restore values.
+            for field in fields:
+                form_data.setdefault(field.name, form.get(field.name, ""))
+        async with pool.acquire() as conn:
+            api_key_rows = await conn.fetch("SELECT alias FROM config.api_keys ORDER BY alias")
+        api_keys = [{"alias": r["alias"]} for r in api_key_rows]
+        selected_kind = kind if kind in creatable_kinds else (next(iter(creatable_kinds)) if creatable_kinds else "")
+        return templates.TemplateResponse(
+            request=request,
+            name="adapters_new.html",
+            context={
+                "operator": operator,
+                "csrf_token": request.state.csrf_token,
+                "creatable_kinds": [
+                    {"kind": k, "display_name": getattr(c, "display_name", k)}
+                    for k, c in creatable_kinds.items()
+                ],
+                "selected_kind": selected_kind,
+                "default_cadence_s": getattr(kind_cls, "default_cadence_s", 300) if kind_cls else 300,
+                "fields": fields,
+                "api_keys": api_keys,
+                "errors": errors,
+                "form_data": form_data,
+            },
+            status_code=422,
+        )
+
+    # INSERT INTO config.adapters — kind supplied explicitly (migration 043 has no DEFAULT).
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO config.adapters (name, kind, enabled, cadence_s, settings, updated_at)
+            VALUES ($1, $2, $3, $4, $5, now())
+            """,
+            name,
+            kind,
+            enabled,
+            cadence_s,
+            new_settings,
+        )
+        await write_audit(
+            conn,
+            ADAPTER_CREATE,
+            operator_id=operator.id,
+            target=name,
+            after={"kind": kind, "enabled": enabled, "cadence_s": cadence_s, "settings": new_settings},
+        )
+
+    return RedirectResponse(url=f"/adapters/{name}", status_code=302)
 
 
 @router.get("/adapters/{name}", response_class=HTMLResponse)
@@ -1715,144 +2080,29 @@ async def adapters_edit_submit(
 
         current_settings = row["settings"] or {}
 
-        # Parse and validate settings via Pydantic if we have the adapter class
-        new_settings = {}
+        # Collect raw form values into form_data for error re-renders.
         if adapter_cls and hasattr(adapter_cls, "settings_schema"):
-            schema = adapter_cls.settings_schema
-            fields = describe_fields(schema, current_settings)
+            for _f in describe_fields(adapter_cls.settings_schema, current_settings):
+                if _f.widget == "checkboxes":
+                    form_data[_f.name] = form.getlist(_f.name)
+                elif _f.widget == "model_list":
+                    form_data[_f.name] = _parse_model_list(form, _f)
+                else:
+                    form_data[_f.name] = form.get(_f.name, "")
+            form_data["region_north"] = form.get("region_north", "").strip()
+            form_data["region_south"] = form.get("region_south", "").strip()
+            form_data["region_east"]  = form.get("region_east",  "").strip()
+            form_data["region_west"]  = form.get("region_west",  "").strip()
 
-            # Parse form values based on widget type
-            parsed_values = {}
-            for field in fields:
-                raw = form.get(field.name, "")
-                form_data[field.name] = raw
-
-                if field.widget == "text":
-                    parsed_values[field.name] = raw.strip() if raw else None
-                elif field.widget == "number":
-                    try:
-                        parsed_values[field.name] = int(raw) if raw else None
-                    except ValueError:
-                        errors[field.name] = f"{field.label} must be a number"
-                elif field.widget == "checkbox":
-                    parsed_values[field.name] = field.name in form
-                elif field.widget == "csv":
-                    if raw.strip():
-                        parsed_values[field.name] = [v.strip() for v in raw.split(",") if v.strip()]
-                    else:
-                        parsed_values[field.name] = []
-                elif field.widget == "csv_int":
-                    # v0.11.3: parallel to "csv" but coerces each token through
-                    # int(), dropping non-numeric entries with a warning.
-                    parsed_ints: list[int] = []
-                    if raw.strip():
-                        for tok in raw.split(","):
-                            tok = tok.strip()
-                            if not tok:
-                                continue
-                            try:
-                                parsed_ints.append(int(tok))
-                            except ValueError:
-                                logger.warning(
-                                    "csv_int: dropped non-numeric token",
-                                    extra={"field": field.name, "token": tok},
-                                )
-                    parsed_values[field.name] = parsed_ints
-                elif field.widget == "select":
-                    value = raw.strip() if raw else None
-                    if value and field.options and value not in field.options:
-                        errors[field.name] = f"Invalid {field.label.lower()}"
-                    else:
-                        parsed_values[field.name] = value
-                elif field.widget == "checkboxes":
-                    # Use getlist for checkbox groups
-                    values = form.getlist(field.name)
-                    form_data[field.name] = values  # Override raw value
-                    if field.options:
-                        invalid = [v for v in values if v not in field.options]
-                        if invalid:
-                            errors[field.name] = f"Invalid values: {', '.join(invalid)}"
-                        else:
-                            parsed_values[field.name] = values
-                    else:
-                        parsed_values[field.name] = values
-                elif field.widget == "api_key_select":
-                    # API key select - validate against existing keys
-                    value = raw.strip() if raw else None
-                    parsed_values[field.name] = value
-                elif field.widget == "model_list":
-                    rows = _parse_model_list(form, field)
-                    form_data[field.name] = rows
-                    parsed_values[field.name] = rows
-                elif field.widget == "region":
-                    # Region handled separately below
-                    pass
-
-            # Handle region fields (common pattern)
-            region_north_str = form.get("region_north", "").strip()
-            region_south_str = form.get("region_south", "").strip()
-            region_east_str = form.get("region_east", "").strip()
-            region_west_str = form.get("region_west", "").strip()
-
-            form_data["region_north"] = region_north_str
-            form_data["region_south"] = region_south_str
-            form_data["region_east"] = region_east_str
-            form_data["region_west"] = region_west_str
-
-            # Check if any region field has a value
-            has_region = any([region_north_str, region_south_str, region_east_str, region_west_str])
-
-            if has_region:
-                try:
-                    region_north = float(region_north_str)
-                    region_south = float(region_south_str)
-                    region_east = float(region_east_str)
-                    region_west = float(region_west_str)
-
-                    if not (-90 <= region_south < region_north <= 90):
-                        errors["region"] = "Invalid latitude: south must be less than north, both between -90 and 90"
-                    elif not (-180 <= region_west < region_east <= 180):
-                        errors["region"] = "Invalid longitude: west must be less than east, both between -180 and 180"
-                    else:
-                        parsed_values["region"] = {
-                            "north": region_north,
-                            "south": region_south,
-                            "east": region_east,
-                            "west": region_west,
-                        }
-                except ValueError:
-                    errors["region"] = "Region coordinates must be valid numbers"
-            else:
-                parsed_values["region"] = None
-
-            # Only validate with Pydantic if no parse errors
-            if not errors:
-                try:
-                    # Filter out None values for optional fields without defaults
-                    validated_data = {k: v for k, v in parsed_values.items() if v is not None}
-                    validated = schema(**validated_data)
-                    new_settings = validated.model_dump(mode="json")
-
-                    # Hard-block a save that would blow the provider free tier.
-                    q = adapter_cls.quota_estimate(validated, cadence_s)
-                    if q and q.get("blocked"):
-                        ml = next((f.name for f in fields if f.widget == "model_list"), "quota")
-                        errors[ml] = (
-                            f"Estimated {q['calls_per_month']:,} calls/month exceeds the "
-                            f"{q['cap']:,}/month free-tier cap — raise cadence or remove rows."
-                        )
-                except ValidationError as e:
-                    ml_name = next((f.name for f in fields if f.widget == "model_list"), None)
-                    for err in e.errors():
-                        loc = err["loc"]
-                        key = str(loc[0]) if loc else (ml_name or "unknown")
-                        if len(loc) >= 2 and isinstance(loc[1], int):
-                            errors[key] = f"Row {loc[1] + 1}: {err['msg']}"
-                        else:
-                            errors[key] = err["msg"]
-        else:
-            # No schema - just preserve existing settings
-            new_settings = dict(current_settings)
+        # Parse + validate settings via the shared helper.
+        # Mirror the old behavior: skip Pydantic validation when upstream
+        # checks (e.g. cadence) already failed, same as the old
+        # "if not errors: try: validated = schema(...)" guard.
+        if not errors:
+            new_settings, settings_errors = _parse_adapter_settings(
+                form, adapter_cls, current_settings, cadence_s
+            )
+            errors.update(settings_errors)
 
         # If there are errors, re-render the form
         if errors:
@@ -1963,6 +2213,71 @@ async def adapters_edit_submit(
             target=name,
             before=before,
             after=after,
+        )
+
+    return RedirectResponse(url="/adapters", status_code=302)
+
+
+@router.post("/adapters/{name}/delete")
+async def adapters_delete(request: Request, name: str) -> Response:
+    """Delete an operator-created adapter instance.
+
+    Safety rule: a row is deletable iff its ``name`` is NOT a key in the
+    adapter class registry.  Built-in adapters always have ``name == kind``
+    which IS a registry key; operator instances have a unique name that is NOT.
+
+    NOTE: orphaned ``published_ids`` rows in cursors.db (a separate SQLite
+    database) are left to age out via ``dedup_sweep_days``; they are not
+    cleaned here because the two stores are decoupled by design.
+    """
+    pool = get_pool()
+    operator = request.state.operator
+
+    form = await request.form()
+    form_csrf = form.get("csrf_token", "")
+    if not form_csrf or form_csrf != request.state.csrf_token:
+        raise CsrfValidationError("Invalid CSRF token")
+
+    adapter_classes = _adapter_classes()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT name, kind FROM config.adapters WHERE name = $1", name
+        )
+
+        if row is None:
+            return Response(status_code=404, content=f"Adapter '{name}' not found.")
+
+        # Primary guard: built-ins have name == kind (a registered class key).
+        if name in adapter_classes:
+            return Response(
+                status_code=403,
+                content=(
+                    f"'{name}' is a built-in adapter and cannot be deleted; "
+                    "disable it instead."
+                ),
+            )
+
+        # Second guard: the row's kind must be operator_creatable.
+        kind_cls = adapter_classes.get(row["kind"])
+        if kind_cls is not None and not getattr(kind_cls, "operator_creatable", False):
+            return Response(
+                status_code=403,
+                content=(
+                    f"Adapter kind '{row['kind']}' is not operator-creatable; "
+                    "cannot delete."
+                ),
+            )
+
+        await conn.execute(
+            "DELETE FROM config.adapters WHERE name = $1", name
+        )
+        await write_audit(
+            conn,
+            ADAPTER_DELETE,
+            operator_id=operator.id,
+            target=name,
+            before={"kind": row["kind"], "name": name},
         )
 
     return RedirectResponse(url="/adapters", status_code=302)
