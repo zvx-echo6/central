@@ -1451,7 +1451,7 @@ async def adapters_list(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT name, enabled, cadence_s, settings, paused_at, updated_at, last_error
+            SELECT name, kind, enabled, cadence_s, settings, paused_at, updated_at, last_error
             FROM config.adapters
             ORDER BY name
             """
@@ -1460,7 +1460,8 @@ async def adapters_list(
         adapters = []
         for row in rows:
             settings = row["settings"] or {}
-            adapter_cls = adapter_classes.get(row["name"])
+            # Resolve the class by kind (class identity), not instance name.
+            adapter_cls = adapter_classes.get(row["kind"])
 
             # Check if required API key is missing — resolve via the per-row
             # settings[api_key_field] (operator-selected alias), falling back
@@ -1540,14 +1541,10 @@ async def adapters_edit_form(
     pool = get_pool()
     operator = request.state.operator
 
-    # Look up the adapter class
-    adapter_classes = _adapter_classes()
-    adapter_cls = adapter_classes.get(name)
-
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT name, enabled, cadence_s, settings, paused_at, updated_at, last_error
+            SELECT name, kind, enabled, cadence_s, settings, paused_at, updated_at, last_error
             FROM config.adapters
             WHERE name = $1
             """,
@@ -1563,6 +1560,10 @@ async def adapters_edit_form(
         )
         tile_url = sys_row["map_tile_url"] if sys_row else "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         tile_attribution = sys_row["map_attribution"] if sys_row else "&copy; OpenStreetMap contributors"
+
+    # Look up the adapter class by kind (class identity), not instance name.
+    adapter_classes = _adapter_classes()
+    adapter_cls = adapter_classes.get(row["kind"])
 
     settings = row["settings"] or {}
 
@@ -1609,6 +1610,7 @@ async def adapters_edit_form(
             settings_obj = adapter_cls.settings_schema(**settings)
             preview_cfg = AdapterConfig(
                 name=row["name"],
+                kind=row["kind"],
                 enabled=row["enabled"],
                 cadence_s=row["cadence_s"],
                 settings=settings,
@@ -1672,10 +1674,6 @@ async def adapters_edit_submit(
     if not form_csrf or form_csrf != request.state.csrf_token:
         raise CsrfValidationError("Invalid CSRF token")
 
-    # Look up the adapter class
-    adapter_classes = _adapter_classes()
-    adapter_cls = adapter_classes.get(name)
-
     # Parse common form fields
     enabled = "enabled" in form
     cadence_s_str = form.get("cadence_s", "")
@@ -1701,7 +1699,7 @@ async def adapters_edit_submit(
         # Get current adapter state
         row = await conn.fetchrow(
             """
-            SELECT name, enabled, cadence_s, settings, paused_at, updated_at, last_error
+            SELECT name, kind, enabled, cadence_s, settings, paused_at, updated_at, last_error
             FROM config.adapters
             WHERE name = $1
             """,
@@ -1710,6 +1708,10 @@ async def adapters_edit_submit(
 
         if row is None:
             return Response(status_code=404, content="Adapter not found")
+
+        # Look up the adapter class by kind (class identity), not instance name.
+        adapter_classes = _adapter_classes()
+        adapter_cls = adapter_classes.get(row["kind"])
 
         current_settings = row["settings"] or {}
 

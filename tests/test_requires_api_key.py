@@ -74,7 +74,7 @@ class TestRoutesApiKeyMissing:
         mock_pool = MagicMock()
         mock_conn = MagicMock()
         mock_conn.fetch = AsyncMock(return_value=[
-            {"name": "firms", "enabled": False, "cadence_s": 300, "settings": {}, "paused_at": None, "updated_at": None, "last_error": None},
+            {"name": "firms", "kind": "firms", "enabled": False, "cadence_s": 300, "settings": {}, "paused_at": None, "updated_at": None, "last_error": None},
         ])
         mock_conn.fetchval = AsyncMock(return_value=None)  # No API key exists
         mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -307,6 +307,7 @@ class TestAdaptersEditSubmitErrorRerender:
             # First call: adapter row
             {
                 "name": "firms",
+                "kind": "firms",
                 "enabled": False,
                 "cadence_s": 300,
                 "settings": {"api_key_alias": "firms", "satellites": ["VIIRS_SNPP_NRT"]},
