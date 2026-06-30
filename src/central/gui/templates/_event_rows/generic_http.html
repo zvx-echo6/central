@@ -1,0 +1,3 @@
+{# Generic HTTP source. Fields from payload->data->data. #}
+{% set d = (event.data.get('data') or {}).get('data') or {} %}
+{% if d.get('title') is not none %}<dt>Title</dt><dd>{{ d.title }}</dd>{% endif %}
