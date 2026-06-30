@@ -1189,6 +1189,7 @@ _SAMPLE_INNER = {
         "current_lat_deg": -17.1487,
         "current_alt_km": 417.4,
     },
+    "generic_http": {"title": "Generic source alert"},
 }
 
 # Exact expected subjects for the deterministic adapters. swpc_alerts is omitted

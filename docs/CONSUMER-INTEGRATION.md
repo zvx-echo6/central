@@ -2023,6 +2023,55 @@ at parameter `00060`, gage height (ft) at `00065`, water temperature (°C) at
 \
 ---
 
+### generic_http — Generic HTTP Source (v0.15.0)
+
+- **Source:** Any public REST / GeoJSON endpoint; configured per-instance
+  via `config.adapters.settings.url`.  v1 supports public (unauthenticated)
+  feeds only; auth is a planned follow-up.
+- **Stream:** Determined by the `domain` setting, which must match an
+  existing Central stream domain (e.g. `wx`, `fire`, `quake`).  Subject
+  filter: `central.<domain>.>`.
+- **Subject:** `central.<domain>.<region>` — `<region>` is derived from
+  `event.data["_enriched"]["geocoder"]` by the Photon enrichment pipeline
+  (identical convention to `usgs_quake`).  Returns `unknown` when enrichment
+  has not yet run or found no geo signal.
+- **Category:** `<domain>.<category_suffix>` (default suffix: `alert`, so
+  e.g. `wx.alert`).
+- **Dedup key:** the value resolved by `id_path` within each source item
+  (required field; coerced to string).
+- **Geo:** GeoJSON geometry from `geometry_path` (default `"geometry"`)
+  when it resolves to a dict; `geo.centroid` is also set for Point
+  geometries.  Falls back to `lat_path` / `lon_path` for non-GeoJSON
+  responses.
+- **Event.data fields:** operator-configured.  `title_path` → `data["title"]`
+  when set; additional fields via `field_mappings` (`source_path → dest_key`
+  pairs).  No guaranteed fixed schema — varies per operator configuration.
+- **Settings summary:**
+
+  | Setting | Required | Default | Notes |
+  |---|---|---|---|
+  | `url` | yes | — | Polled endpoint (GET, no auth in v1) |
+  | `domain` | yes | — | Must be an existing stream domain |
+  | `id_path` | yes | — | Dotted path to stable unique item id |
+  | `items_path` | no | `features` | Dotted path to the items array |
+  | `format` | no | `geojson` | `geojson` or `json` (informational) |
+  | `time_path` | no | `null` | ISO-8601 timestamp path; uses poll time if absent |
+  | `title_path` | no | `null` | Path → `data["title"]` |
+  | `geometry_path` | no | `geometry` | GeoJSON geometry path |
+  | `lat_path` / `lon_path` | no | `null` | Numeric lat/lon paths (non-GeoJSON fallback) |
+  | `severity_path` | no | `null` | Int severity (0–4) path |
+  | `category_suffix` | no | `alert` | Appended to domain for Event.category |
+  | `field_mappings` | no | `[]` | List of `{source_path, dest_key}` |
+
+- **Cadence:** 300s (5 min) default.
+- **Multiple instances:** one `generic_http` class supports many
+  `config.adapters` rows (each with a distinct instance `name`); dedup is
+  scoped per-instance.  The class is dormant until an operator row is
+  created — no built-in seeded instance.
+
+\
+---
+
 ## 7. Fall-off / removal semantics
 
 Central adapters fall into three buckets for handling upstream events that
