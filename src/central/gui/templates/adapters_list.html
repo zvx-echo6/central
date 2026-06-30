@@ -4,6 +4,7 @@
 
 {% block content %}
 <h1>Adapters</h1>
+<p><a href="/adapters/new" role="button">+ New adapter</a></p>
 <table>
     <thead>
         <tr>
@@ -11,6 +12,7 @@
             <th>Enabled</th>
             <th>Cadence</th>
             <th>Last Updated</th>
+            <th></th>
             <th></th>
         </tr>
     </thead>
@@ -27,6 +29,15 @@
             <td>{{ adapter.cadence_s }}s</td>
             <td>{{ adapter.updated_at.strftime('%Y-%m-%d %H:%M') if adapter.updated_at else '—' }}</td>
             <td><a href="/adapters/{{ adapter.name }}">Edit</a></td>
+            <td>
+                {% if adapter.deletable %}
+                <form method="post" action="/adapters/{{ adapter.name }}/delete" style="display:inline;"
+                      onsubmit="return confirm('Delete adapter &quot;{{ adapter.name }}&quot;? This cannot be undone.')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn-danger">Delete</button>
+                </form>
+                {% endif %}
+            </td>
         </tr>
         {% endfor %}
     </tbody>

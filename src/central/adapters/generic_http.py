@@ -193,6 +193,7 @@ class GenericHttpAdapter(SourceAdapter):
     wizard_order = None   # not in the setup wizard; created via operator GUI
     enrichment_locations = []
     bypass_bbox_filter = False
+    operator_creatable = True  # GUI allows operators to create multiple instances
 
     def __init__(
         self,
