@@ -664,3 +664,153 @@ class TestInstanceName:
         assert events[0].adapter == "my_source"
 
         await adapter.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Geocoder enrichment wiring
+# ---------------------------------------------------------------------------
+
+class TestEnrichmentLocations:
+    def test_enrichment_locations_declared(self):
+        assert GenericHttpAdapter.enrichment_locations == [("latitude", "longitude")]
+
+    @pytest.mark.asyncio
+    async def test_geojson_point_writes_latlon_to_data(
+        self, temp_db_path, mock_config_store
+    ):
+        """GeoJSON Point item: data["latitude"]/["longitude"] == geometry coords,
+        and geo.centroid == (lon, lat)."""
+        config = make_config(
+            domain="wx",
+            extra_settings={
+                "id_path": "id",
+                "geometry_path": "geometry",
+            },
+        )
+        adapter = GenericHttpAdapter(config, mock_config_store, temp_db_path)
+        await adapter.startup()
+
+        fixture = {
+            "features": [
+                {
+                    "id": "enrich-point-1",
+                    "geometry": {"type": "Point", "coordinates": [-116.2, 43.7]},
+                }
+            ]
+        }
+        with patch.object(adapter, "_fetch", new_callable=AsyncMock) as mf:
+            mf.return_value = fixture
+            events = [e async for e in adapter.poll()]
+
+        assert len(events) == 1
+        e = events[0]
+        # lat = coords[1], lon = coords[0]
+        assert e.data["latitude"] == 43.7
+        assert e.data["longitude"] == -116.2
+        assert e.geo.centroid == (-116.2, 43.7)
+
+        await adapter.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_lat_lon_path_writes_latlon_to_data(
+        self, temp_db_path, mock_config_store
+    ):
+        """lat_path/lon_path item: data["latitude"]/["longitude"] populated."""
+        config = make_config(
+            domain="fire",
+            extra_settings={
+                "items_path": "alerts",
+                "id_path": "uid",
+                "geometry_path": "",
+                "lat_path": "lat",
+                "lon_path": "lon",
+            },
+        )
+        adapter = GenericHttpAdapter(config, mock_config_store, temp_db_path)
+        await adapter.startup()
+
+        fixture = {
+            "alerts": [
+                {"uid": "enrich-latlon-1", "lat": 43.5, "lon": -116.1},
+            ]
+        }
+        with patch.object(adapter, "_fetch", new_callable=AsyncMock) as mf:
+            mf.return_value = fixture
+            events = [e async for e in adapter.poll()]
+
+        assert len(events) == 1
+        e = events[0]
+        assert e.data["latitude"] == 43.5
+        assert e.data["longitude"] == -116.1
+
+        await adapter.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_non_point_geometry_no_latlon_in_data(
+        self, temp_db_path, mock_config_store
+    ):
+        """Non-Point geometry (LineString/Polygon) has no representative point;
+        latitude/longitude must NOT appear in data — degrades to region unknown."""
+        config = make_config(
+            domain="wx",
+            extra_settings={
+                "id_path": "id",
+                "geometry_path": "geometry",
+            },
+        )
+        adapter = GenericHttpAdapter(config, mock_config_store, temp_db_path)
+        await adapter.startup()
+
+        fixture = {
+            "features": [
+                {
+                    "id": "enrich-linestring-1",
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": [[-116.0, 43.0], [-115.0, 44.0]],
+                    },
+                }
+            ]
+        }
+        with patch.object(adapter, "_fetch", new_callable=AsyncMock) as mf:
+            mf.return_value = fixture
+            events = [e async for e in adapter.poll()]
+
+        assert len(events) == 1
+        e = events[0]
+        assert "latitude" not in e.data
+        assert "longitude" not in e.data
+
+        await adapter.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_coordless_item_no_latlon_in_data(
+        self, temp_db_path, mock_config_store
+    ):
+        """Item with no geometry and no lat/lon paths: latitude/longitude absent
+        from data — will degrade to region unknown."""
+        config = make_config(
+            domain="wx",
+            extra_settings={
+                "id_path": "id",
+                "geometry_path": "geometry",
+            },
+        )
+        adapter = GenericHttpAdapter(config, mock_config_store, temp_db_path)
+        await adapter.startup()
+
+        fixture = {
+            "features": [
+                {"id": "enrich-coordless-1", "geometry": None},
+            ]
+        }
+        with patch.object(adapter, "_fetch", new_callable=AsyncMock) as mf:
+            mf.return_value = fixture
+            events = [e async for e in adapter.poll()]
+
+        assert len(events) == 1
+        e = events[0]
+        assert "latitude" not in e.data
+        assert "longitude" not in e.data
+
+        await adapter.shutdown()

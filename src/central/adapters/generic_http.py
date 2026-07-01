@@ -191,7 +191,10 @@ class GenericHttpAdapter(SourceAdapter):
     default_cadence_s = 300
     data_class = "event"
     wizard_order = None   # not in the setup wizard; created via operator GUI
-    enrichment_locations = []
+    # Generic instances surface lat/lon into event.data so the supervisor's
+    # geocoder enrichment can reach them.  Coordless instances degrade to
+    # region unknown, which is fine — apply_enrichment handles it gracefully.
+    enrichment_locations = [("latitude", "longitude")]
     bypass_bbox_filter = False
     operator_creatable = True  # GUI allows operators to create multiple instances
 
@@ -365,6 +368,8 @@ class GenericHttpAdapter(SourceAdapter):
 
         # --- geo ---
         geo_kwargs: dict[str, Any] = {}
+        lat_val: float | None = None
+        lon_val: float | None = None
 
         # Try GeoJSON geometry first.
         if s.geometry_path:
@@ -372,14 +377,15 @@ class GenericHttpAdapter(SourceAdapter):
             if isinstance(geom, dict):
                 geo_kwargs["geometry"] = geom
                 # Also set centroid when geometry is a simple Point.
+                # Non-Point geometries (LineString, Polygon) have no single
+                # representative point; lat_val/lon_val stay None → region unknown.
                 if geom.get("type") == "Point":
                     coords = geom.get("coordinates") or []
                     if len(coords) >= 2:
                         try:
-                            geo_kwargs["centroid"] = (
-                                float(coords[0]),
-                                float(coords[1]),
-                            )
+                            lon_val = float(coords[0])
+                            lat_val = float(coords[1])
+                            geo_kwargs["centroid"] = (lon_val, lat_val)
                         except (TypeError, ValueError):
                             pass
 
@@ -389,7 +395,9 @@ class GenericHttpAdapter(SourceAdapter):
             raw_lon = _dig(item, s.lon_path)
             if raw_lat is not None and raw_lon is not None:
                 try:
-                    geo_kwargs["centroid"] = (float(raw_lon), float(raw_lat))
+                    lat_val = float(raw_lat)
+                    lon_val = float(raw_lon)
+                    geo_kwargs["centroid"] = (lon_val, lat_val)
                 except (TypeError, ValueError):
                     pass
 
@@ -401,6 +409,14 @@ class GenericHttpAdapter(SourceAdapter):
             title = _dig(item, s.title_path)
             if title is not None:
                 data["title"] = title
+
+        # Surface coordinates into data so the geocoder enrichment can reach them.
+        # Coordless instances degrade to region unknown — no special-casing needed.
+        # Written BEFORE field_mappings so an explicit operator mapping to
+        # latitude/longitude (rare) takes precedence.
+        if lat_val is not None and lon_val is not None:
+            data["latitude"] = lat_val
+            data["longitude"] = lon_val
 
         for fm in s.field_mappings:
             data[fm.dest_key] = _dig(item, fm.source_path)
